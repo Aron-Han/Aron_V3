@@ -36,6 +36,8 @@
 		private System.Windows.Forms.Label lblPlcStatus;
 		private System.Windows.Forms.Label lblVersion;
 
+		private System.Windows.Forms.Button btnLanguage;
+
 		protected override void Dispose(bool disposing)
 		{
 			if (disposing && (components != null))
@@ -77,6 +79,7 @@
 			this.statusPanel = new System.Windows.Forms.Panel();
 			this.lblVersion = new System.Windows.Forms.Label();
 			this.lblPlcStatus = new System.Windows.Forms.Label();
+			this.btnLanguage = new System.Windows.Forms.Button();
 			this.lblCameraStatus = new System.Windows.Forms.Label();
 			this.rootLayout.SuspendLayout();
 			this.titlePanel.SuspendLayout();
@@ -489,6 +492,7 @@
 			// 
 			// statusPanel
 			// 
+			this.statusPanel.Controls.Add(this.btnLanguage);
 			this.statusPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(15)))), ((int)(((byte)(27)))));
 			this.statusPanel.Controls.Add(this.lblVersion);
 			this.statusPanel.Controls.Add(this.lblPlcStatus);
@@ -499,6 +503,22 @@
 			this.statusPanel.Name = "statusPanel";
 			this.statusPanel.Size = new System.Drawing.Size(1500, 40);
 			this.statusPanel.TabIndex = 3;
+			this.btnLanguage.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(8, 24, 38);
+			this.btnLanguage.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(45, 75, 100);
+			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(18, 48, 78);
+			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(22, 70, 105);
+			this.btnLanguage.Font = new System.Drawing.Font("Microsoft YaHei UI", 8.5F, System.Drawing.FontStyle.Bold);
+			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(220, 230, 240);
+			this.btnLanguage.Location = new System.Drawing.Point(1260, 7);
+			this.btnLanguage.Name = "btnLanguage";
+			this.btnLanguage.Size = new System.Drawing.Size(100, 26);
+			this.btnLanguage.TabIndex = 10;
+			this.btnLanguage.Text = "中文 / EN";
+			this.btnLanguage.UseVisualStyleBackColor = false;
+			this.btnLanguage.Click += new System.EventHandler(this.btnLanguage_Click);
+
 			// 
 			// lblVersion
 			// 

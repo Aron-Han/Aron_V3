@@ -8,6 +8,7 @@ namespace Aron_V3
 	public partial class Form1 : Form
 	{
 		private readonly List<CameraViewControl> _cameraViews = new List<CameraViewControl>();
+		private bool _isEnglish = false;
 
 		public Form1()
 		{
@@ -297,6 +298,48 @@ namespace Aron_V3
 			if (result == DialogResult.Yes)
 				this.Close();
 		}
+
+		#endregion
+
+		#region language function
+		private void btnLanguage_Click(object sender, EventArgs e)
+		{
+			_isEnglish = !_isEnglish;
+
+			if (_isEnglish)
+			{
+				btnLanguage.Text = "EN / 中文";
+
+				btnLogin.Text = "◎  Login";
+				btnAlgorithmConfig.Text = "◇  Algorithm";
+				btnDatabase.Text = "▤  Database";
+				btnSystemSetting.Text = "⚙  Settings";
+				btnStop.Text = "□  Stop";
+
+				lblResultTitle.Text = "Inspection Results                              ⌕    ⚙";
+				lblLogTitle.Text = "Log";
+				lblCameraStatus.Text = "▣  Camera: Connected";
+				lblPlcStatus.Text = "▦  PLC: Connected";
+				lblVersion.Text = "Version: 1.0.0.0";
+			}
+			else
+			{
+				btnLanguage.Text = "中文 / EN";
+
+				btnLogin.Text = "◎  登录";
+				btnAlgorithmConfig.Text = "◇  算法配置";
+				btnDatabase.Text = "▤  数据库";
+				btnSystemSetting.Text = "⚙  系统设置";
+				btnStop.Text = "□  停止";
+
+				lblResultTitle.Text = "检测结果                                      ⌕    ⚙";
+				lblLogTitle.Text = "Log日志";
+				lblCameraStatus.Text = "▣  相机:  已连接";
+				lblPlcStatus.Text = "▦  PLC:  已连接";
+				lblVersion.Text = "版本号:  1.0.0.0";
+			}
+		}
+
 
 		#endregion
 	}
