@@ -13,7 +13,6 @@ namespace Aron_V3
 		{
 			InitializeComponent();
 			LoadDemoData();
-			//123
 			// 后续改成从配置读取相机数量即可。
 			BuildCameraLayout(9);
 		}
