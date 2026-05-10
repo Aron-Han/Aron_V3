@@ -15,7 +15,6 @@ namespace Aron_V3
 			LoadDemoData();
 			// 后续改成从配置读取相机数量即可。
 			BuildCameraLayout(9);
-			//123123
 		}
 
 		private void Form1_Load(object sender, EventArgs e)
