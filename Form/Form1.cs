@@ -316,11 +316,11 @@ namespace Aron_V3
 				btnSystemSetting.Text = "⚙  Settings";
 				btnStop.Text = "□  Stop";
 
-				lblResultTitle.Text = "Inspection Results                              ⌕    ⚙";
 				lblLogTitle.Text = "Log";
 				lblCameraStatus.Text = "▣  Camera: Connected";
 				lblPlcStatus.Text = "▦  PLC: Connected";
 				lblVersion.Text = "Version: 1.0.0.0";
+				btnExit.Text = "Exit";
 			}
 			else
 			{
@@ -332,11 +332,11 @@ namespace Aron_V3
 				btnSystemSetting.Text = "⚙  系统设置";
 				btnStop.Text = "□  停止";
 
-				lblResultTitle.Text = "检测结果                                      ⌕    ⚙";
 				lblLogTitle.Text = "Log日志";
 				lblCameraStatus.Text = "▣  相机:  已连接";
 				lblPlcStatus.Text = "▦  PLC:  已连接";
 				lblVersion.Text = "版本号:  1.0.0.0";
+				btnExit.Text = "退出";
 			}
 		}
 

@@ -21,9 +21,7 @@
 		private System.Windows.Forms.TableLayoutPanel tableLayoutPanelCameras;
 
 		private System.Windows.Forms.Panel resultPanel;
-		private System.Windows.Forms.Label lblResultTitle;
 		private System.Windows.Forms.DataGridView dgvResults;
-		private System.Windows.Forms.Label lblPageInfo;
 
 		private System.Windows.Forms.Panel logPanel;
 		private System.Windows.Forms.Label lblLogTitle;
@@ -65,22 +63,20 @@
 			this.tableLayoutPanelCameras = new System.Windows.Forms.TableLayoutPanel();
 			this.resultPanel = new System.Windows.Forms.Panel();
 			this.dgvResults = new System.Windows.Forms.DataGridView();
-			this.dataGridViewTextBoxColumn1 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.dataGridViewTextBoxColumn2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.dataGridViewTextBoxColumn4 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.lblPageInfo = new System.Windows.Forms.Label();
-			this.lblResultTitle = new System.Windows.Forms.Label();
 			this.logPanel = new System.Windows.Forms.Panel();
 			this.lstLog = new System.Windows.Forms.ListBox();
 			this.cmbLogLevel = new System.Windows.Forms.ComboBox();
 			this.btnClearLog = new System.Windows.Forms.Button();
 			this.lblLogTitle = new System.Windows.Forms.Label();
 			this.statusPanel = new System.Windows.Forms.Panel();
+			this.btnLanguage = new System.Windows.Forms.Button();
 			this.lblVersion = new System.Windows.Forms.Label();
 			this.lblPlcStatus = new System.Windows.Forms.Label();
-			this.btnLanguage = new System.Windows.Forms.Button();
 			this.lblCameraStatus = new System.Windows.Forms.Label();
+			this.dataGridViewTextBoxColumn1 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.dataGridViewTextBoxColumn2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.dataGridViewTextBoxColumn4 = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.rootLayout.SuspendLayout();
 			this.titlePanel.SuspendLayout();
 			this.toolbarPanel.SuspendLayout();
@@ -152,7 +148,7 @@
 			this.btnExit.Name = "btnExit";
 			this.btnExit.Size = new System.Drawing.Size(88, 44);
 			this.btnExit.TabIndex = 1;
-			this.btnExit.Text = "Exit";
+			this.btnExit.Text = "退出";
 			this.btnExit.UseVisualStyleBackColor = false;
 			this.btnExit.Click += new System.EventHandler(this.btnExit_Click);
 			// 
@@ -307,8 +303,6 @@
 			// 
 			this.resultPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
 			this.resultPanel.Controls.Add(this.dgvResults);
-			this.resultPanel.Controls.Add(this.lblPageInfo);
-			this.resultPanel.Controls.Add(this.lblResultTitle);
 			this.resultPanel.Dock = System.Windows.Forms.DockStyle.Fill;
 			this.resultPanel.Location = new System.Drawing.Point(1143, 8);
 			this.resultPanel.Margin = new System.Windows.Forms.Padding(8, 0, 0, 8);
@@ -322,6 +316,7 @@
 			this.dgvResults.AllowUserToAddRows = false;
 			this.dgvResults.AllowUserToDeleteRows = false;
 			this.dgvResults.AllowUserToResizeRows = false;
+			this.dgvResults.AutoSizeColumnsMode = System.Windows.Forms.DataGridViewAutoSizeColumnsMode.Fill;
 			this.dgvResults.BackgroundColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
 			this.dgvResults.BorderStyle = System.Windows.Forms.BorderStyle.None;
 			dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
@@ -350,7 +345,7 @@
 			this.dgvResults.EnableHeadersVisualStyles = false;
 			this.dgvResults.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
 			this.dgvResults.GridColor = System.Drawing.Color.FromArgb(((int)(((byte)(22)))), ((int)(((byte)(48)))), ((int)(((byte)(70)))));
-			this.dgvResults.Location = new System.Drawing.Point(10, 46);
+			this.dgvResults.Location = new System.Drawing.Point(10, 10);
 			this.dgvResults.MultiSelect = false;
 			this.dgvResults.Name = "dgvResults";
 			this.dgvResults.ReadOnly = true;
@@ -358,63 +353,8 @@
 			this.dgvResults.RowHeadersWidth = 62;
 			this.dgvResults.RowTemplate.Height = 30;
 			this.dgvResults.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
-			this.dgvResults.Size = new System.Drawing.Size(329, 433);
+			this.dgvResults.Size = new System.Drawing.Size(329, 507);
 			this.dgvResults.TabIndex = 0;
-			// 
-			// dataGridViewTextBoxColumn1
-			// 
-			this.dataGridViewTextBoxColumn1.HeaderText = "工位/产品ID";
-			this.dataGridViewTextBoxColumn1.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn1.Name = "dataGridViewTextBoxColumn1";
-			this.dataGridViewTextBoxColumn1.ReadOnly = true;
-			this.dataGridViewTextBoxColumn1.Width = 150;
-			// 
-			// dataGridViewTextBoxColumn2
-			// 
-			this.dataGridViewTextBoxColumn2.HeaderText = "结果";
-			this.dataGridViewTextBoxColumn2.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn2.Name = "dataGridViewTextBoxColumn2";
-			this.dataGridViewTextBoxColumn2.ReadOnly = true;
-			this.dataGridViewTextBoxColumn2.Width = 150;
-			// 
-			// dataGridViewTextBoxColumn3
-			// 
-			this.dataGridViewTextBoxColumn3.HeaderText = "状态";
-			this.dataGridViewTextBoxColumn3.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
-			this.dataGridViewTextBoxColumn3.ReadOnly = true;
-			this.dataGridViewTextBoxColumn3.Width = 150;
-			// 
-			// dataGridViewTextBoxColumn4
-			// 
-			this.dataGridViewTextBoxColumn4.HeaderText = "时间";
-			this.dataGridViewTextBoxColumn4.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn4.Name = "dataGridViewTextBoxColumn4";
-			this.dataGridViewTextBoxColumn4.ReadOnly = true;
-			this.dataGridViewTextBoxColumn4.Width = 150;
-			// 
-			// lblPageInfo
-			// 
-			this.lblPageInfo.Dock = System.Windows.Forms.DockStyle.Bottom;
-			this.lblPageInfo.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(170)))), ((int)(((byte)(185)))), ((int)(((byte)(200)))));
-			this.lblPageInfo.Location = new System.Drawing.Point(10, 479);
-			this.lblPageInfo.Name = "lblPageInfo";
-			this.lblPageInfo.Size = new System.Drawing.Size(329, 38);
-			this.lblPageInfo.TabIndex = 1;
-			this.lblPageInfo.Text = "共 1286 条                         <   1   2   3   4   5   ...   86   >";
-			this.lblPageInfo.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-			// 
-			// lblResultTitle
-			// 
-			this.lblResultTitle.Dock = System.Windows.Forms.DockStyle.Top;
-			this.lblResultTitle.Font = new System.Drawing.Font("Microsoft YaHei UI", 10F, System.Drawing.FontStyle.Bold);
-			this.lblResultTitle.ForeColor = System.Drawing.Color.WhiteSmoke;
-			this.lblResultTitle.Location = new System.Drawing.Point(10, 10);
-			this.lblResultTitle.Name = "lblResultTitle";
-			this.lblResultTitle.Size = new System.Drawing.Size(329, 36);
-			this.lblResultTitle.TabIndex = 2;
-			this.lblResultTitle.Text = "检测结果                                      ⌕    ⚙";
-			this.lblResultTitle.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
 			// 
 			// logPanel
 			// 
@@ -492,8 +432,8 @@
 			// 
 			// statusPanel
 			// 
-			this.statusPanel.Controls.Add(this.btnLanguage);
 			this.statusPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(15)))), ((int)(((byte)(27)))));
+			this.statusPanel.Controls.Add(this.btnLanguage);
 			this.statusPanel.Controls.Add(this.lblVersion);
 			this.statusPanel.Controls.Add(this.lblPlcStatus);
 			this.statusPanel.Controls.Add(this.lblCameraStatus);
@@ -503,14 +443,17 @@
 			this.statusPanel.Name = "statusPanel";
 			this.statusPanel.Size = new System.Drawing.Size(1500, 40);
 			this.statusPanel.TabIndex = 3;
+			// 
+			// btnLanguage
+			// 
 			this.btnLanguage.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(8, 24, 38);
+			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(24)))), ((int)(((byte)(38)))));
+			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(45)))), ((int)(((byte)(75)))), ((int)(((byte)(100)))));
+			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(22)))), ((int)(((byte)(70)))), ((int)(((byte)(105)))));
+			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(48)))), ((int)(((byte)(78)))));
 			this.btnLanguage.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(45, 75, 100);
-			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(18, 48, 78);
-			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(22, 70, 105);
 			this.btnLanguage.Font = new System.Drawing.Font("Microsoft YaHei UI", 8.5F, System.Drawing.FontStyle.Bold);
-			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(220, 230, 240);
+			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(230)))), ((int)(((byte)(240)))));
 			this.btnLanguage.Location = new System.Drawing.Point(1260, 7);
 			this.btnLanguage.Name = "btnLanguage";
 			this.btnLanguage.Size = new System.Drawing.Size(100, 26);
@@ -518,7 +461,6 @@
 			this.btnLanguage.Text = "中文 / EN";
 			this.btnLanguage.UseVisualStyleBackColor = false;
 			this.btnLanguage.Click += new System.EventHandler(this.btnLanguage_Click);
-
 			// 
 			// lblVersion
 			// 
@@ -556,6 +498,34 @@
 			this.lblCameraStatus.TabIndex = 2;
 			this.lblCameraStatus.Text = "▣  相机:  已连接";
 			this.lblCameraStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+			// 
+			// dataGridViewTextBoxColumn1
+			// 
+			this.dataGridViewTextBoxColumn1.HeaderText = "Camera";
+			this.dataGridViewTextBoxColumn1.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn1.Name = "dataGridViewTextBoxColumn1";
+			this.dataGridViewTextBoxColumn1.ReadOnly = true;
+			// 
+			// dataGridViewTextBoxColumn2
+			// 
+			this.dataGridViewTextBoxColumn2.HeaderText = "Item";
+			this.dataGridViewTextBoxColumn2.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn2.Name = "dataGridViewTextBoxColumn2";
+			this.dataGridViewTextBoxColumn2.ReadOnly = true;
+			// 
+			// dataGridViewTextBoxColumn3
+			// 
+			this.dataGridViewTextBoxColumn3.HeaderText = "Value";
+			this.dataGridViewTextBoxColumn3.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
+			this.dataGridViewTextBoxColumn3.ReadOnly = true;
+			// 
+			// dataGridViewTextBoxColumn4
+			// 
+			this.dataGridViewTextBoxColumn4.HeaderText = "Time";
+			this.dataGridViewTextBoxColumn4.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn4.Name = "dataGridViewTextBoxColumn4";
+			this.dataGridViewTextBoxColumn4.ReadOnly = true;
 			// 
 			// Form1
 			// 
