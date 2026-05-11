@@ -1,98 +1,26 @@
 ﻿using System;
 using System.Drawing;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace Aron_V3
 {
-	public partial class FlowConfigForm : Form
+	public partial class FlowConfigForm : Form, ILocalizable
 	{
-		private bool _dragging;
-		private Point _dragStartPoint;
-		private Point _formStartPoint;
-		private bool _isTaskSchedulerMode = false;
+		private TriggerManagerControl _triggerPage;
+		private TaskSchedulerControl _taskPage;
 
 		public FlowConfigForm()
 		{
 			InitializeComponent();
-
-			LoadJobList();
-			ShowTriggerManager();
-
-			this.MouseDown += Header_MouseDown;
-			this.MouseMove += Header_MouseMove;
-			this.MouseUp += Header_MouseUp;
-
+			EnableDoubleBuffer(this);
+			this.Load += FlowConfigForm_Load;
 		}
 
 		private void FlowConfigForm_Load(object sender, EventArgs e)
 		{
-			this.WindowState = FormWindowState.Maximized;
-			AdjustContentLayout();
+			ShowTriggerManager();
 		}
-
-		protected override void OnShown(EventArgs e)
-		{
-			base.OnShown(e);
-			AdjustContentLayout();
-		}
-
-		protected override void OnResize(EventArgs e)
-		{
-			base.OnResize(e);
-			AdjustContentLayout();
-		}
-
-		#region Window Buttons
-
-		private void btnMinimize_Click(object sender, EventArgs e)
-		{
-			this.WindowState = FormWindowState.Minimized;
-		}
-
-		private void btnMaximize_Click(object sender, EventArgs e)
-		{
-			this.WindowState = this.WindowState == FormWindowState.Maximized
-				? FormWindowState.Normal
-				: FormWindowState.Maximized;
-
-			AdjustContentLayout();
-		}
-
-		private void btnClose_Click(object sender, EventArgs e)
-		{
-			this.Close();
-		}
-
-		private void Header_MouseDown(object sender, MouseEventArgs e)
-		{
-			if (e.Button != MouseButtons.Left)
-				return;
-
-			_dragging = true;
-			_dragStartPoint = Cursor.Position;
-			_formStartPoint = this.Location;
-		}
-
-		private void Header_MouseMove(object sender, MouseEventArgs e)
-		{
-			if (!_dragging)
-				return;
-
-			if (this.WindowState == FormWindowState.Maximized)
-				return;
-
-			Point offset = new Point(Cursor.Position.X - _dragStartPoint.X, Cursor.Position.Y - _dragStartPoint.Y);
-			this.Location = new Point(_formStartPoint.X + offset.X, _formStartPoint.Y + offset.Y);
-		}
-
-		private void Header_MouseUp(object sender, MouseEventArgs e)
-		{
-			_dragging = false;
-		}
-
-		#endregion
-
-		#region Left Menu
 
 		private void btnTriggerManager_Click(object sender, EventArgs e)
 		{
@@ -104,303 +32,96 @@ namespace Aron_V3
 			ShowTaskScheduler();
 		}
 
-		private void SetLeftMenuSelected(Button selectedButton)
-		{
-			SetMenuButtonStyle(btnTriggerManager, false);
-			SetMenuButtonStyle(btnTaskScheduler, false);
-			SetMenuButtonStyle(selectedButton, true);
-		}
-
-		private void SetMenuButtonStyle(Button button, bool selected)
-		{
-			if (selected)
-			{
-				button.BackColor = Color.FromArgb(24, 61, 135);
-				button.FlatAppearance.BorderColor = Color.FromArgb(0, 180, 255);
-				button.ForeColor = Color.White;
-			}
-			else
-			{
-				button.BackColor = Color.FromArgb(8, 22, 39);
-				button.FlatAppearance.BorderColor = Color.FromArgb(33, 63, 88);
-				button.ForeColor = Color.FromArgb(220, 230, 240);
-			}
-		}
-
-		#endregion
-
-		#region Page Switch
-
 		private void ShowTriggerManager()
 		{
-			_isTaskSchedulerMode = false;
-			SetLeftMenuSelected(btnTriggerManager);
+			if (_triggerPage == null || _triggerPage.IsDisposed)
+				_triggerPage = new TriggerManagerControl();
 
-			lblMainSectionTitle.Text = "触发源设置";
-
-			panelTaskList.Visible = false;
-
-			dgvConfig.Rows.Clear();
-			dgvConfig.Columns.Clear();
-
-			dgvConfig.Columns.Add("TaskName", "task名称");
-			dgvConfig.Columns.Add("TriggerName", "触发源名称");
-			dgvConfig.Columns.Add("InputAddress", "输入地址");
-			dgvConfig.Columns.Add("FlagBit", "标志位");
-			dgvConfig.Columns.Add("FlagValue", "标志位值");
-			dgvConfig.Columns.Add("Remark", "备注");
-
-			ApplyGridColumnStyle();
-
-			btnAdd.Text = "＋  新增 task";
-			btnDelete.Text = "▥  删除选中";
-			btnMoveUp.Visible = false;
-			btnMoveDown.Visible = false;
-
-			AdjustContentLayout();
-			UpdateEmptyLabel();
+			ShowPage(_triggerPage);
+			SetSideButtonSelected(btnTriggerManager);
 		}
 
 		private void ShowTaskScheduler()
 		{
-			_isTaskSchedulerMode = true;
-			SetLeftMenuSelected(btnTaskScheduler);
+			if (_taskPage == null || _taskPage.IsDisposed)
+				_taskPage = new TaskSchedulerControl();
 
-			lblMainSectionTitle.Text = "当前 task 中的 step";
-
-			panelTaskList.Visible = true;
-
-			dgvConfig.Rows.Clear();
-			dgvConfig.Columns.Clear();
-
-			dgvConfig.Columns.Add("Step", "step");
-			dgvConfig.Columns.Add("ImageSource", "图像源");
-			dgvConfig.Columns.Add("RunOrder", "执行步序");
-			dgvConfig.Columns.Add("Remark", "备注");
-
-			ApplyGridColumnStyle();
-
-			btnAdd.Text = "＋  新增算子";
-			btnDelete.Text = "▥  删除选中";
-			btnMoveUp.Visible = true;
-			btnMoveDown.Visible = true;
-
-			AdjustContentLayout();
-			UpdateEmptyLabel();
+			ShowPage(_taskPage);
+			SetSideButtonSelected(btnTaskScheduler);
 		}
 
-		private void ApplyGridColumnStyle()
+		private void ShowPage(Control page)
 		{
-			for (int i = 0; i < dgvConfig.Columns.Count; i++)
+			panelContent.SuspendLayout();
+
+			foreach (Control c in panelContent.Controls)
+				c.Visible = false;
+
+			if (page.Parent != panelContent)
 			{
-				dgvConfig.Columns[i].SortMode = DataGridViewColumnSortMode.NotSortable;
-				dgvConfig.Columns[i].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-			}
-		}
-
-		#endregion
-
-		#region Layout
-
-		private void AdjustContentLayout()
-		{
-			if (panelContent == null || panelConfig == null || panelJobList == null)
-				return;
-
-			int margin = 22;
-			int gap = 14;
-			int jobWidth = 250;
-			int taskWidth = _isTaskSchedulerMode ? 250 : 0;
-
-			int contentW = Math.Max(300, panelContent.ClientSize.Width);
-			int contentH = Math.Max(300, panelContent.ClientSize.Height);
-
-			panelJobList.Left = margin;
-			panelJobList.Top = margin;
-			panelJobList.Width = jobWidth;
-			panelJobList.Height = contentH - margin * 2;
-
-			panelTaskList.Left = panelJobList.Right + gap;
-			panelTaskList.Top = margin;
-			panelTaskList.Width = taskWidth;
-			panelTaskList.Height = contentH - margin * 2;
-
-			int configLeft = _isTaskSchedulerMode
-				? panelTaskList.Right + gap
-				: panelJobList.Right + gap;
-
-			panelConfig.Left = configLeft;
-			panelConfig.Top = margin;
-			panelConfig.Width = contentW - configLeft - margin;
-			panelConfig.Height = contentH - margin * 2;
-
-			int innerMargin = 18;
-			lblMainSectionTitle.Left = innerMargin;
-			lblMainSectionTitle.Top = 18;
-			lblMainSectionTitle.Width = panelConfig.ClientSize.Width - innerMargin * 2;
-			lblMainSectionTitle.Height = 28;
-
-			panelTableBody.Left = innerMargin;
-			panelTableBody.Top = 58;
-			panelTableBody.Width = panelConfig.ClientSize.Width - innerMargin * 2;
-			panelTableBody.Height = panelConfig.ClientSize.Height - 58 - 90;
-
-			panelAction.Left = innerMargin;
-			panelAction.Top = panelConfig.ClientSize.Height - 76;
-			panelAction.Width = panelConfig.ClientSize.Width - innerMargin * 2;
-			panelAction.Height = 60;
-
-			LayoutActionButtons();
-			UpdateEmptyLabel();
-		}
-
-		private void LayoutActionButtons()
-		{
-			int x = 0;
-			int y = 8;
-			int w = 135;
-			int h = 40;
-			int gap = 14;
-
-			btnAdd.Left = x;
-			btnAdd.Top = y;
-			btnAdd.Width = w;
-			btnAdd.Height = h;
-
-			x += w + gap;
-			btnDelete.Left = x;
-			btnDelete.Top = y;
-			btnDelete.Width = w;
-			btnDelete.Height = h;
-
-			if (_isTaskSchedulerMode)
-			{
-				x += w + gap;
-				btnMoveUp.Left = x;
-				btnMoveUp.Top = y;
-				btnMoveUp.Width = w;
-				btnMoveUp.Height = h;
-
-				x += w + gap;
-				btnMoveDown.Left = x;
-				btnMoveDown.Top = y;
-				btnMoveDown.Width = w;
-				btnMoveDown.Height = h;
+				page.Dock = DockStyle.Fill;
+				panelContent.Controls.Add(page);
+				EnableDoubleBuffer(page);
 			}
 
-			btnSave.Width = 115;
-			btnSave.Height = h;
-			btnSave.Left = Math.Max(x + w + gap, panelAction.ClientSize.Width - btnSave.Width);
-			btnSave.Top = y;
+			page.Visible = true;
+			page.BringToFront();
+
+			panelContent.ResumeLayout(true);
 		}
 
-		private void UpdateEmptyLabel()
+		private void SetSideButtonSelected(Button selected)
 		{
-			if (lblEmpty == null || panelTableBody == null)
-				return;
+			ResetSideButton(btnTriggerManager);
+			ResetSideButton(btnTaskScheduler);
 
-			lblEmpty.Visible = dgvConfig.Rows.Count == 0;
-			lblEmpty.Left = Math.Max(0, panelTableBody.ClientSize.Width / 2 - lblEmpty.Width / 2);
-			lblEmpty.Top = Math.Max(0, panelTableBody.ClientSize.Height / 2 - lblEmpty.Height / 2);
-			lblEmpty.BringToFront();
+			selected.BackColor = Color.FromArgb(20, 70, 135);
+			selected.ForeColor = Color.White;
+			selected.FlatAppearance.BorderColor = Color.FromArgb(0, 185, 255);
 		}
 
-		#endregion
-
-		#region Demo Data
-
-		private void LoadJobList()
+		private void ResetSideButton(Button btn)
 		{
-			listJobs.Items.Clear();
-			listJobs.Items.Add("Job_001");
-			listJobs.Items.Add("Job_002");
-			listJobs.Items.Add("Job_003");
-			listJobs.Items.Add("Job_004");
-			listJobs.Items.Add("Job_005");
-			listJobs.Items.Add("Job_006");
-			listJobs.Items.Add("Job_007");
-			listJobs.Items.Add("Job_008");
-			listJobs.Items.Add("Job_009");
-			listJobs.Items.Add("Job_010");
-
-			if (listJobs.Items.Count > 0)
-				listJobs.SelectedIndex = 0;
-
-			listTasks.Items.Clear();
-			listTasks.Items.Add("Task_Main");
-			listTasks.Items.Add("Task_Inspect");
-			listTasks.Items.Add("Task_Locate");
-			listTasks.Items.Add("Task_Measure");
-			listTasks.Items.Add("Task_OCR");
-			listTasks.Items.Add("Task_Align");
-			listTasks.Items.Add("Task_Classify");
-
-			if (listTasks.Items.Count > 0)
-				listTasks.SelectedIndex = 0;
+			btn.BackColor = Color.FromArgb(8, 21, 39);
+			btn.ForeColor = Color.FromArgb(210, 220, 235);
+			btn.FlatAppearance.BorderColor = Color.FromArgb(35, 65, 95);
 		}
 
-		#endregion
-
-		#region Buttons
-
-		private void btnAdd_Click(object sender, EventArgs e)
+		private void EnableDoubleBuffer(Control control)
 		{
-			if (_isTaskSchedulerMode)
+			if (control == null) return;
+			try
 			{
-				dgvConfig.Rows.Add("Step01", "Cam1", "1", "");
+				PropertyInfo p = typeof(Control).GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic);
+				if (p != null) p.SetValue(control, true, null);
+			}
+			catch { }
+
+			foreach (Control child in control.Controls)
+				EnableDoubleBuffer(child);
+		}
+
+		public void ApplyLanguage(bool isEnglish)
+		{
+			if (isEnglish)
+			{
+				btnTriggerManager.Text = "⚡  Trigger";
+				btnTaskScheduler.Text = "▣  Scheduler";
 			}
 			else
 			{
-				dgvConfig.Rows.Add("Task_Main", "Trigger0", "Input[0]", "0", "1", "");
+				btnTriggerManager.Text = "⚡  触发管理";
+				btnTaskScheduler.Text = "▣  任务调度";
 			}
 
-			UpdateEmptyLabel();
-		}
-
-		private void btnDelete_Click(object sender, EventArgs e)
-		{
-			foreach (DataGridViewRow row in dgvConfig.SelectedRows)
+			foreach (Control ctrl in panelContent.Controls)
 			{
-				if (!row.IsNewRow)
-					dgvConfig.Rows.Remove(row);
+				ILocalizable localizable = ctrl as ILocalizable;
+				if (localizable != null)
+				{
+					localizable.ApplyLanguage(isEnglish);
+				}
 			}
-
-			UpdateEmptyLabel();
 		}
-
-		private void btnMoveUp_Click(object sender, EventArgs e)
-		{
-			MoveSelectedRow(-1);
-		}
-
-		private void btnMoveDown_Click(object sender, EventArgs e)
-		{
-			MoveSelectedRow(1);
-		}
-
-		private void MoveSelectedRow(int direction)
-		{
-			if (dgvConfig.SelectedRows.Count <= 0)
-				return;
-
-			DataGridViewRow selectedRow = dgvConfig.SelectedRows[0];
-			int oldIndex = selectedRow.Index;
-			int newIndex = oldIndex + direction;
-
-			if (newIndex < 0 || newIndex >= dgvConfig.Rows.Count)
-				return;
-
-			dgvConfig.Rows.Remove(selectedRow);
-			dgvConfig.Rows.Insert(newIndex, selectedRow);
-			dgvConfig.ClearSelection();
-			selectedRow.Selected = true;
-		}
-
-		private void btnSave_Click(object sender, EventArgs e)
-		{
-			MessageBox.Show("Configuration saved.", "Save", MessageBoxButtons.OK, MessageBoxIcon.Information);
-		}
-
-		#endregion
 	}
 }

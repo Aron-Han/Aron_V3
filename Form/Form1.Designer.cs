@@ -12,6 +12,7 @@
 		private System.Windows.Forms.Label lblTitle;
 		private System.Windows.Forms.FlowLayoutPanel navFlowPanel;
 		private System.Windows.Forms.Panel panelNavLogin;
+		private System.Windows.Forms.Panel panelNavHardware;
 		private System.Windows.Forms.Panel panelNavAlgorithm;
 		private System.Windows.Forms.Panel panelNavProcess;
 		private System.Windows.Forms.Panel panelNavCommunication;
@@ -20,6 +21,7 @@
 		private System.Windows.Forms.Panel panelNavStop;
 
 		private System.Windows.Forms.Button btnLogin;
+		private System.Windows.Forms.Button btnHardwareConfig;
 		private System.Windows.Forms.Button btnAlgorithmConfig;
 		private System.Windows.Forms.Button btnProcessConfig;
 		private System.Windows.Forms.Button btnCommunicateConfig;
@@ -35,6 +37,7 @@
 		private System.Windows.Forms.Panel panelRightStatus;
 
 		private System.Windows.Forms.Panel underlineLogin;
+		private System.Windows.Forms.Panel underlineHardwareConfig;
 		private System.Windows.Forms.Panel underlineAlgorithmConfig;
 		private System.Windows.Forms.Panel underlineProcessConfig;
 		private System.Windows.Forms.Panel underlineCommunicateConfig;
@@ -77,14 +80,17 @@
 
 		private void InitializeComponent()
 		{
-			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
-			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle6 = new System.Windows.Forms.DataGridViewCellStyle();
+			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle7 = new System.Windows.Forms.DataGridViewCellStyle();
+			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle8 = new System.Windows.Forms.DataGridViewCellStyle();
 			this.rootLayout = new System.Windows.Forms.TableLayoutPanel();
 			this.titlePanel = new System.Windows.Forms.Panel();
 			this.navFlowPanel = new System.Windows.Forms.FlowLayoutPanel();
 			this.panelNavLogin = new System.Windows.Forms.Panel();
+			this.panelNavHardware = new System.Windows.Forms.Panel();
 			this.btnLogin = new System.Windows.Forms.Button();
+			this.btnHardwareConfig = new System.Windows.Forms.Button();
 			this.underlineLogin = new System.Windows.Forms.Panel();
+			this.underlineHardwareConfig = new System.Windows.Forms.Panel();
 			this.panelNavAlgorithm = new System.Windows.Forms.Panel();
 			this.btnAlgorithmConfig = new System.Windows.Forms.Button();
 			this.underlineAlgorithmConfig = new System.Windows.Forms.Panel();
@@ -187,6 +193,7 @@
 			// 
 			this.navFlowPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.navFlowPanel.Controls.Add(this.panelNavLogin);
+			this.navFlowPanel.Controls.Add(this.panelNavHardware);
 			this.navFlowPanel.Controls.Add(this.panelNavAlgorithm);
 			this.navFlowPanel.Controls.Add(this.panelNavProcess);
 			this.navFlowPanel.Controls.Add(this.panelNavCommunication);
@@ -212,6 +219,13 @@
 			this.panelNavLogin.Size = new System.Drawing.Size(120, 92);
 			this.panelNavLogin.TabIndex = 0;
 			// 
+			// panelNavHardware
+			this.panelNavHardware.BackColor = System.Drawing.Color.FromArgb(3, 10, 20);
+			this.panelNavHardware.Controls.Add(this.btnHardwareConfig);
+			this.panelNavHardware.Controls.Add(this.underlineHardwareConfig);
+			this.panelNavHardware.Margin = new System.Windows.Forms.Padding(0);
+			this.panelNavHardware.Size = new System.Drawing.Size(135, 92);
+			//
 			// btnLogin
 			// 
 			this.btnLogin.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
@@ -230,6 +244,20 @@
 			this.btnLogin.UseVisualStyleBackColor = false;
 			this.btnLogin.Click += new System.EventHandler(this.btnLogin_Click);
 			// 
+			// btnHardwareConfig
+			this.btnHardwareConfig.BackColor = System.Drawing.Color.FromArgb(3, 10, 20);
+			this.btnHardwareConfig.Dock = System.Windows.Forms.DockStyle.Fill;
+			this.btnHardwareConfig.FlatAppearance.BorderSize = 0;
+			this.btnHardwareConfig.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(18, 50, 82);
+			this.btnHardwareConfig.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(14, 36, 62);
+			this.btnHardwareConfig.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnHardwareConfig.Font = new System.Drawing.Font("Microsoft YaHei UI", 10F, System.Drawing.FontStyle.Bold);
+			this.btnHardwareConfig.ForeColor = System.Drawing.Color.FromArgb(155, 170, 195);
+			this.btnHardwareConfig.Name = "btnHardwareConfig";
+			this.btnHardwareConfig.Text = "▣  硬件配置";
+			this.btnHardwareConfig.UseVisualStyleBackColor = false;
+			this.btnHardwareConfig.Click += new System.EventHandler(this.btnHardwareConfig_Click);
+			//
 			// underlineLogin
 			// 
 			this.underlineLogin.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(185)))), ((int)(((byte)(255)))));
@@ -240,6 +268,13 @@
 			this.underlineLogin.TabIndex = 1;
 			this.underlineLogin.Visible = false;
 			// 
+			// underlineHardwareConfig
+			this.underlineHardwareConfig.BackColor = System.Drawing.Color.FromArgb(0, 185, 255);
+			this.underlineHardwareConfig.Dock = System.Windows.Forms.DockStyle.Bottom;
+			this.underlineHardwareConfig.Height = 3;
+			this.underlineHardwareConfig.Name = "underlineHardwareConfig";
+			this.underlineHardwareConfig.Visible = false;
+			//
 			// panelNavAlgorithm
 			// 
 			this.panelNavAlgorithm.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
@@ -304,7 +339,7 @@
 			this.btnProcessConfig.Name = "btnProcessConfig";
 			this.btnProcessConfig.Size = new System.Drawing.Size(135, 89);
 			this.btnProcessConfig.TabIndex = 0;
-			this.btnProcessConfig.Text = "⚙  配置管理";
+			this.btnProcessConfig.Text = "⚙  流程管理";
 			this.btnProcessConfig.UseVisualStyleBackColor = false;
 			this.btnProcessConfig.Click += new System.EventHandler(this.btnProcessConfig_Click);
 			// 
@@ -497,7 +532,7 @@
 			this.btnClose.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnClose.Font = new System.Drawing.Font("Segoe UI", 13F, System.Drawing.FontStyle.Bold);
 			this.btnClose.ForeColor = System.Drawing.Color.White;
-			this.btnClose.Location = new System.Drawing.Point(328, 0);
+			this.btnClose.Location = new System.Drawing.Point(322, 0);
 			this.btnClose.Name = "btnClose";
 			this.btnClose.Size = new System.Drawing.Size(32, 30);
 			this.btnClose.TabIndex = 0;
@@ -514,7 +549,7 @@
 			this.btnMinimize.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnMinimize.Font = new System.Drawing.Font("Segoe UI", 13F, System.Drawing.FontStyle.Bold);
 			this.btnMinimize.ForeColor = System.Drawing.Color.White;
-			this.btnMinimize.Location = new System.Drawing.Point(295, 0);
+			this.btnMinimize.Location = new System.Drawing.Point(292, 0);
 			this.btnMinimize.Name = "btnMinimize";
 			this.btnMinimize.Size = new System.Drawing.Size(34, 30);
 			this.btnMinimize.TabIndex = 2;
@@ -650,28 +685,28 @@
 			this.dgvResults.AutoSizeColumnsMode = System.Windows.Forms.DataGridViewAutoSizeColumnsMode.Fill;
 			this.dgvResults.BackgroundColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
 			this.dgvResults.BorderStyle = System.Windows.Forms.BorderStyle.None;
-			dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-			dataGridViewCellStyle5.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
-			dataGridViewCellStyle5.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-			dataGridViewCellStyle5.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(190)))), ((int)(((byte)(205)))), ((int)(((byte)(220)))));
-			dataGridViewCellStyle5.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
-			dataGridViewCellStyle5.SelectionForeColor = System.Drawing.Color.White;
-			dataGridViewCellStyle5.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
-			this.dgvResults.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle5;
+			dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+			dataGridViewCellStyle7.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
+			dataGridViewCellStyle7.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+			dataGridViewCellStyle7.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(190)))), ((int)(((byte)(205)))), ((int)(((byte)(220)))));
+			dataGridViewCellStyle7.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
+			dataGridViewCellStyle7.SelectionForeColor = System.Drawing.Color.White;
+			dataGridViewCellStyle7.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
+			this.dgvResults.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle7;
 			this.dgvResults.ColumnHeadersHeight = 32;
 			this.dgvResults.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.colCamera,
             this.colItem,
             this.colValue,
             this.colTime});
-			dataGridViewCellStyle6.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-			dataGridViewCellStyle6.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
-			dataGridViewCellStyle6.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-			dataGridViewCellStyle6.ForeColor = System.Drawing.Color.WhiteSmoke;
-			dataGridViewCellStyle6.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(25)))), ((int)(((byte)(78)))), ((int)(((byte)(145)))));
-			dataGridViewCellStyle6.SelectionForeColor = System.Drawing.Color.White;
-			dataGridViewCellStyle6.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-			this.dgvResults.DefaultCellStyle = dataGridViewCellStyle6;
+			dataGridViewCellStyle8.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+			dataGridViewCellStyle8.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
+			dataGridViewCellStyle8.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+			dataGridViewCellStyle8.ForeColor = System.Drawing.Color.WhiteSmoke;
+			dataGridViewCellStyle8.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(25)))), ((int)(((byte)(78)))), ((int)(((byte)(145)))));
+			dataGridViewCellStyle8.SelectionForeColor = System.Drawing.Color.White;
+			dataGridViewCellStyle8.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+			this.dgvResults.DefaultCellStyle = dataGridViewCellStyle8;
 			this.dgvResults.Dock = System.Windows.Forms.DockStyle.Fill;
 			this.dgvResults.EnableHeadersVisualStyles = false;
 			this.dgvResults.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
@@ -805,17 +840,18 @@
 			// 
 			// btnLanguage
 			// 
-			this.btnLanguage.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(24)))), ((int)(((byte)(38)))));
-			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(45)))), ((int)(((byte)(75)))), ((int)(((byte)(100)))));
-			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(22)))), ((int)(((byte)(70)))), ((int)(((byte)(105)))));
-			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(48)))), ((int)(((byte)(78)))));
+			this.btnLanguage.Anchor = System.Windows.Forms.AnchorStyles.None;
+			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(8, 24, 38);
+			this.btnLanguage.Dock = System.Windows.Forms.DockStyle.Right;
+			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(45, 75, 100);
+			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(22, 70, 105);
+			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(18, 48, 78);
 			this.btnLanguage.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnLanguage.Font = new System.Drawing.Font("Microsoft YaHei UI", 8.5F, System.Drawing.FontStyle.Bold);
-			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(230)))), ((int)(((byte)(240)))));
-			this.btnLanguage.Location = new System.Drawing.Point(2560, 7);
+			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(220, 230, 240);
+			this.btnLanguage.Location = new System.Drawing.Point(1220, 0);
 			this.btnLanguage.Name = "btnLanguage";
-			this.btnLanguage.Size = new System.Drawing.Size(100, 26);
+			this.btnLanguage.Size = new System.Drawing.Size(100, 40);
 			this.btnLanguage.TabIndex = 0;
 			this.btnLanguage.Text = "中文 / EN";
 			this.btnLanguage.UseVisualStyleBackColor = false;

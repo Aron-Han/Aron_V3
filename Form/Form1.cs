@@ -12,6 +12,7 @@ namespace Aron_V3
 		private bool _isEnglish = false;
 
 		private Control _runtimePage;
+		private Control _hardwareConfigPage;
 		private FlowConfigForm _processConfigPage;
 		private Control _algorithmPage;
 		private Control _communicationPage;
@@ -25,6 +26,7 @@ namespace Aron_V3
 		private enum MainPageType
 		{
 			Login,
+			HardwareConfig,
 			AlgorithmConfig,
 			ProcessConfig,
 			CommunicationConfig,
@@ -153,6 +155,7 @@ namespace Aron_V3
 			_currentPage = page;
 
 			ResetNavStyle(btnLogin, underlineLogin, false);
+			ResetNavStyle(btnHardwareConfig, underlineHardwareConfig, false);
 			ResetNavStyle(btnAlgorithmConfig, underlineAlgorithmConfig, false);
 			ResetNavStyle(btnProcessConfig, underlineProcessConfig, false);
 			ResetNavStyle(btnCommunicateConfig, underlineCommunicateConfig, false);
@@ -165,6 +168,11 @@ namespace Aron_V3
 				case MainPageType.Login:
 					ApplyNavSelected(btnLogin, underlineLogin, false);
 					if (changePage) ShowRuntimePage();
+					break;
+
+				case MainPageType.HardwareConfig:
+					ApplyNavSelected(btnHardwareConfig, underlineHardwareConfig, false);
+					if (changePage) ShowHardwareConfigPage();
 					break;
 
 				case MainPageType.AlgorithmConfig:
@@ -256,6 +264,16 @@ namespace Aron_V3
 			ShowCachedPage(_runtimePage);
 		}
 
+		private void ShowHardwareConfigPage()
+		{
+			if (_hardwareConfigPage == null)
+			{
+				_hardwareConfigPage = CreatePlaceholderPage(_isEnglish ? "Hardware Configuration" : "硬件配置");
+			}
+
+			ShowCachedPage(_hardwareConfigPage);
+		}
+
 		private void ShowProcessConfigPage()
 		{
 			if (_processConfigPage == null || _processConfigPage.IsDisposed)
@@ -271,6 +289,8 @@ namespace Aron_V3
 				pageHost.Controls.Add(_processConfigPage);
 				_processConfigPage.Show();
 				_processConfigPage.Visible = false;
+
+				_processConfigPage.ApplyLanguage(_isEnglish);
 			}
 
 			ShowCachedPage(_processConfigPage);
@@ -553,6 +573,10 @@ namespace Aron_V3
 		private void btnDatabase_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.Database, true); }
 		private void btnSystemSetting_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.SystemSetting, true); }
 		private void btnStop_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.Stop, true); }
+		private void btnHardwareConfig_Click(object sender, EventArgs e)
+		{
+			SelectMainPage(MainPageType.HardwareConfig, true);
+		}
 
 		#endregion
 
@@ -567,12 +591,13 @@ namespace Aron_V3
 				btnLanguage.Text = "EN / 中文";
 
 				btnLogin.Text = "⌂  Home";
-				btnAlgorithmConfig.Text = "▣  Monitor";
-				btnProcessConfig.Text = "⚙  Config";
+				btnAlgorithmConfig.Text = "▣  Algorithm";
+				btnProcessConfig.Text = "⚙  Process";
 				btnCommunicateConfig.Text = "◇  Comm";
 				btnDatabase.Text = "▤  Database";
 				btnSystemSetting.Text = "⚙  System";
 				btnStop.Text = "□  Stop";
+				btnHardwareConfig.Text = "📷  Hardware";
 
 				lblLogTitle.Text = "Log";
 				lblCameraStatus.Text = "▣  Camera: Connected";
@@ -586,12 +611,13 @@ namespace Aron_V3
 				btnLanguage.Text = "中文 / EN";
 
 				btnLogin.Text = "⌂  主页";
-				btnAlgorithmConfig.Text = "▣  运行监控";
-				btnProcessConfig.Text = "⚙  配置管理";
+				btnAlgorithmConfig.Text = "▣  算法管理";
+				btnProcessConfig.Text = "⚙  流程管理";
 				btnCommunicateConfig.Text = "◇  通讯配置";
 				btnDatabase.Text = "▤  数据库";
 				btnSystemSetting.Text = "⚙  系统管理";
 				btnStop.Text = "□  停止";
+				btnHardwareConfig.Text = "📷 硬件配置";
 
 				lblLogTitle.Text = "Log日志";
 				lblCameraStatus.Text = "▣  相机:  已连接";
@@ -602,6 +628,29 @@ namespace Aron_V3
 			}
 
 			SelectMainPage(_currentPage, false);
+			ApplyLanguageToPages();
+			SelectMainPage(_currentPage, false);
+		}
+
+		private void ApplyLanguageToPages()
+		{
+			foreach (Control ctrl in pageHost.Controls)
+			{
+				ILocalizable localizable = ctrl as ILocalizable;
+				if (localizable != null)
+				{
+					localizable.ApplyLanguage(_isEnglish);
+				}
+
+				foreach (Control child in ctrl.Controls)
+				{
+					ILocalizable childLocalizable = child as ILocalizable;
+					if (childLocalizable != null)
+					{
+						childLocalizable.ApplyLanguage(_isEnglish);
+					}
+				}
+			}
 		}
 
 		#endregion
