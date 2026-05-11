@@ -321,6 +321,8 @@ namespace Aron_V3
 				lblPlcStatus.Text = "▦  PLC: Connected";
 				lblVersion.Text = "Version: 1.0.0.0";
 				btnExit.Text = "Exit";
+				btnProcessConfig.Text = "◇  Process";
+				btnCommunicateConfig.Text = "◇  Communication";
 			}
 			else
 			{
@@ -337,6 +339,8 @@ namespace Aron_V3
 				lblPlcStatus.Text = "▦  PLC:  已连接";
 				lblVersion.Text = "版本号:  1.0.0.0";
 				btnExit.Text = "退出";
+				btnProcessConfig.Text = "◇  流程配置";
+				btnCommunicateConfig.Text = "◇  通讯配置";
 			}
 		}
 

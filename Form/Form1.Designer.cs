@@ -63,6 +63,10 @@
 			this.tableLayoutPanelCameras = new System.Windows.Forms.TableLayoutPanel();
 			this.resultPanel = new System.Windows.Forms.Panel();
 			this.dgvResults = new System.Windows.Forms.DataGridView();
+			this.dataGridViewTextBoxColumn1 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.dataGridViewTextBoxColumn2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.dataGridViewTextBoxColumn4 = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.logPanel = new System.Windows.Forms.Panel();
 			this.lstLog = new System.Windows.Forms.ListBox();
 			this.cmbLogLevel = new System.Windows.Forms.ComboBox();
@@ -73,10 +77,8 @@
 			this.lblVersion = new System.Windows.Forms.Label();
 			this.lblPlcStatus = new System.Windows.Forms.Label();
 			this.lblCameraStatus = new System.Windows.Forms.Label();
-			this.dataGridViewTextBoxColumn1 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.dataGridViewTextBoxColumn2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.dataGridViewTextBoxColumn4 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.btnProcessConfig = new System.Windows.Forms.Button();
+			this.btnCommunicateConfig = new System.Windows.Forms.Button();
 			this.rootLayout.SuspendLayout();
 			this.titlePanel.SuspendLayout();
 			this.toolbarPanel.SuspendLayout();
@@ -167,6 +169,8 @@
 			// toolbarPanel
 			// 
 			this.toolbarPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(20)))), ((int)(((byte)(36)))));
+			this.toolbarPanel.Controls.Add(this.btnCommunicateConfig);
+			this.toolbarPanel.Controls.Add(this.btnProcessConfig);
 			this.toolbarPanel.Controls.Add(this.btnLogin);
 			this.toolbarPanel.Controls.Add(this.btnAlgorithmConfig);
 			this.toolbarPanel.Controls.Add(this.btnDatabase);
@@ -223,7 +227,7 @@
 			this.btnDatabase.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnDatabase.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F, System.Drawing.FontStyle.Bold);
 			this.btnDatabase.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(225)))), ((int)(((byte)(235)))), ((int)(((byte)(245)))));
-			this.btnDatabase.Location = new System.Drawing.Point(314, 10);
+			this.btnDatabase.Location = new System.Drawing.Point(624, 11);
 			this.btnDatabase.Name = "btnDatabase";
 			this.btnDatabase.Size = new System.Drawing.Size(130, 50);
 			this.btnDatabase.TabIndex = 2;
@@ -240,7 +244,7 @@
 			this.btnSystemSetting.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnSystemSetting.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F, System.Drawing.FontStyle.Bold);
 			this.btnSystemSetting.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(225)))), ((int)(((byte)(235)))), ((int)(((byte)(245)))));
-			this.btnSystemSetting.Location = new System.Drawing.Point(452, 10);
+			this.btnSystemSetting.Location = new System.Drawing.Point(762, 11);
 			this.btnSystemSetting.Name = "btnSystemSetting";
 			this.btnSystemSetting.Size = new System.Drawing.Size(145, 50);
 			this.btnSystemSetting.TabIndex = 3;
@@ -257,7 +261,7 @@
 			this.btnStop.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnStop.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F, System.Drawing.FontStyle.Bold);
 			this.btnStop.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(235)))), ((int)(((byte)(54)))), ((int)(((byte)(65)))));
-			this.btnStop.Location = new System.Drawing.Point(605, 10);
+			this.btnStop.Location = new System.Drawing.Point(915, 11);
 			this.btnStop.Name = "btnStop";
 			this.btnStop.Size = new System.Drawing.Size(120, 50);
 			this.btnStop.TabIndex = 4;
@@ -355,6 +359,34 @@
 			this.dgvResults.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
 			this.dgvResults.Size = new System.Drawing.Size(329, 507);
 			this.dgvResults.TabIndex = 0;
+			// 
+			// dataGridViewTextBoxColumn1
+			// 
+			this.dataGridViewTextBoxColumn1.HeaderText = "Camera";
+			this.dataGridViewTextBoxColumn1.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn1.Name = "dataGridViewTextBoxColumn1";
+			this.dataGridViewTextBoxColumn1.ReadOnly = true;
+			// 
+			// dataGridViewTextBoxColumn2
+			// 
+			this.dataGridViewTextBoxColumn2.HeaderText = "Item";
+			this.dataGridViewTextBoxColumn2.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn2.Name = "dataGridViewTextBoxColumn2";
+			this.dataGridViewTextBoxColumn2.ReadOnly = true;
+			// 
+			// dataGridViewTextBoxColumn3
+			// 
+			this.dataGridViewTextBoxColumn3.HeaderText = "Value";
+			this.dataGridViewTextBoxColumn3.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
+			this.dataGridViewTextBoxColumn3.ReadOnly = true;
+			// 
+			// dataGridViewTextBoxColumn4
+			// 
+			this.dataGridViewTextBoxColumn4.HeaderText = "Time";
+			this.dataGridViewTextBoxColumn4.MinimumWidth = 8;
+			this.dataGridViewTextBoxColumn4.Name = "dataGridViewTextBoxColumn4";
+			this.dataGridViewTextBoxColumn4.ReadOnly = true;
 			// 
 			// logPanel
 			// 
@@ -499,33 +531,37 @@
 			this.lblCameraStatus.Text = "▣  相机:  已连接";
 			this.lblCameraStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
 			// 
-			// dataGridViewTextBoxColumn1
+			// btnProcessConfig
 			// 
-			this.dataGridViewTextBoxColumn1.HeaderText = "Camera";
-			this.dataGridViewTextBoxColumn1.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn1.Name = "dataGridViewTextBoxColumn1";
-			this.dataGridViewTextBoxColumn1.ReadOnly = true;
+			this.btnProcessConfig.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(20)))), ((int)(((byte)(36)))));
+			this.btnProcessConfig.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(28)))), ((int)(((byte)(58)))), ((int)(((byte)(82)))));
+			this.btnProcessConfig.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(22)))), ((int)(((byte)(70)))), ((int)(((byte)(105)))));
+			this.btnProcessConfig.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(48)))), ((int)(((byte)(78)))));
+			this.btnProcessConfig.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnProcessConfig.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F, System.Drawing.FontStyle.Bold);
+			this.btnProcessConfig.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(225)))), ((int)(((byte)(235)))), ((int)(((byte)(245)))));
+			this.btnProcessConfig.Location = new System.Drawing.Point(312, 10);
+			this.btnProcessConfig.Name = "btnProcessConfig";
+			this.btnProcessConfig.Size = new System.Drawing.Size(150, 50);
+			this.btnProcessConfig.TabIndex = 5;
+			this.btnProcessConfig.Text = "◇  流程配置";
+			this.btnProcessConfig.UseVisualStyleBackColor = false;
 			// 
-			// dataGridViewTextBoxColumn2
+			// btnCommunicateConfig
 			// 
-			this.dataGridViewTextBoxColumn2.HeaderText = "Item";
-			this.dataGridViewTextBoxColumn2.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn2.Name = "dataGridViewTextBoxColumn2";
-			this.dataGridViewTextBoxColumn2.ReadOnly = true;
-			// 
-			// dataGridViewTextBoxColumn3
-			// 
-			this.dataGridViewTextBoxColumn3.HeaderText = "Value";
-			this.dataGridViewTextBoxColumn3.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
-			this.dataGridViewTextBoxColumn3.ReadOnly = true;
-			// 
-			// dataGridViewTextBoxColumn4
-			// 
-			this.dataGridViewTextBoxColumn4.HeaderText = "Time";
-			this.dataGridViewTextBoxColumn4.MinimumWidth = 8;
-			this.dataGridViewTextBoxColumn4.Name = "dataGridViewTextBoxColumn4";
-			this.dataGridViewTextBoxColumn4.ReadOnly = true;
+			this.btnCommunicateConfig.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(20)))), ((int)(((byte)(36)))));
+			this.btnCommunicateConfig.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(28)))), ((int)(((byte)(58)))), ((int)(((byte)(82)))));
+			this.btnCommunicateConfig.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(22)))), ((int)(((byte)(70)))), ((int)(((byte)(105)))));
+			this.btnCommunicateConfig.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(48)))), ((int)(((byte)(78)))));
+			this.btnCommunicateConfig.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnCommunicateConfig.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F, System.Drawing.FontStyle.Bold);
+			this.btnCommunicateConfig.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(225)))), ((int)(((byte)(235)))), ((int)(((byte)(245)))));
+			this.btnCommunicateConfig.Location = new System.Drawing.Point(468, 11);
+			this.btnCommunicateConfig.Name = "btnCommunicateConfig";
+			this.btnCommunicateConfig.Size = new System.Drawing.Size(150, 50);
+			this.btnCommunicateConfig.TabIndex = 6;
+			this.btnCommunicateConfig.Text = "◇  通讯配置";
+			this.btnCommunicateConfig.UseVisualStyleBackColor = false;
 			// 
 			// Form1
 			// 
@@ -557,5 +593,7 @@
 		private System.Windows.Forms.DataGridViewTextBoxColumn dataGridViewTextBoxColumn2;
 		private System.Windows.Forms.DataGridViewTextBoxColumn dataGridViewTextBoxColumn3;
 		private System.Windows.Forms.DataGridViewTextBoxColumn dataGridViewTextBoxColumn4;
+		private System.Windows.Forms.Button btnCommunicateConfig;
+		private System.Windows.Forms.Button btnProcessConfig;
 	}
 }
