@@ -14,10 +14,6 @@
 		private System.Windows.Forms.Panel panelTaskHeader;
 		private System.Windows.Forms.Label lblJobsTitle;
 		private System.Windows.Forms.Label lblTasksTitle;
-		private System.Windows.Forms.Button btnAddJob;
-		private System.Windows.Forms.Button btnDeleteJob;
-		private System.Windows.Forms.Button btnAddTask;
-		private System.Windows.Forms.Button btnDeleteTask;
 
 		private System.Windows.Forms.ListBox listJobs;
 		private System.Windows.Forms.ListBox listTasks;
@@ -60,22 +56,18 @@
 
 		private void InitializeComponent()
 		{
-			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
-			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
+			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
+			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
 			this.rootLayout = new System.Windows.Forms.TableLayoutPanel();
 			this.leftLayout = new System.Windows.Forms.TableLayoutPanel();
 			this.panelJobs = new System.Windows.Forms.Panel();
 			this.listJobs = new System.Windows.Forms.ListBox();
 			this.panelJobHeader = new System.Windows.Forms.Panel();
 			this.lblJobsTitle = new System.Windows.Forms.Label();
-			this.btnDeleteJob = new System.Windows.Forms.Button();
-			this.btnAddJob = new System.Windows.Forms.Button();
 			this.panelTasks = new System.Windows.Forms.Panel();
 			this.listTasks = new System.Windows.Forms.ListBox();
 			this.panelTaskHeader = new System.Windows.Forms.Panel();
 			this.lblTasksTitle = new System.Windows.Forms.Label();
-			this.btnDeleteTask = new System.Windows.Forms.Button();
-			this.btnAddTask = new System.Windows.Forms.Button();
 			this.panelStepList = new System.Windows.Forms.Panel();
 			this.listSteps = new System.Windows.Forms.ListBox();
 			this.panelStepIconBar = new System.Windows.Forms.FlowLayoutPanel();
@@ -180,8 +172,6 @@
 			// panelJobHeader
 			// 
 			this.panelJobHeader.Controls.Add(this.lblJobsTitle);
-			this.panelJobHeader.Controls.Add(this.btnDeleteJob);
-			this.panelJobHeader.Controls.Add(this.btnAddJob);
 			this.panelJobHeader.Dock = System.Windows.Forms.DockStyle.Top;
 			this.panelJobHeader.Location = new System.Drawing.Point(16, 14);
 			this.panelJobHeader.Margin = new System.Windows.Forms.Padding(0);
@@ -196,48 +186,10 @@
 			this.lblJobsTitle.ForeColor = System.Drawing.Color.White;
 			this.lblJobsTitle.Location = new System.Drawing.Point(0, 0);
 			this.lblJobsTitle.Name = "lblJobsTitle";
-			this.lblJobsTitle.Size = new System.Drawing.Size(198, 42);
+			this.lblJobsTitle.Size = new System.Drawing.Size(282, 42);
 			this.lblJobsTitle.TabIndex = 0;
 			this.lblJobsTitle.Text = "所有 JobID";
 			this.lblJobsTitle.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-			// 
-			// btnDeleteJob
-			// 
-			this.btnDeleteJob.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(21)))), ((int)(((byte)(39)))));
-			this.btnDeleteJob.Dock = System.Windows.Forms.DockStyle.Right;
-			this.btnDeleteJob.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(145)))), ((int)(((byte)(205)))));
-			this.btnDeleteJob.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(20)))), ((int)(((byte)(70)))), ((int)(((byte)(135)))));
-			this.btnDeleteJob.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(15)))), ((int)(((byte)(45)))), ((int)(((byte)(78)))));
-			this.btnDeleteJob.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnDeleteJob.Font = new System.Drawing.Font("Microsoft YaHei UI", 14F, System.Drawing.FontStyle.Bold);
-			this.btnDeleteJob.ForeColor = System.Drawing.Color.White;
-			this.btnDeleteJob.Location = new System.Drawing.Point(198, 0);
-			this.btnDeleteJob.Margin = new System.Windows.Forms.Padding(0);
-			this.btnDeleteJob.Name = "btnDeleteJob";
-			this.btnDeleteJob.Size = new System.Drawing.Size(42, 42);
-			this.btnDeleteJob.TabIndex = 2;
-			this.btnDeleteJob.Text = "-";
-			this.btnDeleteJob.UseVisualStyleBackColor = false;
-			this.btnDeleteJob.Click += new System.EventHandler(this.btnDeleteJob_Click);
-			// 
-			// btnAddJob
-			// 
-			this.btnAddJob.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(21)))), ((int)(((byte)(39)))));
-			this.btnAddJob.Dock = System.Windows.Forms.DockStyle.Right;
-			this.btnAddJob.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(145)))), ((int)(((byte)(205)))));
-			this.btnAddJob.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(20)))), ((int)(((byte)(70)))), ((int)(((byte)(135)))));
-			this.btnAddJob.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(15)))), ((int)(((byte)(45)))), ((int)(((byte)(78)))));
-			this.btnAddJob.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnAddJob.Font = new System.Drawing.Font("Microsoft YaHei UI", 14F, System.Drawing.FontStyle.Bold);
-			this.btnAddJob.ForeColor = System.Drawing.Color.White;
-			this.btnAddJob.Location = new System.Drawing.Point(240, 0);
-			this.btnAddJob.Margin = new System.Windows.Forms.Padding(0);
-			this.btnAddJob.Name = "btnAddJob";
-			this.btnAddJob.Size = new System.Drawing.Size(42, 42);
-			this.btnAddJob.TabIndex = 1;
-			this.btnAddJob.Text = "+";
-			this.btnAddJob.UseVisualStyleBackColor = false;
-			this.btnAddJob.Click += new System.EventHandler(this.btnAddJob_Click);
 			// 
 			// panelTasks
 			// 
@@ -271,8 +223,6 @@
 			// panelTaskHeader
 			// 
 			this.panelTaskHeader.Controls.Add(this.lblTasksTitle);
-			this.panelTaskHeader.Controls.Add(this.btnDeleteTask);
-			this.panelTaskHeader.Controls.Add(this.btnAddTask);
 			this.panelTaskHeader.Dock = System.Windows.Forms.DockStyle.Top;
 			this.panelTaskHeader.Location = new System.Drawing.Point(16, 14);
 			this.panelTaskHeader.Margin = new System.Windows.Forms.Padding(0);
@@ -287,48 +237,10 @@
 			this.lblTasksTitle.ForeColor = System.Drawing.Color.White;
 			this.lblTasksTitle.Location = new System.Drawing.Point(0, 0);
 			this.lblTasksTitle.Name = "lblTasksTitle";
-			this.lblTasksTitle.Size = new System.Drawing.Size(198, 42);
+			this.lblTasksTitle.Size = new System.Drawing.Size(282, 42);
 			this.lblTasksTitle.TabIndex = 0;
 			this.lblTasksTitle.Text = "所有 task";
 			this.lblTasksTitle.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-			// 
-			// btnDeleteTask
-			// 
-			this.btnDeleteTask.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(21)))), ((int)(((byte)(39)))));
-			this.btnDeleteTask.Dock = System.Windows.Forms.DockStyle.Right;
-			this.btnDeleteTask.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(145)))), ((int)(((byte)(205)))));
-			this.btnDeleteTask.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(20)))), ((int)(((byte)(70)))), ((int)(((byte)(135)))));
-			this.btnDeleteTask.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(15)))), ((int)(((byte)(45)))), ((int)(((byte)(78)))));
-			this.btnDeleteTask.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnDeleteTask.Font = new System.Drawing.Font("Microsoft YaHei UI", 14F, System.Drawing.FontStyle.Bold);
-			this.btnDeleteTask.ForeColor = System.Drawing.Color.White;
-			this.btnDeleteTask.Location = new System.Drawing.Point(198, 0);
-			this.btnDeleteTask.Margin = new System.Windows.Forms.Padding(0);
-			this.btnDeleteTask.Name = "btnDeleteTask";
-			this.btnDeleteTask.Size = new System.Drawing.Size(42, 42);
-			this.btnDeleteTask.TabIndex = 2;
-			this.btnDeleteTask.Text = "-";
-			this.btnDeleteTask.UseVisualStyleBackColor = false;
-			this.btnDeleteTask.Click += new System.EventHandler(this.btnDeleteTask_Click);
-			// 
-			// btnAddTask
-			// 
-			this.btnAddTask.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(21)))), ((int)(((byte)(39)))));
-			this.btnAddTask.Dock = System.Windows.Forms.DockStyle.Right;
-			this.btnAddTask.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(145)))), ((int)(((byte)(205)))));
-			this.btnAddTask.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(20)))), ((int)(((byte)(70)))), ((int)(((byte)(135)))));
-			this.btnAddTask.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(15)))), ((int)(((byte)(45)))), ((int)(((byte)(78)))));
-			this.btnAddTask.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnAddTask.Font = new System.Drawing.Font("Microsoft YaHei UI", 14F, System.Drawing.FontStyle.Bold);
-			this.btnAddTask.ForeColor = System.Drawing.Color.White;
-			this.btnAddTask.Location = new System.Drawing.Point(240, 0);
-			this.btnAddTask.Margin = new System.Windows.Forms.Padding(0);
-			this.btnAddTask.Name = "btnAddTask";
-			this.btnAddTask.Size = new System.Drawing.Size(42, 42);
-			this.btnAddTask.TabIndex = 1;
-			this.btnAddTask.Text = "+";
-			this.btnAddTask.UseVisualStyleBackColor = false;
-			this.btnAddTask.Click += new System.EventHandler(this.btnAddTask_Click);
 			// 
 			// panelStepList
 			// 
@@ -490,27 +402,27 @@
 			this.dgvSteps.AllowUserToDeleteRows = false;
 			this.dgvSteps.AutoSizeColumnsMode = System.Windows.Forms.DataGridViewAutoSizeColumnsMode.Fill;
 			this.dgvSteps.BackgroundColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(14)))), ((int)(((byte)(28)))));
-			dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-			dataGridViewCellStyle3.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
-			dataGridViewCellStyle3.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-			dataGridViewCellStyle3.ForeColor = System.Drawing.Color.White;
-			dataGridViewCellStyle3.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
-			dataGridViewCellStyle3.SelectionForeColor = System.Drawing.Color.White;
-			this.dgvSteps.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle3;
+			dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+			dataGridViewCellStyle1.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
+			dataGridViewCellStyle1.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+			dataGridViewCellStyle1.ForeColor = System.Drawing.Color.White;
+			dataGridViewCellStyle1.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
+			dataGridViewCellStyle1.SelectionForeColor = System.Drawing.Color.White;
+			this.dgvSteps.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
 			this.dgvSteps.ColumnHeadersHeight = 42;
 			this.dgvSteps.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.colStep,
             this.colImageSource,
             this.colRunOrder,
             this.colRemark});
-			dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-			dataGridViewCellStyle4.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(14)))), ((int)(((byte)(28)))));
-			dataGridViewCellStyle4.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-			dataGridViewCellStyle4.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(230)))), ((int)(((byte)(240)))));
-			dataGridViewCellStyle4.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(125)))), ((int)(((byte)(210)))));
-			dataGridViewCellStyle4.SelectionForeColor = System.Drawing.Color.White;
-			dataGridViewCellStyle4.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-			this.dgvSteps.DefaultCellStyle = dataGridViewCellStyle4;
+			dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+			dataGridViewCellStyle2.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(14)))), ((int)(((byte)(28)))));
+			dataGridViewCellStyle2.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+			dataGridViewCellStyle2.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(230)))), ((int)(((byte)(240)))));
+			dataGridViewCellStyle2.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(125)))), ((int)(((byte)(210)))));
+			dataGridViewCellStyle2.SelectionForeColor = System.Drawing.Color.White;
+			dataGridViewCellStyle2.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+			this.dgvSteps.DefaultCellStyle = dataGridViewCellStyle2;
 			this.dgvSteps.Dock = System.Windows.Forms.DockStyle.Fill;
 			this.dgvSteps.EnableHeadersVisualStyles = false;
 			this.dgvSteps.GridColor = System.Drawing.Color.FromArgb(((int)(((byte)(55)))), ((int)(((byte)(80)))), ((int)(((byte)(105)))));

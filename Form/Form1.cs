@@ -307,9 +307,15 @@ namespace Aron_V3
 		private void ShowCommunicationPage()
 		{
 			if (_communicationPage == null)
-				_communicationPage = CreatePlaceholderPage(_isEnglish ? "Communication Configuration" : "通讯配置");
+			{
+				CommunicationConfigControl page = new CommunicationConfigControl();
+				page.Dock = DockStyle.Fill;
+				_communicationPage = page;
+				pageHost.Controls.Add(_communicationPage);
+			}
 
 			ShowCachedPage(_communicationPage);
+			ApplyLanguageToPages();
 		}
 
 		private void ShowDatabasePage()

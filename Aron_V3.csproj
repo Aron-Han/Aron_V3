@@ -66,6 +66,14 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="CommunicationConfigControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="CommunicationConfigControl.Designer.cs">
+      <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="CommunicationConfigModels.cs" />
+    <Compile Include="CoreFlowClasses.cs" />
     <Compile Include="FlowConfigForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -99,6 +107,9 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <EmbeddedResource Include="CommunicationConfigControl.resx">
+      <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="FlowConfigForm.resx">
       <DependentUpon>FlowConfigForm.cs</DependentUpon>
     </EmbeddedResource>
