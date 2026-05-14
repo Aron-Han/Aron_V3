@@ -26,6 +26,8 @@ namespace Aron_V3
 		private Timer _autoLogoutTimer;
 		private ContextMenuStrip _userMenu;
 		private UserActivityMessageFilter _activityMessageFilter;
+
+
 		#region Run State
 
 		private enum RunState
@@ -258,6 +260,7 @@ namespace Aron_V3
 
 			InitLoginSystem();
 			InitRunStatusButton();
+			PreCreateAlgorithmPageIfEnabled();
 		}
 
 		private void Form1_Load(object sender, EventArgs e)
@@ -504,8 +507,10 @@ namespace Aron_V3
 
 		private void ShowAlgorithmPage()
 		{
-			if (_algorithmPage == null)
-				_algorithmPage = CreatePlaceholderPage(_isEnglish ? "Algorithm Configuration" : "算法配置");
+			if (_algorithmPage == null || _algorithmPage.IsDisposed)
+			{
+				_algorithmPage = new AlgorithmModuleControl();
+			}
 
 			ShowCachedPage(_algorithmPage);
 		}
@@ -981,15 +986,6 @@ namespace Aron_V3
 		{
 			LoginSession.Logout();
 			UpdateLoginUi();
-
-			if (autoLogout)
-			{
-				MessageBox.Show(
-					"User has been logged out automatically because there was no mouse or keyboard operation for the configured time.",
-					"Auto Logout",
-					MessageBoxButtons.OK,
-					MessageBoxIcon.Information);
-			}
 		}
 
 		private void UpdateLoginUi()
@@ -1019,6 +1015,35 @@ namespace Aron_V3
 		}
 
 
+		#endregion
+
+		#region Algorithm Page Preload
+		private void PreCreateAlgorithmPageIfEnabled()
+		{
+			try
+			{
+				AlgorithmModuleConfig config = AlgorithmModuleConfigStore.LoadOrCreateDefault();
+
+				if (config.EnableVpp || config.EnableScript || config.EnableHdev || config.EnableVM)
+				{
+					if (_algorithmPage == null || _algorithmPage.IsDisposed)
+					{
+						_algorithmPage = new AlgorithmModuleControl();
+					}
+
+					AlgorithmModuleControl algorithmControl = _algorithmPage as AlgorithmModuleControl;
+
+					if (algorithmControl != null)
+					{
+						algorithmControl.StartPreloadIfNeeded();
+					}
+				}
+			}
+			catch
+			{
+				// 预加载失败不能影响主程序启动
+			}
+		}
 		#endregion
 
 	}
