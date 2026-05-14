@@ -32,7 +32,6 @@
 		private System.Windows.Forms.Label lblRunStatus;
 		private System.Windows.Forms.Label lblUser;
 		private System.Windows.Forms.Label lblRightDivider;
-		private System.Windows.Forms.Button btnMinimize;
 		private System.Windows.Forms.Button btnClose;
 		private System.Windows.Forms.Panel panelRightStatus;
 
@@ -80,16 +79,16 @@
 
 		private void InitializeComponent()
 		{
-			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle7 = new System.Windows.Forms.DataGridViewCellStyle();
-			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle8 = new System.Windows.Forms.DataGridViewCellStyle();
+			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
+			System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
 			this.rootLayout = new System.Windows.Forms.TableLayoutPanel();
 			this.titlePanel = new System.Windows.Forms.Panel();
 			this.navFlowPanel = new System.Windows.Forms.FlowLayoutPanel();
 			this.panelNavLogin = new System.Windows.Forms.Panel();
-			this.panelNavHardware = new System.Windows.Forms.Panel();
 			this.btnLogin = new System.Windows.Forms.Button();
-			this.btnHardwareConfig = new System.Windows.Forms.Button();
 			this.underlineLogin = new System.Windows.Forms.Panel();
+			this.panelNavHardware = new System.Windows.Forms.Panel();
+			this.btnHardwareConfig = new System.Windows.Forms.Button();
 			this.underlineHardwareConfig = new System.Windows.Forms.Panel();
 			this.panelNavAlgorithm = new System.Windows.Forms.Panel();
 			this.btnAlgorithmConfig = new System.Windows.Forms.Button();
@@ -111,7 +110,6 @@
 			this.underlineStop = new System.Windows.Forms.Panel();
 			this.panelRightStatus = new System.Windows.Forms.Panel();
 			this.btnClose = new System.Windows.Forms.Button();
-			this.btnMinimize = new System.Windows.Forms.Button();
 			this.lblUser = new System.Windows.Forms.Label();
 			this.lblRightDivider = new System.Windows.Forms.Label();
 			this.lblRunStatus = new System.Windows.Forms.Label();
@@ -141,6 +139,7 @@
 			this.titlePanel.SuspendLayout();
 			this.navFlowPanel.SuspendLayout();
 			this.panelNavLogin.SuspendLayout();
+			this.panelNavHardware.SuspendLayout();
 			this.panelNavAlgorithm.SuspendLayout();
 			this.panelNavProcess.SuspendLayout();
 			this.panelNavCommunication.SuspendLayout();
@@ -173,7 +172,7 @@
 			this.rootLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 92F));
 			this.rootLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
 			this.rootLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 40F));
-			this.rootLayout.Size = new System.Drawing.Size(1500, 850);
+			this.rootLayout.Size = new System.Drawing.Size(1728, 909);
 			this.rootLayout.TabIndex = 0;
 			// 
 			// titlePanel
@@ -186,7 +185,7 @@
 			this.titlePanel.Location = new System.Drawing.Point(0, 0);
 			this.titlePanel.Margin = new System.Windows.Forms.Padding(0);
 			this.titlePanel.Name = "titlePanel";
-			this.titlePanel.Size = new System.Drawing.Size(1500, 92);
+			this.titlePanel.Size = new System.Drawing.Size(1728, 92);
 			this.titlePanel.TabIndex = 0;
 			// 
 			// navFlowPanel
@@ -204,7 +203,7 @@
 			this.navFlowPanel.Location = new System.Drawing.Point(230, 0);
 			this.navFlowPanel.Margin = new System.Windows.Forms.Padding(0);
 			this.navFlowPanel.Name = "navFlowPanel";
-			this.navFlowPanel.Size = new System.Drawing.Size(910, 92);
+			this.navFlowPanel.Size = new System.Drawing.Size(1138, 92);
 			this.navFlowPanel.TabIndex = 0;
 			this.navFlowPanel.WrapContents = false;
 			// 
@@ -219,13 +218,6 @@
 			this.panelNavLogin.Size = new System.Drawing.Size(120, 92);
 			this.panelNavLogin.TabIndex = 0;
 			// 
-			// panelNavHardware
-			this.panelNavHardware.BackColor = System.Drawing.Color.FromArgb(3, 10, 20);
-			this.panelNavHardware.Controls.Add(this.btnHardwareConfig);
-			this.panelNavHardware.Controls.Add(this.underlineHardwareConfig);
-			this.panelNavHardware.Margin = new System.Windows.Forms.Padding(0);
-			this.panelNavHardware.Size = new System.Drawing.Size(135, 92);
-			//
 			// btnLogin
 			// 
 			this.btnLogin.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
@@ -244,20 +236,6 @@
 			this.btnLogin.UseVisualStyleBackColor = false;
 			this.btnLogin.Click += new System.EventHandler(this.btnLogin_Click);
 			// 
-			// btnHardwareConfig
-			this.btnHardwareConfig.BackColor = System.Drawing.Color.FromArgb(3, 10, 20);
-			this.btnHardwareConfig.Dock = System.Windows.Forms.DockStyle.Fill;
-			this.btnHardwareConfig.FlatAppearance.BorderSize = 0;
-			this.btnHardwareConfig.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(18, 50, 82);
-			this.btnHardwareConfig.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(14, 36, 62);
-			this.btnHardwareConfig.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnHardwareConfig.Font = new System.Drawing.Font("Microsoft YaHei UI", 10F, System.Drawing.FontStyle.Bold);
-			this.btnHardwareConfig.ForeColor = System.Drawing.Color.FromArgb(155, 170, 195);
-			this.btnHardwareConfig.Name = "btnHardwareConfig";
-			this.btnHardwareConfig.Text = "▣  硬件配置";
-			this.btnHardwareConfig.UseVisualStyleBackColor = false;
-			this.btnHardwareConfig.Click += new System.EventHandler(this.btnHardwareConfig_Click);
-			//
 			// underlineLogin
 			// 
 			this.underlineLogin.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(185)))), ((int)(((byte)(255)))));
@@ -268,19 +246,51 @@
 			this.underlineLogin.TabIndex = 1;
 			this.underlineLogin.Visible = false;
 			// 
+			// panelNavHardware
+			// 
+			this.panelNavHardware.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
+			this.panelNavHardware.Controls.Add(this.btnHardwareConfig);
+			this.panelNavHardware.Controls.Add(this.underlineHardwareConfig);
+			this.panelNavHardware.Location = new System.Drawing.Point(120, 0);
+			this.panelNavHardware.Margin = new System.Windows.Forms.Padding(0);
+			this.panelNavHardware.Name = "panelNavHardware";
+			this.panelNavHardware.Size = new System.Drawing.Size(135, 92);
+			this.panelNavHardware.TabIndex = 1;
+			// 
+			// btnHardwareConfig
+			// 
+			this.btnHardwareConfig.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
+			this.btnHardwareConfig.Dock = System.Windows.Forms.DockStyle.Fill;
+			this.btnHardwareConfig.FlatAppearance.BorderSize = 0;
+			this.btnHardwareConfig.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(50)))), ((int)(((byte)(82)))));
+			this.btnHardwareConfig.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(14)))), ((int)(((byte)(36)))), ((int)(((byte)(62)))));
+			this.btnHardwareConfig.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnHardwareConfig.Font = new System.Drawing.Font("Microsoft YaHei UI", 10F, System.Drawing.FontStyle.Bold);
+			this.btnHardwareConfig.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(155)))), ((int)(((byte)(170)))), ((int)(((byte)(195)))));
+			this.btnHardwareConfig.Location = new System.Drawing.Point(0, 0);
+			this.btnHardwareConfig.Name = "btnHardwareConfig";
+			this.btnHardwareConfig.Size = new System.Drawing.Size(135, 89);
+			this.btnHardwareConfig.TabIndex = 0;
+			this.btnHardwareConfig.Text = "▣  硬件配置";
+			this.btnHardwareConfig.UseVisualStyleBackColor = false;
+			this.btnHardwareConfig.Click += new System.EventHandler(this.btnHardwareConfig_Click);
+			// 
 			// underlineHardwareConfig
-			this.underlineHardwareConfig.BackColor = System.Drawing.Color.FromArgb(0, 185, 255);
+			// 
+			this.underlineHardwareConfig.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(185)))), ((int)(((byte)(255)))));
 			this.underlineHardwareConfig.Dock = System.Windows.Forms.DockStyle.Bottom;
-			this.underlineHardwareConfig.Height = 3;
+			this.underlineHardwareConfig.Location = new System.Drawing.Point(0, 89);
 			this.underlineHardwareConfig.Name = "underlineHardwareConfig";
+			this.underlineHardwareConfig.Size = new System.Drawing.Size(135, 3);
+			this.underlineHardwareConfig.TabIndex = 1;
 			this.underlineHardwareConfig.Visible = false;
-			//
+			// 
 			// panelNavAlgorithm
 			// 
 			this.panelNavAlgorithm.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelNavAlgorithm.Controls.Add(this.btnAlgorithmConfig);
 			this.panelNavAlgorithm.Controls.Add(this.underlineAlgorithmConfig);
-			this.panelNavAlgorithm.Location = new System.Drawing.Point(120, 0);
+			this.panelNavAlgorithm.Location = new System.Drawing.Point(255, 0);
 			this.panelNavAlgorithm.Margin = new System.Windows.Forms.Padding(0);
 			this.panelNavAlgorithm.Name = "panelNavAlgorithm";
 			this.panelNavAlgorithm.Size = new System.Drawing.Size(135, 92);
@@ -319,7 +329,7 @@
 			this.panelNavProcess.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelNavProcess.Controls.Add(this.btnProcessConfig);
 			this.panelNavProcess.Controls.Add(this.underlineProcessConfig);
-			this.panelNavProcess.Location = new System.Drawing.Point(255, 0);
+			this.panelNavProcess.Location = new System.Drawing.Point(390, 0);
 			this.panelNavProcess.Margin = new System.Windows.Forms.Padding(0);
 			this.panelNavProcess.Name = "panelNavProcess";
 			this.panelNavProcess.Size = new System.Drawing.Size(135, 92);
@@ -358,7 +368,7 @@
 			this.panelNavCommunication.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelNavCommunication.Controls.Add(this.btnCommunicateConfig);
 			this.panelNavCommunication.Controls.Add(this.underlineCommunicateConfig);
-			this.panelNavCommunication.Location = new System.Drawing.Point(390, 0);
+			this.panelNavCommunication.Location = new System.Drawing.Point(525, 0);
 			this.panelNavCommunication.Margin = new System.Windows.Forms.Padding(0);
 			this.panelNavCommunication.Name = "panelNavCommunication";
 			this.panelNavCommunication.Size = new System.Drawing.Size(135, 92);
@@ -397,7 +407,7 @@
 			this.panelNavDatabase.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelNavDatabase.Controls.Add(this.btnDatabase);
 			this.panelNavDatabase.Controls.Add(this.underlineDatabase);
-			this.panelNavDatabase.Location = new System.Drawing.Point(525, 0);
+			this.panelNavDatabase.Location = new System.Drawing.Point(660, 0);
 			this.panelNavDatabase.Margin = new System.Windows.Forms.Padding(0);
 			this.panelNavDatabase.Name = "panelNavDatabase";
 			this.panelNavDatabase.Size = new System.Drawing.Size(120, 92);
@@ -436,7 +446,7 @@
 			this.panelNavSystem.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelNavSystem.Controls.Add(this.btnSystemSetting);
 			this.panelNavSystem.Controls.Add(this.underlineSystemSetting);
-			this.panelNavSystem.Location = new System.Drawing.Point(645, 0);
+			this.panelNavSystem.Location = new System.Drawing.Point(780, 0);
 			this.panelNavSystem.Margin = new System.Windows.Forms.Padding(0);
 			this.panelNavSystem.Name = "panelNavSystem";
 			this.panelNavSystem.Size = new System.Drawing.Size(135, 92);
@@ -475,7 +485,7 @@
 			this.panelNavStop.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelNavStop.Controls.Add(this.btnStop);
 			this.panelNavStop.Controls.Add(this.underlineStop);
-			this.panelNavStop.Location = new System.Drawing.Point(780, 0);
+			this.panelNavStop.Location = new System.Drawing.Point(915, 0);
 			this.panelNavStop.Margin = new System.Windows.Forms.Padding(0);
 			this.panelNavStop.Name = "panelNavStop";
 			this.panelNavStop.Size = new System.Drawing.Size(110, 92);
@@ -495,9 +505,9 @@
 			this.btnStop.Name = "btnStop";
 			this.btnStop.Size = new System.Drawing.Size(110, 89);
 			this.btnStop.TabIndex = 0;
-			this.btnStop.Text = "□  停止";
+			this.btnStop.Text = "● 离线";
 			this.btnStop.UseVisualStyleBackColor = false;
-			this.btnStop.Click += new System.EventHandler(this.btnStop_Click);
+			this.btnStop.Click += new System.EventHandler(this.btnRunStatus_Click);
 			// 
 			// underlineStop
 			// 
@@ -513,12 +523,11 @@
 			// 
 			this.panelRightStatus.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
 			this.panelRightStatus.Controls.Add(this.btnClose);
-			this.panelRightStatus.Controls.Add(this.btnMinimize);
 			this.panelRightStatus.Controls.Add(this.lblUser);
 			this.panelRightStatus.Controls.Add(this.lblRightDivider);
 			this.panelRightStatus.Controls.Add(this.lblRunStatus);
 			this.panelRightStatus.Dock = System.Windows.Forms.DockStyle.Right;
-			this.panelRightStatus.Location = new System.Drawing.Point(1140, 0);
+			this.panelRightStatus.Location = new System.Drawing.Point(1368, 0);
 			this.panelRightStatus.Name = "panelRightStatus";
 			this.panelRightStatus.Size = new System.Drawing.Size(360, 92);
 			this.panelRightStatus.TabIndex = 1;
@@ -539,23 +548,6 @@
 			this.btnClose.Text = "×";
 			this.btnClose.UseVisualStyleBackColor = false;
 			this.btnClose.Click += new System.EventHandler(this.btnClose_Click);
-			// 
-			// btnMinimize
-			// 
-			this.btnMinimize.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
-			this.btnMinimize.FlatAppearance.BorderSize = 0;
-			this.btnMinimize.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(15)))), ((int)(((byte)(35)))), ((int)(((byte)(58)))));
-			this.btnMinimize.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(28)))), ((int)(((byte)(48)))));
-			this.btnMinimize.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnMinimize.Font = new System.Drawing.Font("Segoe UI", 13F, System.Drawing.FontStyle.Bold);
-			this.btnMinimize.ForeColor = System.Drawing.Color.White;
-			this.btnMinimize.Location = new System.Drawing.Point(292, 0);
-			this.btnMinimize.Name = "btnMinimize";
-			this.btnMinimize.Size = new System.Drawing.Size(34, 30);
-			this.btnMinimize.TabIndex = 2;
-			this.btnMinimize.Text = "—";
-			this.btnMinimize.UseVisualStyleBackColor = false;
-			this.btnMinimize.Click += new System.EventHandler(this.btnMinimize_Click);
 			// 
 			// lblUser
 			// 
@@ -608,6 +600,7 @@
 			this.lblLogo.TabIndex = 0;
 			this.lblLogo.Text = "B";
 			this.lblLogo.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+			this.lblLogo.Click += new System.EventHandler(this.btnMinimize_Click);
 			// 
 			// lblTitle
 			// 
@@ -619,6 +612,7 @@
 			this.lblTitle.TabIndex = 1;
 			this.lblTitle.Text = "Betterway\r\nVision-Base";
 			this.lblTitle.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+			this.lblTitle.Click += new System.EventHandler(this.btnMinimize_Click);
 			// 
 			// pageHost
 			// 
@@ -628,7 +622,7 @@
 			this.pageHost.Location = new System.Drawing.Point(0, 92);
 			this.pageHost.Margin = new System.Windows.Forms.Padding(0);
 			this.pageHost.Name = "pageHost";
-			this.pageHost.Size = new System.Drawing.Size(1500, 718);
+			this.pageHost.Size = new System.Drawing.Size(1728, 777);
 			this.pageHost.TabIndex = 1;
 			// 
 			// mainLayout
@@ -648,7 +642,7 @@
 			this.mainLayout.RowCount = 2;
 			this.mainLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 78F));
 			this.mainLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 22F));
-			this.mainLayout.Size = new System.Drawing.Size(1500, 718);
+			this.mainLayout.Size = new System.Drawing.Size(1728, 777);
 			this.mainLayout.TabIndex = 0;
 			// 
 			// tableLayoutPanelCameras
@@ -662,7 +656,7 @@
 			this.tableLayoutPanelCameras.Name = "tableLayoutPanelCameras";
 			this.tableLayoutPanelCameras.RowCount = 1;
 			this.tableLayoutPanelCameras.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-			this.tableLayoutPanelCameras.Size = new System.Drawing.Size(1127, 553);
+			this.tableLayoutPanelCameras.Size = new System.Drawing.Size(1301, 599);
 			this.tableLayoutPanelCameras.TabIndex = 0;
 			// 
 			// resultPanel
@@ -670,11 +664,11 @@
 			this.resultPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
 			this.resultPanel.Controls.Add(this.dgvResults);
 			this.resultPanel.Dock = System.Windows.Forms.DockStyle.Fill;
-			this.resultPanel.Location = new System.Drawing.Point(1143, 8);
+			this.resultPanel.Location = new System.Drawing.Point(1317, 8);
 			this.resultPanel.Margin = new System.Windows.Forms.Padding(8, 0, 0, 8);
 			this.resultPanel.Name = "resultPanel";
 			this.resultPanel.Padding = new System.Windows.Forms.Padding(10);
-			this.resultPanel.Size = new System.Drawing.Size(349, 545);
+			this.resultPanel.Size = new System.Drawing.Size(403, 591);
 			this.resultPanel.TabIndex = 1;
 			// 
 			// dgvResults
@@ -685,28 +679,28 @@
 			this.dgvResults.AutoSizeColumnsMode = System.Windows.Forms.DataGridViewAutoSizeColumnsMode.Fill;
 			this.dgvResults.BackgroundColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
 			this.dgvResults.BorderStyle = System.Windows.Forms.BorderStyle.None;
-			dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-			dataGridViewCellStyle7.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
-			dataGridViewCellStyle7.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-			dataGridViewCellStyle7.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(190)))), ((int)(((byte)(205)))), ((int)(((byte)(220)))));
-			dataGridViewCellStyle7.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
-			dataGridViewCellStyle7.SelectionForeColor = System.Drawing.Color.White;
-			dataGridViewCellStyle7.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
-			this.dgvResults.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle7;
+			dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+			dataGridViewCellStyle1.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
+			dataGridViewCellStyle1.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+			dataGridViewCellStyle1.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(190)))), ((int)(((byte)(205)))), ((int)(((byte)(220)))));
+			dataGridViewCellStyle1.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(12)))), ((int)(((byte)(29)))), ((int)(((byte)(50)))));
+			dataGridViewCellStyle1.SelectionForeColor = System.Drawing.Color.White;
+			dataGridViewCellStyle1.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
+			this.dgvResults.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
 			this.dgvResults.ColumnHeadersHeight = 32;
 			this.dgvResults.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.colCamera,
             this.colItem,
             this.colValue,
             this.colTime});
-			dataGridViewCellStyle8.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-			dataGridViewCellStyle8.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
-			dataGridViewCellStyle8.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-			dataGridViewCellStyle8.ForeColor = System.Drawing.Color.WhiteSmoke;
-			dataGridViewCellStyle8.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(25)))), ((int)(((byte)(78)))), ((int)(((byte)(145)))));
-			dataGridViewCellStyle8.SelectionForeColor = System.Drawing.Color.White;
-			dataGridViewCellStyle8.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-			this.dgvResults.DefaultCellStyle = dataGridViewCellStyle8;
+			dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+			dataGridViewCellStyle2.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
+			dataGridViewCellStyle2.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+			dataGridViewCellStyle2.ForeColor = System.Drawing.Color.WhiteSmoke;
+			dataGridViewCellStyle2.SelectionBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(25)))), ((int)(((byte)(78)))), ((int)(((byte)(145)))));
+			dataGridViewCellStyle2.SelectionForeColor = System.Drawing.Color.White;
+			dataGridViewCellStyle2.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+			this.dgvResults.DefaultCellStyle = dataGridViewCellStyle2;
 			this.dgvResults.Dock = System.Windows.Forms.DockStyle.Fill;
 			this.dgvResults.EnableHeadersVisualStyles = false;
 			this.dgvResults.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
@@ -719,7 +713,7 @@
 			this.dgvResults.RowHeadersWidth = 62;
 			this.dgvResults.RowTemplate.Height = 30;
 			this.dgvResults.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
-			this.dgvResults.Size = new System.Drawing.Size(329, 525);
+			this.dgvResults.Size = new System.Drawing.Size(383, 571);
 			this.dgvResults.TabIndex = 0;
 			// 
 			// colCamera
@@ -759,11 +753,11 @@
 			this.logPanel.Controls.Add(this.btnClearLog);
 			this.logPanel.Controls.Add(this.lblLogTitle);
 			this.logPanel.Dock = System.Windows.Forms.DockStyle.Fill;
-			this.logPanel.Location = new System.Drawing.Point(8, 561);
+			this.logPanel.Location = new System.Drawing.Point(8, 607);
 			this.logPanel.Margin = new System.Windows.Forms.Padding(0);
 			this.logPanel.Name = "logPanel";
 			this.logPanel.Padding = new System.Windows.Forms.Padding(12, 6, 12, 8);
-			this.logPanel.Size = new System.Drawing.Size(1484, 157);
+			this.logPanel.Size = new System.Drawing.Size(1712, 170);
 			this.logPanel.TabIndex = 2;
 			// 
 			// lstLog
@@ -777,7 +771,7 @@
 			this.lstLog.ItemHeight = 22;
 			this.lstLog.Location = new System.Drawing.Point(12, 36);
 			this.lstLog.Name = "lstLog";
-			this.lstLog.Size = new System.Drawing.Size(1460, 113);
+			this.lstLog.Size = new System.Drawing.Size(1688, 126);
 			this.lstLog.TabIndex = 0;
 			// 
 			// cmbLogLevel
@@ -793,7 +787,7 @@
             "OK",
             "NG",
             "ERROR"});
-			this.cmbLogLevel.Location = new System.Drawing.Point(3598, 8);
+			this.cmbLogLevel.Location = new System.Drawing.Point(3826, 8);
 			this.cmbLogLevel.Name = "cmbLogLevel";
 			this.cmbLogLevel.Size = new System.Drawing.Size(120, 32);
 			this.cmbLogLevel.TabIndex = 1;
@@ -805,7 +799,7 @@
 			this.btnClearLog.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(45)))), ((int)(((byte)(75)))), ((int)(((byte)(100)))));
 			this.btnClearLog.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnClearLog.ForeColor = System.Drawing.Color.WhiteSmoke;
-			this.btnClearLog.Location = new System.Drawing.Point(3728, 7);
+			this.btnClearLog.Location = new System.Drawing.Point(3956, 7);
 			this.btnClearLog.Name = "btnClearLog";
 			this.btnClearLog.Size = new System.Drawing.Size(70, 26);
 			this.btnClearLog.TabIndex = 2;
@@ -819,7 +813,7 @@
 			this.lblLogTitle.ForeColor = System.Drawing.Color.WhiteSmoke;
 			this.lblLogTitle.Location = new System.Drawing.Point(12, 6);
 			this.lblLogTitle.Name = "lblLogTitle";
-			this.lblLogTitle.Size = new System.Drawing.Size(1460, 30);
+			this.lblLogTitle.Size = new System.Drawing.Size(1688, 30);
 			this.lblLogTitle.TabIndex = 3;
 			this.lblLogTitle.Text = "Log日志";
 			this.lblLogTitle.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
@@ -832,24 +826,23 @@
 			this.statusPanel.Controls.Add(this.lblPlcStatus);
 			this.statusPanel.Controls.Add(this.lblCameraStatus);
 			this.statusPanel.Dock = System.Windows.Forms.DockStyle.Fill;
-			this.statusPanel.Location = new System.Drawing.Point(0, 810);
+			this.statusPanel.Location = new System.Drawing.Point(0, 869);
 			this.statusPanel.Margin = new System.Windows.Forms.Padding(0);
 			this.statusPanel.Name = "statusPanel";
-			this.statusPanel.Size = new System.Drawing.Size(1500, 40);
+			this.statusPanel.Size = new System.Drawing.Size(1728, 40);
 			this.statusPanel.TabIndex = 2;
 			// 
 			// btnLanguage
 			// 
-			this.btnLanguage.Anchor = System.Windows.Forms.AnchorStyles.None;
-			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(8, 24, 38);
+			this.btnLanguage.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(8)))), ((int)(((byte)(24)))), ((int)(((byte)(38)))));
 			this.btnLanguage.Dock = System.Windows.Forms.DockStyle.Right;
-			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(45, 75, 100);
-			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(22, 70, 105);
-			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(18, 48, 78);
+			this.btnLanguage.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(45)))), ((int)(((byte)(75)))), ((int)(((byte)(100)))));
+			this.btnLanguage.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(22)))), ((int)(((byte)(70)))), ((int)(((byte)(105)))));
+			this.btnLanguage.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(48)))), ((int)(((byte)(78)))));
 			this.btnLanguage.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnLanguage.Font = new System.Drawing.Font("Microsoft YaHei UI", 8.5F, System.Drawing.FontStyle.Bold);
-			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(220, 230, 240);
-			this.btnLanguage.Location = new System.Drawing.Point(1220, 0);
+			this.btnLanguage.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(230)))), ((int)(((byte)(240)))));
+			this.btnLanguage.Location = new System.Drawing.Point(1448, 0);
 			this.btnLanguage.Name = "btnLanguage";
 			this.btnLanguage.Size = new System.Drawing.Size(100, 40);
 			this.btnLanguage.TabIndex = 0;
@@ -862,7 +855,7 @@
 			this.lblVersion.Dock = System.Windows.Forms.DockStyle.Right;
 			this.lblVersion.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
 			this.lblVersion.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(190)))), ((int)(((byte)(200)))), ((int)(((byte)(210)))));
-			this.lblVersion.Location = new System.Drawing.Point(1320, 0);
+			this.lblVersion.Location = new System.Drawing.Point(1548, 0);
 			this.lblVersion.Name = "lblVersion";
 			this.lblVersion.Size = new System.Drawing.Size(180, 40);
 			this.lblVersion.TabIndex = 1;
@@ -898,7 +891,7 @@
 			// 
 			this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;
 			this.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(6)))), ((int)(((byte)(14)))), ((int)(((byte)(25)))));
-			this.ClientSize = new System.Drawing.Size(1500, 850);
+			this.ClientSize = new System.Drawing.Size(1728, 909);
 			this.Controls.Add(this.rootLayout);
 			this.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
 			this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
@@ -912,6 +905,7 @@
 			this.titlePanel.ResumeLayout(false);
 			this.navFlowPanel.ResumeLayout(false);
 			this.panelNavLogin.ResumeLayout(false);
+			this.panelNavHardware.ResumeLayout(false);
 			this.panelNavAlgorithm.ResumeLayout(false);
 			this.panelNavProcess.ResumeLayout(false);
 			this.panelNavCommunication.ResumeLayout(false);

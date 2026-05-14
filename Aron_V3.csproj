@@ -66,32 +66,43 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="CommunicationConfigControl.cs">
+    <Compile Include="Form\ChangePasswordForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="UserActivityMessageFilter.cs" />
+    <Compile Include="User_Control\CommunicationConfigControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="CommunicationConfigControl.Designer.cs">
+    <Compile Include="User_Control\CommunicationConfigControl.Designer.cs">
       <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
     </Compile>
     <Compile Include="CommunicationConfigModels.cs" />
     <Compile Include="CoreFlowClasses.cs" />
-    <Compile Include="FlowConfigForm.cs">
+    <Compile Include="Form\FlowConfigForm.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="FlowConfigForm.Designer.cs">
+    <Compile Include="Form\FlowConfigForm.Designer.cs">
       <DependentUpon>FlowConfigForm.cs</DependentUpon>
     </Compile>
     <Compile Include="ILocalizable.cs" />
-    <Compile Include="TaskSchedulerControl.cs">
+    <Compile Include="Login\LoginForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="User_Control\TaskSchedulerControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="TaskSchedulerControl.Designer.cs">
+    <Compile Include="User_Control\TaskSchedulerControl.Designer.cs">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </Compile>
-    <Compile Include="TriggerManagerControl.cs">
+    <Compile Include="User_Control\TriggerManagerControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="TriggerManagerControl.Designer.cs">
+    <Compile Include="User_Control\TriggerManagerControl.Designer.cs">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Login\UserAccountModels.cs" />
+    <Compile Include="Login\UserManagerForm.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Include="User_Control\CameraViewControl.cs">
       <SubType>UserControl</SubType>
@@ -107,10 +118,10 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <EmbeddedResource Include="CommunicationConfigControl.resx">
+    <EmbeddedResource Include="User_Control\CommunicationConfigControl.resx">
       <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="FlowConfigForm.resx">
+    <EmbeddedResource Include="Form\FlowConfigForm.resx">
       <DependentUpon>FlowConfigForm.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Form\Form1.resx">
@@ -125,10 +136,10 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
-    <EmbeddedResource Include="TaskSchedulerControl.resx">
+    <EmbeddedResource Include="User_Control\TaskSchedulerControl.resx">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="TriggerManagerControl.resx">
+    <EmbeddedResource Include="User_Control\TriggerManagerControl.resx">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="User_Control\CameraViewControl.resx">

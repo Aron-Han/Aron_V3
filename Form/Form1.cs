@@ -23,6 +23,209 @@ namespace Aron_V3
 		private Point _dragStartPoint;
 		private Point _formStartPoint;
 
+		private Timer _autoLogoutTimer;
+		private ContextMenuStrip _userMenu;
+		private UserActivityMessageFilter _activityMessageFilter;
+		#region Run State
+
+		private enum RunState
+		{
+			Offline = 0,
+			RunningNoCommunication = 1,
+			RunningReady = 2
+		}
+
+		private RunState _runState = RunState.Offline;
+
+		// 这个变量代表“通讯是否已建立”。
+		// 后续需要和真实 PLC / TCP / Profinet / S7 连接状态绑定。
+		private bool _communicationConnected = false;
+
+		// 定时刷新运行按钮状态。
+		private Timer _runStatusTimer;
+
+		private void InitRunStatusButton()
+		{
+			// 顶部导航中的 btnStop 不再显示，避免和右上角 lblRunStatus 重复。
+			if (panelNavStop != null)
+			{
+				panelNavStop.Visible = false;
+				panelNavStop.Width = 0;
+			}
+
+			if (btnStop != null)
+			{
+				btnStop.Visible = false;
+				btnStop.Enabled = false;
+				btnStop.Click -= btnRunStatus_Click;
+			}
+
+			if (underlineStop != null)
+			{
+				underlineStop.Visible = false;
+			}
+
+			// 右上角运行状态作为唯一运行/离线状态按钮。
+			lblRunStatus.Cursor = Cursors.Hand;
+			lblRunStatus.Click -= lblRunStatus_Click;
+			lblRunStatus.Click += lblRunStatus_Click;
+
+			lblRunStatus.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold);
+			lblRunStatus.TextAlign = ContentAlignment.MiddleCenter;
+
+			_runStatusTimer = new Timer();
+			_runStatusTimer.Interval = 500;
+			_runStatusTimer.Tick += runStatusTimer_Tick;
+			_runStatusTimer.Start();
+
+			SetRunState(RunState.Offline);
+		}
+
+		private void lblRunStatus_Click(object sender, EventArgs e)
+		{
+			ToggleRunState();
+		}
+		private void ToggleRunState()
+		{
+			if (_runState == RunState.Offline)
+			{
+				if (IsCommunicationConnected())
+				{
+					SetRunState(RunState.RunningReady);
+				}
+				else
+				{
+					SetRunState(RunState.RunningNoCommunication);
+				}
+
+				// TODO：这里放启动运行逻辑
+				// StartRun();
+			}
+			else
+			{
+				SetRunState(RunState.Offline);
+
+				// TODO：这里放停止/离线逻辑
+				// StopRun();
+			}
+		}
+
+
+		private void runStatusTimer_Tick(object sender, EventArgs e)
+		{
+			RefreshRunButtonByCommunicationState();
+		}
+
+		private void RefreshRunButtonByCommunicationState()
+		{
+			if (_runState == RunState.Offline)
+			{
+				return;
+			}
+
+			bool connected = IsCommunicationConnected();
+
+			if (connected && _runState != RunState.RunningReady)
+			{
+				SetRunState(RunState.RunningReady);
+			}
+			else if (!connected && _runState != RunState.RunningNoCommunication)
+			{
+				SetRunState(RunState.RunningNoCommunication);
+			}
+			else
+			{
+				// 通讯状态没变化时也刷新一次文字，避免中英文切换后文字残留。
+				ApplyRunStateStyle(_runState);
+			}
+		}
+
+		private void SetRunState(RunState state)
+		{
+			_runState = state;
+
+			if (btnStop.InvokeRequired)
+			{
+				btnStop.BeginInvoke(new Action(delegate
+				{
+					ApplyRunStateStyle(state);
+				}));
+			}
+			else
+			{
+				ApplyRunStateStyle(state);
+			}
+		}
+
+		private string GetRunButtonText(RunState state)
+		{
+			if (state == RunState.Offline)
+			{
+				return _isEnglish ? "● Offline" : "● 离线";
+			}
+
+			return _isEnglish ? "● Running" : "● 运行";
+		}
+
+		private string GetRunStatusText(RunState state)
+		{
+			if (state == RunState.Offline)
+			{
+				return _isEnglish ? "● Offline" : "● 离线";
+			}
+
+			return _isEnglish ? "● Running" : "● 运行中";
+		}
+
+		private void ApplyRunStateStyle(RunState state)
+		{
+			if (lblRunStatus == null)
+			{
+				return;
+			}
+
+			if (state == RunState.Offline)
+			{
+				lblRunStatus.Text = _isEnglish ? "● Offline" : "● 离线";
+				lblRunStatus.ForeColor = Color.FromArgb(255, 85, 110);
+				lblRunStatus.BackColor = Color.FromArgb(55, 10, 18);
+			}
+			else if (state == RunState.RunningNoCommunication)
+			{
+				lblRunStatus.Text = _isEnglish ? "● Running" : "● 运行";
+				lblRunStatus.ForeColor = Color.FromArgb(255, 205, 70);
+				lblRunStatus.BackColor = Color.FromArgb(60, 45, 10);
+			}
+			else
+			{
+				lblRunStatus.Text = _isEnglish ? "● Running" : "● 运行";
+				lblRunStatus.ForeColor = Color.FromArgb(65, 220, 100);
+				lblRunStatus.BackColor = Color.FromArgb(10, 55, 28);
+			}
+
+			lblRunStatus.Invalidate();
+		}
+
+
+		private bool IsCommunicationConnected()
+		{
+			// 这里先用 _communicationConnected。
+			// 后续把它接到真实通讯模块即可。
+			return _communicationConnected;
+		}
+
+		// 外部通讯模块连接成功/断开时调用这个方法即可。
+		// 例如：PLC连接成功后 SetCommunicationConnected(true)
+		//      PLC断开后 SetCommunicationConnected(false)
+		public void SetCommunicationConnected(bool connected)
+		{
+			_communicationConnected = connected;
+			RefreshRunButtonByCommunicationState();
+		}
+
+		#endregion
+
+
 		private enum MainPageType
 		{
 			Login,
@@ -52,6 +255,9 @@ namespace Aron_V3
 			BuildCameraLayout(4);
 
 			SelectMainPage(MainPageType.Login, false);
+
+			InitLoginSystem();
+			InitRunStatusButton();
 		}
 
 		private void Form1_Load(object sender, EventArgs e)
@@ -161,7 +367,10 @@ namespace Aron_V3
 			ResetNavStyle(btnCommunicateConfig, underlineCommunicateConfig, false);
 			ResetNavStyle(btnDatabase, underlineDatabase, false);
 			ResetNavStyle(btnSystemSetting, underlineSystemSetting, false);
-			ResetNavStyle(btnStop, underlineStop, true);
+
+			// btnStop 现在是运行状态按钮，不再参与导航选中/取消选中。
+			// 否则切换页面或切换语言时会把运行状态按钮颜色和文字覆盖掉。
+			ApplyRunStateStyle(_runState);
 
 			switch (page)
 			{
@@ -199,13 +408,10 @@ namespace Aron_V3
 					ApplyNavSelected(btnSystemSetting, underlineSystemSetting, false);
 					if (changePage) ShowSystemPage();
 					break;
-
-				case MainPageType.Stop:
-					ApplyNavSelected(btnStop, underlineStop, true);
-					if (changePage)
-						MessageBox.Show("Stop clicked.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-					break;
 			}
+
+			// 导航样式处理完后，再恢复一次运行状态按钮样式，防止被其它代码覆盖。
+			ApplyRunStateStyle(_runState);
 		}
 
 		private void ResetNavStyle(Button button, Panel underline, bool isStopButton)
@@ -578,7 +784,10 @@ namespace Aron_V3
 		private void btnCommunicateConfig_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.CommunicationConfig, true); }
 		private void btnDatabase_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.Database, true); }
 		private void btnSystemSetting_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.SystemSetting, true); }
-		private void btnStop_Click(object sender, EventArgs e) { SelectMainPage(MainPageType.Stop, true); }
+		private void btnRunStatus_Click(object sender, EventArgs e)
+		{
+			ToggleRunState();
+		}
 		private void btnHardwareConfig_Click(object sender, EventArgs e)
 		{
 			SelectMainPage(MainPageType.HardwareConfig, true);
@@ -597,45 +806,47 @@ namespace Aron_V3
 				btnLanguage.Text = "EN / 中文";
 
 				btnLogin.Text = "⌂  Home";
+				btnHardwareConfig.Text = "📷  Hardware";
 				btnAlgorithmConfig.Text = "▣  Algorithm";
 				btnProcessConfig.Text = "⚙  Process";
 				btnCommunicateConfig.Text = "◇  Comm";
 				btnDatabase.Text = "▤  Database";
 				btnSystemSetting.Text = "⚙  System";
-				btnStop.Text = "□  Stop";
-				btnHardwareConfig.Text = "📷  Hardware";
 
 				lblLogTitle.Text = "Log";
 				lblCameraStatus.Text = "▣  Camera: Connected";
 				lblPlcStatus.Text = "▦  PLC: Connected";
 				lblVersion.Text = "Version: 1.0.0.0";
-				lblRunStatus.Text = "●  Running";
-				lblUser.Text = "♟  admin ▾";
 			}
 			else
 			{
 				btnLanguage.Text = "中文 / EN";
 
 				btnLogin.Text = "⌂  主页";
-				btnAlgorithmConfig.Text = "▣  算法管理";
+				btnHardwareConfig.Text = "📷  硬件配置";
+				btnAlgorithmConfig.Text = "▣  算法模块";
 				btnProcessConfig.Text = "⚙  流程管理";
 				btnCommunicateConfig.Text = "◇  通讯配置";
 				btnDatabase.Text = "▤  数据库";
 				btnSystemSetting.Text = "⚙  系统管理";
-				btnStop.Text = "□  停止";
-				btnHardwareConfig.Text = "📷 硬件配置";
 
 				lblLogTitle.Text = "Log日志";
 				lblCameraStatus.Text = "▣  相机:  已连接";
 				lblPlcStatus.Text = "▦  PLC:  已连接";
 				lblVersion.Text = "版本号:  1.0.0.0";
-				lblRunStatus.Text = "●  运行中";
-				lblUser.Text = "♟  admin ▾";
 			}
+
+			// 不要在语言切换里直接写 btnStop.Text / lblRunStatus.Text。
+			// 运行状态按钮必须由当前 _runState 统一刷新，否则会出现颜色和文字不匹配。
+			UpdateLoginUi();
+			ApplyRunStateStyle(_runState);
 
 			SelectMainPage(_currentPage, false);
 			ApplyLanguageToPages();
-			SelectMainPage(_currentPage, false);
+
+			// 页面语言刷新后再恢复一次运行状态，避免子页面刷新或导航刷新覆盖按钮样式。
+			ApplyRunStateStyle(_runState);
+
 		}
 
 		private void ApplyLanguageToPages()
@@ -660,5 +871,155 @@ namespace Aron_V3
 		}
 
 		#endregion
+
+
+		#region Login System
+
+		private void InitLoginSystem()
+		{
+			UserAccountStore.LoadOrCreateDefault();
+
+			_userMenu = new ContextMenuStrip();
+			_userMenu.Items.Add("Change Password", null, menuChangePassword_Click);
+			_userMenu.Items.Add("User Management", null, menuUserManagement_Click);
+			_userMenu.Items.Add(new ToolStripSeparator());
+			_userMenu.Items.Add("Logout", null, menuLogout_Click);
+
+			_autoLogoutTimer = new Timer();
+			_autoLogoutTimer.Interval = 10000;
+			_autoLogoutTimer.Tick += autoLogoutTimer_Tick;
+			_autoLogoutTimer.Start();
+
+			// 全局鼠标/键盘操作监听。
+			// 只要有鼠标或键盘操作，就会更新 LoginSession.LastActiveTime。
+			// 自动注销只判断“连续无操作时间”。
+			_activityMessageFilter = new UserActivityMessageFilter();
+			Application.AddMessageFilter(_activityMessageFilter);
+
+			// 你当前顶部右侧是 lblUser。
+			lblUser.Cursor = Cursors.Hand;
+			lblUser.Text = "♟  Guest ▾";
+			lblUser.Click -= lblUser_Click;
+			lblUser.Click += lblUser_Click;
+
+			this.FormClosed -= Form1_FormClosed_RemoveLoginFilter;
+			this.FormClosed += Form1_FormClosed_RemoveLoginFilter;
+
+			UpdateLoginUi();
+		}
+
+		private void Form1_FormClosed_RemoveLoginFilter(object sender, FormClosedEventArgs e)
+		{
+			if (_activityMessageFilter != null)
+			{
+				Application.RemoveMessageFilter(_activityMessageFilter);
+				_activityMessageFilter = null;
+			}
+		}
+
+		private void lblUser_Click(object sender, EventArgs e)
+		{
+			if (!LoginSession.IsLoggedIn)
+			{
+				LoginForm form = new LoginForm();
+
+				if (form.ShowDialog(this) == DialogResult.OK)
+				{
+					LoginSession.Login(form.LoginUser);
+					UpdateLoginUi();
+				}
+
+				return;
+			}
+
+			_userMenu.Items[1].Enabled = LoginSession.Permission.CanUserManagement;
+			_userMenu.Show(lblUser, new Point(0, lblUser.Height));
+		}
+
+		private void menuChangePassword_Click(object sender, EventArgs e)
+		{
+			ChangePasswordForm form = new ChangePasswordForm();
+			form.ShowDialog(this);
+		}
+
+		private void menuUserManagement_Click(object sender, EventArgs e)
+		{
+			if (!LoginSession.Permission.CanUserManagement)
+			{
+				MessageBox.Show("No permission.", "User Management", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
+
+			UserManagerForm form = new UserManagerForm();
+			form.ShowDialog(this);
+		}
+
+		private void menuLogout_Click(object sender, EventArgs e)
+		{
+			LogoutCurrentUser(false);
+		}
+
+		private void autoLogoutTimer_Tick(object sender, EventArgs e)
+		{
+			if (!LoginSession.IsLoggedIn)
+			{
+				return;
+			}
+
+			UserAccountConfig config = UserAccountStore.LoadOrCreateDefault();
+			int minutes = config.AutoLogoutMinutes <= 0 ? 30 : config.AutoLogoutMinutes;
+
+			TimeSpan idleTime = DateTime.Now - LoginSession.LastActiveTime;
+
+			if (idleTime.TotalMinutes >= minutes)
+			{
+				LogoutCurrentUser(true);
+			}
+		}
+
+		private void LogoutCurrentUser(bool autoLogout)
+		{
+			LoginSession.Logout();
+			UpdateLoginUi();
+
+			if (autoLogout)
+			{
+				MessageBox.Show(
+					"User has been logged out automatically because there was no mouse or keyboard operation for the configured time.",
+					"Auto Logout",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+			}
+		}
+
+		private void UpdateLoginUi()
+		{
+			if (LoginSession.IsLoggedIn)
+			{
+				lblUser.Text = "♟  " + LoginSession.CurrentUser.UserName + " ▾";
+			}
+			else
+			{
+				lblUser.Text = "♟  Guest ▾";
+			}
+
+			ApplyPermissionToUi();
+		}
+
+		private void ApplyPermissionToUi()
+		{
+			UserPermission p = LoginSession.Permission;
+
+			btnHardwareConfig.Enabled = p.CanHardwareConfig;
+			btnAlgorithmConfig.Enabled = p.CanAlgorithmConfig;
+			btnProcessConfig.Enabled = p.CanFlowConfig;
+			btnCommunicateConfig.Enabled = p.CanCommunicationConfig;
+			btnDatabase.Enabled = p.CanDatabaseConfig;
+			btnSystemSetting.Enabled = p.CanSystemConfig;
+		}
+
+
+		#endregion
+
 	}
 }
