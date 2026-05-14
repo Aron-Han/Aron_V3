@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using System.Runtime.InteropServices;
 
 namespace Aron_V3
 {
@@ -15,9 +16,18 @@ namespace Aron_V3
 
 		private CheckBox chkEnable;
 
+		private bool? _inputSecondColumnIsProfinet = null;
+
+		[DllImport("user32.dll")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+		private const int WM_SETREDRAW = 0x000B;
+
 		public CommunicationConfigControl()
 		{
 			InitializeComponent();
+
+			EnableDoubleBufferForPage();
 
 			InitializeEnableCheckBox();
 			InitializeGridStyle();
@@ -97,6 +107,16 @@ namespace Aron_V3
 		{
 			ApplyGridStyle(dgvInput);
 			ApplyGridStyle(dgvOutput);
+
+			dgvInput.DataError -= dgv_DataError;
+			dgvOutput.DataError -= dgv_DataError;
+			dgvInput.DataError += dgv_DataError;
+			dgvOutput.DataError += dgv_DataError;
+		}
+
+		private void dgv_DataError(object sender, DataGridViewDataErrorEventArgs e)
+		{
+			e.ThrowException = false;
 		}
 
 		private void ApplyGridStyle(DataGridView dgv)
@@ -229,34 +249,58 @@ namespace Aron_V3
 				return;
 			}
 
-			string oldName = dgvInput.Columns[1].Name;
-			int oldWidth = dgvInput.Columns[1].Width;
-
-			dgvInput.Columns.RemoveAt(1);
-
-			if (profinetMode)
+			if (_inputSecondColumnIsProfinet.HasValue &&
+				_inputSecondColumnIsProfinet.Value == profinetMode)
 			{
-				DataGridViewComboBoxColumn engineColumn = new DataGridViewComboBoxColumn();
-				engineColumn.Name = oldName;
-				engineColumn.HeaderText = "Engine";
-				engineColumn.Width = oldWidth <= 0 ? 90 : oldWidth;
-				engineColumn.FlatStyle = FlatStyle.Flat;
-				engineColumn.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
-				engineColumn.Items.Add("engine0");
-				engineColumn.Items.Add("engine1");
-				engineColumn.Items.Add("engine2");
-				engineColumn.Items.Add("engine3");
-				dgvInput.Columns.Insert(1, engineColumn);
+				dgvInput.Columns[1].HeaderText = profinetMode
+					? "Engine"
+					: (_isEnglish ? "Use As Trigger" : "作为触发源");
+
+				return;
 			}
-			else
+
+			BeginUpdateControl(dgvInput);
+			dgvInput.SuspendLayout();
+
+			try
 			{
-				DataGridViewCheckBoxColumn triggerColumn = new DataGridViewCheckBoxColumn();
-				triggerColumn.Name = oldName;
-				triggerColumn.HeaderText = _isEnglish ? "Use As Trigger" : "作为触发源";
-				triggerColumn.Width = oldWidth <= 0 ? 90 : oldWidth;
-				dgvInput.Columns.Insert(1, triggerColumn);
+				string oldName = dgvInput.Columns[1].Name;
+				int oldWidth = dgvInput.Columns[1].Width;
+
+				dgvInput.Columns.RemoveAt(1);
+
+				if (profinetMode)
+				{
+					DataGridViewComboBoxColumn engineColumn = new DataGridViewComboBoxColumn();
+					engineColumn.Name = oldName;
+					engineColumn.HeaderText = "Engine";
+					engineColumn.Width = oldWidth <= 0 ? 90 : oldWidth;
+					engineColumn.FlatStyle = FlatStyle.Flat;
+					engineColumn.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+					engineColumn.Items.Add("engine0");
+					engineColumn.Items.Add("engine1");
+					engineColumn.Items.Add("engine2");
+					engineColumn.Items.Add("engine3");
+					dgvInput.Columns.Insert(1, engineColumn);
+				}
+				else
+				{
+					DataGridViewCheckBoxColumn triggerColumn = new DataGridViewCheckBoxColumn();
+					triggerColumn.Name = oldName;
+					triggerColumn.HeaderText = _isEnglish ? "Use As Trigger" : "作为触发源";
+					triggerColumn.Width = oldWidth <= 0 ? 90 : oldWidth;
+					dgvInput.Columns.Insert(1, triggerColumn);
+				}
+
+				_inputSecondColumnIsProfinet = profinetMode;
+			}
+			finally
+			{
+				dgvInput.ResumeLayout();
+				EndUpdateControl(dgvInput);
 			}
 		}
+
 
 		private void LoadConfigToUI(CommunicationConfig config)
 		{
@@ -284,23 +328,38 @@ namespace Aron_V3
 
 		private void SelectCommunicationType(CommunicationType type)
 		{
-			if (!_loading)
+			if (_selectedType == type)
 			{
-				SaveCurrentTypeParamsFromUI();
-				SaveCurrentTypeVariablesFromGrid();
+				return;
 			}
 
-			_selectedType = type;
+			BeginPageRefresh();
 
-			if (_config != null)
+			try
 			{
-				_config.SelectedType = type;
-			}
+				if (!_loading)
+				{
+					SaveCurrentTypeParamsFromUI();
+					SaveCurrentTypeVariablesFromGrid();
+				}
 
-			ApplySelectedTypeStyle();
-			LoadTypeParamsToUI();
-			LoadCurrentTypeVariablesToGrid();
+				_selectedType = type;
+
+				if (_config != null)
+				{
+					_config.SelectedType = type;
+				}
+
+				ApplySelectedTypeStyle();
+				LoadTypeParamsToUI();
+				LoadCurrentTypeVariablesToGrid();
+			}
+			finally
+			{
+				EndPageRefresh();
+			}
 		}
+
 
 		private void ApplySelectedTypeStyle()
 		{
@@ -479,38 +538,60 @@ namespace Aron_V3
 
 		private void LoadCurrentTypeVariablesToGrid()
 		{
-			dgvInput.Rows.Clear();
-			dgvOutput.Rows.Clear();
-
 			if (_config == null)
 			{
 				return;
 			}
 
-			bool isProfinet = _selectedType == CommunicationType.Profinet;
-			ConfigureInputSecondColumn(isProfinet);
-			ApplyColumnModeByCommunicationType();
-			RefreshDataTypeComboItems();
+			BeginUpdateControl(dgvInput);
+			BeginUpdateControl(dgvOutput);
 
-			if (_selectedType == CommunicationType.TcpIp)
+			dgvInput.SuspendLayout();
+			dgvOutput.SuspendLayout();
+
+			try
 			{
-				LoadInputRows(_config.TcpIp.InputVariables, false);
-				LoadOutputRows(_config.TcpIp.OutputVariables);
-				SetVariableGridEditable(true, false);
+				dgvInput.Rows.Clear();
+				dgvOutput.Rows.Clear();
+
+				bool isProfinet = _selectedType == CommunicationType.Profinet;
+
+				ConfigureInputSecondColumn(isProfinet);
+				ApplyColumnModeByCommunicationType();
+				RefreshDataTypeComboItems();
+
+				if (_selectedType == CommunicationType.TcpIp)
+				{
+					LoadInputRows(_config.TcpIp.InputVariables, false);
+					LoadOutputRows(_config.TcpIp.OutputVariables);
+					SetVariableGridEditable(true, false);
+				}
+				else if (_selectedType == CommunicationType.Profinet)
+				{
+					LoadInputRows(_config.Profinet.InputVariables, true);
+					LoadOutputRows(_config.Profinet.OutputVariables);
+					SetVariableGridEditable(true, true);
+				}
+				else
+				{
+					LoadInputRows(_config.S7.InputVariables, false);
+					LoadOutputRows(_config.S7.OutputVariables);
+					SetVariableGridEditable(true, false);
+				}
+
+				dgvInput.ClearSelection();
+				dgvOutput.ClearSelection();
 			}
-			else if (_selectedType == CommunicationType.Profinet)
+			finally
 			{
-				LoadInputRows(_config.Profinet.InputVariables, true);
-				LoadOutputRows(_config.Profinet.OutputVariables);
-				SetVariableGridEditable(true, true);
-			}
-			else
-			{
-				LoadInputRows(_config.S7.InputVariables, false);
-				LoadOutputRows(_config.S7.OutputVariables);
-				SetVariableGridEditable(true, false);
+				dgvOutput.ResumeLayout();
+				dgvInput.ResumeLayout();
+
+				EndUpdateControl(dgvInput);
+				EndUpdateControl(dgvOutput);
 			}
 		}
+
 
 		private void LoadInputRows(List<CommInputVariable> list, bool profinetMode)
 		{
@@ -1009,5 +1090,114 @@ namespace Aron_V3
 			LoadTypeParamsToUI();
 			LoadCurrentTypeVariablesToGrid();
 		}
+
+		private void EnableDoubleBufferForPage()
+		{
+			SetDoubleBuffered(this);
+			SetDoubleBuffered(mainLayout);
+			SetDoubleBuffered(rightLayout);
+			SetDoubleBuffered(panelType);
+			SetDoubleBuffered(panelParams);
+			SetDoubleBuffered(panelInput);
+			SetDoubleBuffered(panelOutput);
+			SetDoubleBuffered(dgvInput);
+			SetDoubleBuffered(dgvOutput);
+		}
+
+		private void SetDoubleBuffered(Control control)
+		{
+			if (control == null)
+			{
+				return;
+			}
+
+			try
+			{
+				System.Reflection.PropertyInfo property = typeof(Control).GetProperty(
+					"DoubleBuffered",
+					System.Reflection.BindingFlags.Instance |
+					System.Reflection.BindingFlags.NonPublic);
+
+				if (property != null)
+				{
+					property.SetValue(control, true, null);
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private void BeginUpdateControl(Control control)
+		{
+			if (control == null || control.IsDisposed)
+			{
+				return;
+			}
+
+			if (control.IsHandleCreated)
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+			}
+		}
+
+		private void EndUpdateControl(Control control)
+		{
+			if (control == null || control.IsDisposed)
+			{
+				return;
+			}
+
+			if (control.IsHandleCreated)
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+			}
+
+			control.Invalidate(true);
+		}
+
+		private void BeginPageRefresh()
+		{
+			this.SuspendLayout();
+			mainLayout.SuspendLayout();
+			rightLayout.SuspendLayout();
+			panelInput.SuspendLayout();
+			panelOutput.SuspendLayout();
+
+			BeginUpdateControl(this);
+			BeginUpdateControl(mainLayout);
+			BeginUpdateControl(rightLayout);
+			BeginUpdateControl(panelInput);
+			BeginUpdateControl(panelOutput);
+			BeginUpdateControl(dgvInput);
+			BeginUpdateControl(dgvOutput);
+
+			dgvInput.Visible = false;
+			dgvOutput.Visible = false;
+		}
+
+		private void EndPageRefresh()
+		{
+			dgvInput.Visible = true;
+			dgvOutput.Visible = true;
+
+			EndUpdateControl(dgvInput);
+			EndUpdateControl(dgvOutput);
+			EndUpdateControl(panelInput);
+			EndUpdateControl(panelOutput);
+			EndUpdateControl(rightLayout);
+			EndUpdateControl(mainLayout);
+			EndUpdateControl(this);
+
+			panelOutput.ResumeLayout();
+			panelInput.ResumeLayout();
+			rightLayout.ResumeLayout();
+			mainLayout.ResumeLayout();
+			this.ResumeLayout();
+
+			this.Refresh();
+		}
+
+
 	}
 }
