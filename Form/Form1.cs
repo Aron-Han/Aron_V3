@@ -12,7 +12,6 @@ namespace Aron_V3
 		private bool _isEnglish = false;
 
 		private Control _runtimePage;
-		private Control _hardwareConfigPage;
 		private FlowConfigForm _processConfigPage;
 		private Control _algorithmPage;
 		private Control _communicationPage;
@@ -26,6 +25,7 @@ namespace Aron_V3
 		private Timer _autoLogoutTimer;
 		private ContextMenuStrip _userMenu;
 		private UserActivityMessageFilter _activityMessageFilter;
+		private HardwareConfigControl _hardwareConfigPage;
 
 
 		#region Run State
@@ -475,9 +475,10 @@ namespace Aron_V3
 
 		private void ShowHardwareConfigPage()
 		{
-			if (_hardwareConfigPage == null)
+			if (_hardwareConfigPage == null || _hardwareConfigPage.IsDisposed)
 			{
-				_hardwareConfigPage = CreatePlaceholderPage(_isEnglish ? "Hardware Configuration" : "硬件配置");
+				_hardwareConfigPage = new HardwareConfigControl();
+				_hardwareConfigPage.Dock = DockStyle.Fill;
 			}
 
 			ShowCachedPage(_hardwareConfigPage);

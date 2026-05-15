@@ -33,6 +33,12 @@ namespace Aron_V3
 		[XmlAttribute]
 		public bool UseAsTrigger { get; set; }
 
+		// 是否作为位置号来源。
+		// TCP/IP 和 S7 可通过勾选输入变量作为位置号。
+		// Profinet 也可勾选 PositionCode 等输入变量作为位置号来源。
+		[XmlAttribute]
+		public bool UseAsPosition { get; set; }
+
 		// Profinet 使用：
 		// 固定选择 engine0 ~ engine3。
 		[XmlAttribute]
@@ -57,6 +63,7 @@ namespace Aron_V3
 		{
 			Name = string.Empty;
 			UseAsTrigger = false;
+			UseAsPosition = false;
 			EngineName = "engine0";
 			DataType = CommVariableDataType.Bool;
 			ByteOffset = 0;
@@ -243,6 +250,22 @@ namespace Aron_V3
 		}
 	}
 
+
+	public static class CommunicationConfigChangedHub
+	{
+		public static event EventHandler ConfigChanged;
+
+		public static void RaiseConfigChanged()
+		{
+			EventHandler handler = ConfigChanged;
+
+			if (handler != null)
+			{
+				handler(null, EventArgs.Empty);
+			}
+		}
+	}
+
 	public static class CommunicationConfigStore
 	{
 		public static string ConfigFile
@@ -279,6 +302,9 @@ namespace Aron_V3
 			Normalize(config);
 			FlowConfigStore.PathManager.EnsureProjectFolders();
 			XmlConfigHelper.Save(ConfigFile, config);
+
+
+			CommunicationConfigChangedHub.RaiseConfigChanged();
 		}
 
 		private static bool IsEmpty(CommunicationConfig config)
@@ -349,6 +375,7 @@ namespace Aron_V3
 			{
 				Name = "Trigger",
 				UseAsTrigger = true,
+				UseAsPosition = false,
 				EngineName = string.Empty,
 				DataType = CommVariableDataType.Bool,
 				ByteOffset = 0,
@@ -361,6 +388,7 @@ namespace Aron_V3
 			{
 				Name = "JobID",
 				UseAsTrigger = false,
+				UseAsPosition = true,
 				EngineName = string.Empty,
 				DataType = CommVariableDataType.ShortInt,
 				ByteOffset = 2,
@@ -395,6 +423,7 @@ namespace Aron_V3
 			{
 				Name = "Trigger",
 				UseAsTrigger = true,
+				UseAsPosition = false,
 				EngineName = string.Empty,
 				DataType = CommVariableDataType.Bool,
 				ByteOffset = 0,
@@ -407,6 +436,7 @@ namespace Aron_V3
 			{
 				Name = "JobID",
 				UseAsTrigger = false,
+				UseAsPosition = true,
 				EngineName = string.Empty,
 				DataType = CommVariableDataType.ShortInt,
 				ByteOffset = 2,
@@ -502,6 +532,7 @@ namespace Aron_V3
 			{
 				Name = "PositionCode",
 				UseAsTrigger = false,
+				UseAsPosition = true,
 				EngineName = "engine0",
 				DataType = CommVariableDataType.ShortInt,
 				ByteOffset = 6,

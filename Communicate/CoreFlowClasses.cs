@@ -33,15 +33,31 @@ namespace Aron_V3
 		ByteArray = 6
 	}
 
+	public enum TriggerCompareType
+	{
+		Equal = 0,
+		NotEqual = 1,
+		Greater = 2,
+		GreaterOrEqual = 3,
+		Less = 4,
+		LessOrEqual = 5
+	}
+
+	public interface ICommunicationRuntimeValueProvider
+	{
+		string GetInputValue(string protocol, string tagName);
+	}
+
 	public class ProjectPathManager
 	{
 		public string ProjectRoot { get; private set; }
 
 		public string ConfigRoot { get { return Path.Combine(ProjectRoot, "Config"); } }
-		public string FlowConfigRoot { get { return Path.Combine(ConfigRoot, "Flow"); } }
+		public string FlowConfigRoot { get { return Path.Combine(ProjectRoot, "Job"); } }
 		public string HardwareConfigRoot { get { return Path.Combine(ConfigRoot, "Hardware"); } }
 		public string CommunicationConfigRoot { get { return Path.Combine(ConfigRoot, "Communication"); } }
-		public string StepsRoot { get { return Path.Combine(ProjectRoot, "Steps"); } }
+		public string JobRoot { get { return Path.Combine(ProjectRoot, "Job"); } }
+		public string StepsRoot { get { return JobRoot; } }
 		public string ImagesRoot { get { return Path.Combine(ProjectRoot, "Images"); } }
 		public string LogsRoot { get { return Path.Combine(ProjectRoot, "Logs"); } }
 
@@ -59,10 +75,11 @@ namespace Aron_V3
 		{
 			Directory.CreateDirectory(ProjectRoot);
 			Directory.CreateDirectory(ConfigRoot);
+			Directory.CreateDirectory(JobRoot);
 			Directory.CreateDirectory(FlowConfigRoot);
 			Directory.CreateDirectory(HardwareConfigRoot);
 			Directory.CreateDirectory(CommunicationConfigRoot);
-			Directory.CreateDirectory(StepsRoot);
+			Directory.CreateDirectory(JobRoot);
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Save"));
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Replay"));
 			Directory.CreateDirectory(LogsRoot);
@@ -81,15 +98,15 @@ namespace Aron_V3
 		public string GetStepFolder(string jobName, string taskName, string stepName)
 		{
 			// 新目录结构不再使用 StepName 作为文件夹层级
-			// Project/Steps/JobName/TaskName
-			return Path.Combine(StepsRoot, jobName, taskName);
+			// Project/Job/JobName/TaskName
+			return Path.Combine(JobRoot, jobName, taskName);
 		}
 
 		public void EnsureStepFolder(string jobName, string taskName, string stepName)
 		{
 			// 新目录结构：
-			// Project/Steps/JobName/TaskName/VPP
-			// Project/Steps/JobName/TaskName/Scripts
+			// Project/Job/JobName/TaskName/VPP
+			// Project/Job/JobName/TaskName/Scripts
 			string taskFolder = GetStepFolder(jobName, taskName, stepName);
 
 			Directory.CreateDirectory(taskFolder);
@@ -361,19 +378,79 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string TriggerName { get; set; }
 
+		// 新字段：触发源值。
+		// 只有通讯运行时读取到的 TriggerName 实际值满足 TriggerValue，才允许执行当前 Task。
+		[XmlAttribute]
+		public string TriggerValue { get; set; }
+
+		[XmlAttribute]
+		public TriggerCompareType TriggerCompare { get; set; }
+
+		// 新字段：位置号。
+		// 原“标志位”改为“位置号”，旧字段 FlagBit 继续保留用于兼容旧 XML。
+		[XmlAttribute]
+		public string PositionName { get; set; }
+
+		// 新字段：位置号值。
+		// 原“标志值”改为“位置号值”，旧字段 FlagValue 继续保留用于兼容旧 XML。
+		[XmlAttribute]
+		public string PositionValue { get; set; }
+
+		[XmlAttribute]
+		public TriggerCompareType PositionCompare { get; set; }
+
 		// 旧字段保留，避免旧 XML 或旧代码报错。
 		// 新逻辑里它可以不再代表 PLC 输入地址。
 		[XmlAttribute]
 		public string InputAddress { get; set; }
 
 		// 新字段：图像源。
+		// 支持单个或多个图像源，多个图像源用英文分号分隔。
 		// 例如：
-		// 无
-		// Cam1.Raw
-		// Camera1.Raw
-		// TopCamera.Raw
+		// Not Use
+		// Cam1.Camera.vpp
+		// Cam1.Camera.vpp;Cam2.Camera.vpp
 		[XmlAttribute]
 		public string ImageSourceKey { get; set; }
+
+
+		[XmlIgnore]
+		public List<string> ImageSourceKeyList
+		{
+			get
+			{
+				List<string> result = new List<string>();
+
+				if (string.IsNullOrWhiteSpace(ImageSourceKey))
+				{
+					return result;
+				}
+
+				string[] parts = ImageSourceKey.Split(new char[] { ';', ',', '|', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+				foreach (string part in parts)
+				{
+					string item = part.Trim();
+
+					if (string.IsNullOrWhiteSpace(item))
+					{
+						continue;
+					}
+
+					if (item.Equals("Not Use", StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+
+					if (!result.Any(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(item);
+					}
+				}
+
+				return result;
+			}
+		}
 
 		[XmlAttribute]
 		public int FlagBit { get; set; }
@@ -401,6 +478,11 @@ namespace Aron_V3
 			RunOrder = 0;
 			Enabled = true;
 			TriggerName = string.Empty;
+			TriggerValue = "1";
+			TriggerCompare = TriggerCompareType.Equal;
+			PositionName = "0";
+			PositionValue = "1";
+			PositionCompare = TriggerCompareType.Equal;
 			InputAddress = string.Empty;
 			ImageSourceKey = "Not Use";
 			FlagBit = 0;
@@ -482,7 +564,7 @@ namespace Aron_V3
 	{
 		public static event EventHandler FlowConfigSaved;
 
-		private static string _projectRoot = Path.Combine(Application.StartupPath, "Project", "DemoProject");
+		private static string _projectRoot = Path.Combine(Application.StartupPath, "Project");
 
 		public static string ProjectRoot
 		{
@@ -563,6 +645,11 @@ namespace Aron_V3
 			task.RunOrder = runOrder;
 			task.Enabled = true;
 			task.TriggerName = "Trigger_" + (runOrder - 1).ToString();
+			task.TriggerValue = "1";
+			task.TriggerCompare = TriggerCompareType.Equal;
+			task.PositionName = "0";
+			task.PositionValue = "1";
+			task.PositionCompare = TriggerCompareType.Equal;
 
 			// 旧字段保留，避免旧逻辑报错。
 			task.InputAddress = string.Empty;
@@ -647,9 +734,8 @@ namespace Aron_V3
 			job.JobName = "Job_001";
 			job.Enabled = true;
 
-			TaskConfig task = CreateDefaultTask("Job_001", "Task_Main", 1);
-			job.Tasks.Add(task);
-
+			// 默认只创建 Job，不自动创建 Task。
+			// Task 必须由流程管理页面手动新增，避免本地出现未配置的 Task 文件夹。
 			config.Jobs.Add(job);
 			return config;
 		}
@@ -666,6 +752,16 @@ namespace Aron_V3
 				{
 					if (task.Steps == null) task.Steps = new List<StepConfig>();
 					if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
+
+					if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
+					if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = task.FlagBit.ToString();
+					if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = task.FlagValue;
+					if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = "1";
+
+					// 旧字段同步，保证旧代码仍能读取。
+					int oldFlagBit;
+					if (int.TryParse(task.PositionName, out oldFlagBit)) task.FlagBit = oldFlagBit;
+					task.FlagValue = task.PositionValue;
 
 					foreach (StepConfig step in task.Steps)
 					{
@@ -684,6 +780,13 @@ namespace Aron_V3
 
 			foreach (JobConfig job in config.Jobs)
 			{
+				string jobFolder = path.GetJobFolder(job.JobName);
+
+				if (!Directory.Exists(jobFolder))
+				{
+					Directory.CreateDirectory(jobFolder);
+				}
+
 				foreach (TaskConfig task in job.Tasks)
 				{
 					foreach (StepConfig step in task.Steps)
@@ -826,8 +929,76 @@ namespace Aron_V3
 		}
 	}
 
+	public static class TriggerConditionEvaluator
+	{
+		public static bool CanRunTask(TaskConfig taskConfig, ICommunicationRuntimeValueProvider valueProvider)
+		{
+			if (taskConfig == null)
+			{
+				return false;
+			}
+
+			// 没有配置通讯协议或触发源时，认为不需要外部触发条件。
+			if (string.IsNullOrWhiteSpace(taskConfig.CommunicationProtocol) ||
+				taskConfig.CommunicationProtocol.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				string.IsNullOrWhiteSpace(taskConfig.TriggerName) ||
+				taskConfig.TriggerName.Equals("Not Use", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			if (valueProvider == null)
+			{
+				return false;
+			}
+
+			string triggerActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.TriggerName);
+			string positionActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.PositionName);
+
+			bool triggerOk = CompareValue(triggerActualValue, taskConfig.TriggerValue, taskConfig.TriggerCompare);
+			bool positionOk = CompareValue(positionActualValue, taskConfig.PositionValue, taskConfig.PositionCompare);
+
+			return triggerOk && positionOk;
+		}
+
+		public static bool CompareValue(string actual, string expected, TriggerCompareType compare)
+		{
+			actual = actual == null ? string.Empty : actual.Trim();
+			expected = expected == null ? string.Empty : expected.Trim();
+
+			double actualNumber;
+			double expectedNumber;
+
+			bool actualIsNumber = double.TryParse(actual, out actualNumber);
+			bool expectedIsNumber = double.TryParse(expected, out expectedNumber);
+
+			if (actualIsNumber && expectedIsNumber)
+			{
+				if (compare == TriggerCompareType.Equal) return actualNumber == expectedNumber;
+				if (compare == TriggerCompareType.NotEqual) return actualNumber != expectedNumber;
+				if (compare == TriggerCompareType.Greater) return actualNumber > expectedNumber;
+				if (compare == TriggerCompareType.GreaterOrEqual) return actualNumber >= expectedNumber;
+				if (compare == TriggerCompareType.Less) return actualNumber < expectedNumber;
+				if (compare == TriggerCompareType.LessOrEqual) return actualNumber <= expectedNumber;
+			}
+
+			if (compare == TriggerCompareType.Equal)
+			{
+				return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+			}
+
+			if (compare == TriggerCompareType.NotEqual)
+			{
+				return !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+			}
+
+			return false;
+		}
+	}
+
 	public class TaskRunner
 	{
+
 		public StepResult Run(TaskConfig taskConfig, VisionRunContext context)
 		{
 			if (taskConfig == null) throw new ArgumentNullException("taskConfig");

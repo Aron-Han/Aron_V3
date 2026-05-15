@@ -411,10 +411,10 @@
 			this.dgvSteps.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
 			this.dgvSteps.ColumnHeadersHeight = 42;
 			this.dgvSteps.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
-            this.colStep,
-            this.colImageSource,
-            this.colRunOrder,
-            this.colRemark});
+			this.colStep,
+			this.colImageSource,
+			this.colRunOrder,
+			this.colRemark});
 			dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
 			dataGridViewCellStyle2.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(14)))), ((int)(((byte)(28)))));
 			dataGridViewCellStyle2.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);

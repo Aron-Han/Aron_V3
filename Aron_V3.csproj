@@ -80,6 +80,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Hardware\HardwareConfigControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Hardware\HardwareConfigControl.Designer.cs">
+      <DependentUpon>HardwareConfigControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Hardware\HardwareConfigModels.cs" />
     <Compile Include="User_Control\AlgorithmModuleControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -90,14 +97,14 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="UserActivityMessageFilter.cs" />
-    <Compile Include="User_Control\CommunicationConfigControl.cs">
+    <Compile Include="Communicate\CommunicationConfigControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="User_Control\CommunicationConfigControl.Designer.cs">
+    <Compile Include="Communicate\CommunicationConfigControl.Designer.cs">
       <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
     </Compile>
-    <Compile Include="CommunicationConfigModels.cs" />
-    <Compile Include="CoreFlowClasses.cs" />
+    <Compile Include="Communicate\CommunicationConfigModels.cs" />
+    <Compile Include="Communicate\CoreFlowClasses.cs" />
     <Compile Include="Form\FlowConfigForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -108,16 +115,16 @@
     <Compile Include="Login\LoginForm.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="User_Control\TaskSchedulerControl.cs">
+    <Compile Include="Communicate\TaskSchedulerControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="User_Control\TaskSchedulerControl.Designer.cs">
+    <Compile Include="Communicate\TaskSchedulerControl.Designer.cs">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </Compile>
-    <Compile Include="User_Control\TriggerManagerControl.cs">
+    <Compile Include="Communicate\TriggerManagerControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="User_Control\TriggerManagerControl.Designer.cs">
+    <Compile Include="Communicate\TriggerManagerControl.Designer.cs">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Login\UserAccountModels.cs" />
@@ -138,7 +145,7 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <EmbeddedResource Include="User_Control\CommunicationConfigControl.resx">
+    <EmbeddedResource Include="Communicate\CommunicationConfigControl.resx">
       <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Form\FlowConfigForm.resx">
@@ -156,10 +163,10 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
-    <EmbeddedResource Include="User_Control\TaskSchedulerControl.resx">
+    <EmbeddedResource Include="Communicate\TaskSchedulerControl.resx">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="User_Control\TriggerManagerControl.resx">
+    <EmbeddedResource Include="Communicate\TriggerManagerControl.resx">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="User_Control\CameraViewControl.resx">
@@ -177,6 +184,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Hardware\SDK\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

@@ -139,16 +139,35 @@ namespace Aron_V3
 			}
 		}
 
+		private string GetNextJobName(ProjectFlowConfig config)
+		{
+			int index = 1;
+
+			while (true)
+			{
+				string name = "Job_" + index.ToString("000");
+
+				if (config == null || config.Jobs == null ||
+					!config.Jobs.Any(j => string.Equals(j.JobName, name, StringComparison.OrdinalIgnoreCase)))
+				{
+					return name;
+				}
+
+				index++;
+			}
+		}
+
 		private void btnAddJob_Click(object sender, EventArgs e)
 		{
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
 
-			string jobName = "Job_" + (config.Jobs.Count + 1).ToString("000");
+			string jobName = GetNextJobName(config);
 
 			JobConfig job = new JobConfig();
 			job.JobName = jobName;
 			job.Enabled = true;
 			config.Jobs.Add(job);
+			Directory.CreateDirectory(FlowConfigStore.PathManager.GetJobFolder(jobName));
 
 			FlowConfigStore.Save(config);
 

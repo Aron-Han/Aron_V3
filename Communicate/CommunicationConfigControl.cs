@@ -169,6 +169,14 @@ namespace Aron_V3
 
 		private string[] GetDataTypeDisplayItems()
 		{
+			if (_selectedType == CommunicationType.TcpIp)
+			{
+				return new string[]
+				{
+					"String"
+				};
+			}
+
 			return new string[]
 			{
 				"Float",
@@ -242,20 +250,37 @@ namespace Aron_V3
 			return defaultValue;
 		}
 
+
+		private bool IsCurrentTypeTcpIp()
+		{
+			return _selectedType == CommunicationType.TcpIp;
+		}
+
+		private CommVariableDataType GetDefaultVariableDataType()
+		{
+			if (IsCurrentTypeTcpIp())
+			{
+				return CommVariableDataType.String;
+			}
+
+			return CommVariableDataType.Bool;
+		}
+
+		private CommVariableDataType NormalizeDataTypeForCurrentCommunication(CommVariableDataType dataType)
+		{
+			if (IsCurrentTypeTcpIp())
+			{
+				return CommVariableDataType.String;
+			}
+
+			return dataType;
+		}
+
+
 		private void ConfigureInputSecondColumn(bool profinetMode)
 		{
 			if (dgvInput.Columns.Count < 2)
 			{
-				return;
-			}
-
-			if (_inputSecondColumnIsProfinet.HasValue &&
-				_inputSecondColumnIsProfinet.Value == profinetMode)
-			{
-				dgvInput.Columns[1].HeaderText = profinetMode
-					? "Engine"
-					: (_isEnglish ? "Use As Trigger" : "作为触发源");
-
 				return;
 			}
 
@@ -292,6 +317,8 @@ namespace Aron_V3
 					dgvInput.Columns.Insert(1, triggerColumn);
 				}
 
+				EnsureInputPositionColumn();
+
 				_inputSecondColumnIsProfinet = profinetMode;
 			}
 			finally
@@ -299,6 +326,23 @@ namespace Aron_V3
 				dgvInput.ResumeLayout();
 				EndUpdateControl(dgvInput);
 			}
+		}
+
+		private void EnsureInputPositionColumn()
+		{
+			if (dgvInput.Columns.Contains("colInputUseAsPosition"))
+			{
+				dgvInput.Columns["colInputUseAsPosition"].HeaderText = _isEnglish ? "Use As Position" : "作为位置号";
+				return;
+			}
+
+			DataGridViewCheckBoxColumn positionColumn = new DataGridViewCheckBoxColumn();
+			positionColumn.Name = "colInputUseAsPosition";
+			positionColumn.HeaderText = _isEnglish ? "Use As Position" : "作为位置号";
+			positionColumn.Width = 90;
+
+			int insertIndex = dgvInput.Columns.Count > 2 ? 2 : dgvInput.Columns.Count;
+			dgvInput.Columns.Insert(insertIndex, positionColumn);
 		}
 
 
@@ -536,6 +580,32 @@ namespace Aron_V3
 			}
 		}
 
+
+		private void ForceTcpGridTypeToString()
+		{
+			if (_selectedType != CommunicationType.TcpIp)
+			{
+				return;
+			}
+
+			foreach (DataGridViewRow row in dgvInput.Rows)
+			{
+				if (!row.IsNewRow && row.Cells.Count > 2)
+				{
+					row.Cells[3].Value = "String";
+				}
+			}
+
+			foreach (DataGridViewRow row in dgvOutput.Rows)
+			{
+				if (!row.IsNewRow && row.Cells.Count > 1)
+				{
+					row.Cells[1].Value = "String";
+				}
+			}
+		}
+
+
 		private void LoadCurrentTypeVariablesToGrid()
 		{
 			if (_config == null)
@@ -579,6 +649,8 @@ namespace Aron_V3
 					SetVariableGridEditable(true, false);
 				}
 
+				ForceTcpGridTypeToString();
+
 				dgvInput.ClearSelection();
 				dgvOutput.ClearSelection();
 			}
@@ -609,7 +681,8 @@ namespace Aron_V3
 					dgvInput.Rows.Add(
 						item.Name,
 						engine,
-						DataTypeToDisplayText(item.DataType),
+						item.UseAsPosition,
+						DataTypeToDisplayText(NormalizeDataTypeForCurrentCommunication(item.DataType)),
 						item.ByteOffset.ToString(),
 						item.BitOffset.ToString(),
 						item.Length.ToString(),
@@ -620,7 +693,8 @@ namespace Aron_V3
 					dgvInput.Rows.Add(
 						item.Name,
 						item.UseAsTrigger,
-						DataTypeToDisplayText(item.DataType),
+						item.UseAsPosition,
+						DataTypeToDisplayText(NormalizeDataTypeForCurrentCommunication(item.DataType)),
 						item.ByteOffset.ToString(),
 						item.BitOffset.ToString(),
 						item.Length.ToString(),
@@ -640,7 +714,7 @@ namespace Aron_V3
 			{
 				dgvOutput.Rows.Add(
 					item.Name,
-					DataTypeToDisplayText(item.DataType),
+					DataTypeToDisplayText(NormalizeDataTypeForCurrentCommunication(item.DataType)),
 					item.ByteOffset.ToString(),
 					item.BitOffset.ToString(),
 					item.Length.ToString(),
@@ -758,12 +832,13 @@ namespace Aron_V3
 				CommInputVariable item = new CommInputVariable();
 				item.Name = name;
 				item.UseAsTrigger = GetCellBool(row, 1);
+				item.UseAsPosition = GetCellBool(row, 2);
 				item.EngineName = string.Empty;
-				item.DataType = DisplayTextToDataType(GetCellString(row, 2), CommVariableDataType.Bool);
-				item.ByteOffset = GetCellInt(row, 3, 0);
-				item.BitOffset = GetCellInt(row, 4, 0);
-				item.Length = GetCellInt(row, 5, 1);
-				item.Remark = GetCellString(row, 6);
+				item.DataType = NormalizeDataTypeForCurrentCommunication(DisplayTextToDataType(GetCellString(row, 3), GetDefaultVariableDataType()));
+				item.ByteOffset = GetCellInt(row, 4, 0);
+				item.BitOffset = GetCellInt(row, 5, 0);
+				item.Length = GetCellInt(row, 6, 1);
+				item.Remark = GetCellString(row, 7);
 
 				inputList.Add(item);
 			}
@@ -784,7 +859,7 @@ namespace Aron_V3
 
 				CommOutputVariable item = new CommOutputVariable();
 				item.Name = name;
-				item.DataType = DisplayTextToDataType(GetCellString(row, 1), CommVariableDataType.Bool);
+				item.DataType = NormalizeDataTypeForCurrentCommunication(DisplayTextToDataType(GetCellString(row, 1), GetDefaultVariableDataType()));
 				item.ByteOffset = GetCellInt(row, 2, 0);
 				item.BitOffset = GetCellInt(row, 3, 0);
 				item.Length = GetCellInt(row, 4, 1);
@@ -823,12 +898,13 @@ namespace Aron_V3
 				CommInputVariable item = new CommInputVariable();
 				item.Name = name;
 				item.UseAsTrigger = false;
+				item.UseAsPosition = GetCellBool(row, 2);
 				item.EngineName = engine;
-				item.DataType = DisplayTextToDataType(GetCellString(row, 2), CommVariableDataType.Bool);
-				item.ByteOffset = GetCellInt(row, 3, 0);
-				item.BitOffset = GetCellInt(row, 4, 0);
-				item.Length = GetCellInt(row, 5, 1);
-				item.Remark = GetCellString(row, 6);
+				item.DataType = NormalizeDataTypeForCurrentCommunication(DisplayTextToDataType(GetCellString(row, 3), GetDefaultVariableDataType()));
+				item.ByteOffset = GetCellInt(row, 4, 0);
+				item.BitOffset = GetCellInt(row, 5, 0);
+				item.Length = GetCellInt(row, 6, 1);
+				item.Remark = GetCellString(row, 7);
 
 				_config.Profinet.InputVariables.Add(item);
 			}
@@ -849,7 +925,7 @@ namespace Aron_V3
 
 				CommOutputVariable item = new CommOutputVariable();
 				item.Name = name;
-				item.DataType = DisplayTextToDataType(GetCellString(row, 1), CommVariableDataType.Bool);
+				item.DataType = NormalizeDataTypeForCurrentCommunication(DisplayTextToDataType(GetCellString(row, 1), GetDefaultVariableDataType()));
 				item.ByteOffset = GetCellInt(row, 2, 0);
 				item.BitOffset = GetCellInt(row, 3, 0);
 				item.Length = GetCellInt(row, 4, 1);
@@ -881,6 +957,7 @@ namespace Aron_V3
 				dgvInput.Rows.Add(
 					"Input_" + (dgvInput.Rows.Count + 1).ToString("00"),
 					"engine0",
+					false,
 					DataTypeToDisplayText(CommVariableDataType.Bool),
 					"0",
 					"0",
@@ -892,7 +969,8 @@ namespace Aron_V3
 				dgvInput.Rows.Add(
 					"Input_" + (dgvInput.Rows.Count + 1).ToString("00"),
 					false,
-					DataTypeToDisplayText(CommVariableDataType.Bool),
+					false,
+					DataTypeToDisplayText(GetDefaultVariableDataType()),
 					"0",
 					"0",
 					"1",
@@ -909,7 +987,7 @@ namespace Aron_V3
 		{
 			dgvOutput.Rows.Add(
 				"Output_" + (dgvOutput.Rows.Count + 1).ToString("00"),
-				DataTypeToDisplayText(CommVariableDataType.Bool),
+				DataTypeToDisplayText(GetDefaultVariableDataType()),
 				"0",
 				"0",
 				"1",
@@ -944,6 +1022,7 @@ namespace Aron_V3
 
 			_config.SelectedType = _selectedType;
 			CommunicationConfigStore.Save(_config);
+			CommunicationConfigChangedHub.RaiseConfigChanged();
 
 			MessageBox.Show(
 				"Communication configuration saved.",
@@ -1043,6 +1122,7 @@ namespace Aron_V3
 				btnClearTest.Text = "Clear";
 
 				colInputName.HeaderText = "Input Name";
+				if (dgvInput.Columns.Contains("colInputUseAsPosition")) dgvInput.Columns["colInputUseAsPosition"].HeaderText = "Use As Position";
 				colInputType.HeaderText = "Type";
 				colInputByteOffset.HeaderText = "Byte Offset";
 				colInputBitOffset.HeaderText = "Bit";
@@ -1072,6 +1152,7 @@ namespace Aron_V3
 				btnClearTest.Text = "清空";
 
 				colInputName.HeaderText = "输入变量名称";
+				if (dgvInput.Columns.Contains("colInputUseAsPosition")) dgvInput.Columns["colInputUseAsPosition"].HeaderText = "作为位置号";
 				colInputType.HeaderText = "类型";
 				colInputByteOffset.HeaderText = "偏移字节";
 				colInputBitOffset.HeaderText = "Bit";
