@@ -39,10 +39,7 @@ namespace Aron_V3
 			this.VisibleChanged += TriggerManagerControl_VisibleChanged;
 
 			ConfigureTriggerGrid();
-			EnsureDemoProjectJobFolder();
-			MoveLegacyJobFilesIntoJobFolder();
 			CreateJobActionButtons();
-			ReloadJobListFromLocalFiles();
 
 			listJobs.SelectedIndexChanged -= listJobs_SelectedIndexChanged;
 			listJobs.SelectedIndexChanged += listJobs_SelectedIndexChanged;
@@ -81,6 +78,7 @@ namespace Aron_V3
 			FlowConfigStore.FlowConfigSaved += FlowConfigStore_FlowConfigSaved;
 
 			LoadFlowConfigToJobList();
+			CreateJobActionButtons();
 		}
 
 		private void ConfigureTriggerGrid()
@@ -206,68 +204,38 @@ namespace Aron_V3
 			dgvTrigger.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 		}
 
-
-		private string GetProjectRootFolder()
-		{
-			string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-			string projectFolder = Path.Combine(baseDir, "Project");
-
-			if (!Directory.Exists(projectFolder))
-			{
-				return Path.Combine(baseDir, "Project", "DemoProject");
-			}
-
-			string demoProject = Path.Combine(projectFolder, "DemoProject");
-
-			if (Directory.Exists(demoProject))
-			{
-				return demoProject;
-			}
-
-			string[] dirs = Directory.GetDirectories(projectFolder);
-
-			if (dirs != null && dirs.Length > 0)
-			{
-				return dirs[0];
-			}
-
-			return projectFolder;
-		}
-
 		private List<string> GetCandidateCameraRootFolders()
 		{
 			List<string> roots = new List<string>();
-			string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-			string projectFolder = Path.Combine(baseDir, "Project");
-
-			if (!Directory.Exists(projectFolder))
-			{
-				return roots;
-			}
-
 			string jobName = GetSelectedJobNameSafe();
 
 			if (string.IsNullOrWhiteSpace(jobName))
 			{
-				jobName = "Job_001";
+				return roots;
 			}
 
-			string currentJobCameraRoot = Path.Combine(projectFolder, "Job", jobName, "Camera");
+			string jobFolder = Path.Combine(GetFlowJobRootFolder(), jobName);
 
-			if (Directory.Exists(currentJobCameraRoot) && !roots.Contains(currentJobCameraRoot))
+			// 当前标准目录：Project\Job\Job_001\Hardware\Camera\Cam1\*.vpp
+			string currentJobHardwareCameraRoot = Path.Combine(jobFolder, "Hardware", "Camera");
+
+			if (Directory.Exists(currentJobHardwareCameraRoot) && !roots.Contains(currentJobHardwareCameraRoot))
 			{
-				roots.Add(currentJobCameraRoot);
+				roots.Add(currentJobHardwareCameraRoot);
 			}
 
-			string oldDirectCameraRoot = Path.Combine(projectFolder, "Hardware", "Camera");
+			// 兼容旧目录：Project\Job\Job_001\Camera\Cam1\*.vpp
+			string oldJobCameraRoot = Path.Combine(jobFolder, "Camera");
 
-			if (Directory.Exists(oldDirectCameraRoot) && !roots.Contains(oldDirectCameraRoot))
+			if (Directory.Exists(oldJobCameraRoot) && !roots.Contains(oldJobCameraRoot))
 			{
-				roots.Add(oldDirectCameraRoot);
+				roots.Add(oldJobCameraRoot);
 			}
 
 			return roots;
 		}
+
+
 
 		private bool IsImageSourceConfigFile(string file)
 		{
@@ -292,8 +260,15 @@ namespace Aron_V3
 				return false;
 			}
 
+			// 过滤旧默认 Camera.vpp，避免图像源列表显示自动生成的占位文件。
+			if (fileNameWithoutExt.Equals("Camera", StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
 			return true;
 		}
+
 
 		private List<string> GetAllCameraImageSourcesFromFiles()
 		{
@@ -467,16 +442,117 @@ namespace Aron_V3
 		private void LoadFlowConfigToJobList()
 		{
 			_loading = true;
+
 			try
 			{
+				string oldJob = GetSelectedJobNameSafe();
+
 				listJobs.Items.Clear();
-				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-				foreach (JobConfig job in config.Jobs) listJobs.Items.Add(job.JobName);
-				if (listJobs.Items.Count > 0) listJobs.SelectedIndex = 0;
+				dgvTrigger.Rows.Clear();
+
+				List<string> jobs = GetAllLocalJobNames();
+
+				foreach (string jobName in jobs)
+				{
+					listJobs.Items.Add(jobName);
+				}
+
+				if (!string.IsNullOrWhiteSpace(oldJob))
+				{
+					SelectListItem(listJobs, oldJob);
+				}
+
+				if (listJobs.SelectedIndex < 0 && listJobs.Items.Count > 0)
+				{
+					listJobs.SelectedIndex = 0;
+				}
+
 				LoadCurrentJobTasksToGrid();
 			}
-			finally { _loading = false; }
+			finally
+			{
+				_loading = false;
+				CreateJobActionButtons();
+			}
 		}
+
+
+		private List<string> GetAllLocalJobNames()
+		{
+			List<string> jobs = new List<string>();
+
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+
+			if (config != null && config.Jobs != null)
+			{
+				foreach (JobConfig job in config.Jobs)
+				{
+					if (job == null || string.IsNullOrWhiteSpace(job.JobName))
+					{
+						continue;
+					}
+
+					AddJobNameIfNotExists(jobs, NormalizeJobName(job.JobName));
+				}
+			}
+
+			string jobRoot = GetFlowJobRootFolder();
+
+			if (Directory.Exists(jobRoot))
+			{
+				foreach (string dir in Directory.GetDirectories(jobRoot))
+				{
+					string name = Path.GetFileName(dir);
+
+					if (string.IsNullOrWhiteSpace(name))
+					{
+						continue;
+					}
+
+					AddJobNameIfNotExists(jobs, NormalizeJobName(name));
+				}
+			}
+
+			jobs.Sort(StringComparer.OrdinalIgnoreCase);
+			return jobs;
+		}
+
+		private void AddJobNameIfNotExists(List<string> jobs, string jobName)
+		{
+			if (jobs == null || string.IsNullOrWhiteSpace(jobName))
+			{
+				return;
+			}
+
+			if (!jobs.Any(x => string.Equals(x, jobName, StringComparison.OrdinalIgnoreCase)))
+			{
+				jobs.Add(jobName);
+			}
+		}
+
+		private string NormalizeJobName(string jobName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				return string.Empty;
+			}
+
+			jobName = jobName.Trim();
+
+			foreach (char c in Path.GetInvalidFileNameChars())
+			{
+				jobName = jobName.Replace(c, '_');
+			}
+
+			if (jobName.StartsWith("job_", StringComparison.OrdinalIgnoreCase))
+			{
+				string suffix = jobName.Substring(4);
+				jobName = "Job_" + suffix;
+			}
+
+			return jobName;
+		}
+
 
 		private void listJobs_SelectedIndexChanged(object sender, EventArgs e)
 		{
@@ -1205,35 +1281,80 @@ namespace Aron_V3
 				return;
 			}
 
-			if (panelJobButtons != null)
+			Control parent = jobList.Parent;
+
+			if (panelJobButtons == null || panelJobButtons.IsDisposed)
+			{
+				panelJobButtons = new Panel();
+				panelJobButtons.Name = "panelJobButtons";
+				panelJobButtons.Height = 40;
+				panelJobButtons.BackColor = Color.Transparent;
+				panelJobButtons.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+
+				btnAddJob = CreateSmallSquareButton("+");
+				btnAddJob.Name = "btnAddJob";
+				btnAddJob.Left = 0;
+				btnAddJob.Top = 5;
+				btnAddJob.Click -= btnAddJob_Click;
+				btnAddJob.Click += btnAddJob_Click;
+
+				btnDeleteJob = CreateSmallSquareButton("-");
+				btnDeleteJob.Name = "btnDeleteJob";
+				btnDeleteJob.Left = 52;
+				btnDeleteJob.Top = 5;
+				btnDeleteJob.Click -= btnDeleteJob_Click;
+				btnDeleteJob.Click += btnDeleteJob_Click;
+
+				panelJobButtons.Controls.Add(btnAddJob);
+				panelJobButtons.Controls.Add(btnDeleteJob);
+				parent.Controls.Add(panelJobButtons);
+			}
+			else if (panelJobButtons.Parent != parent)
+			{
+				panelJobButtons.Parent.Controls.Remove(panelJobButtons);
+				parent.Controls.Add(panelJobButtons);
+			}
+
+			parent.Resize -= JobListParent_Resize;
+			parent.Resize += JobListParent_Resize;
+
+			LayoutJobActionButtons();
+			panelJobButtons.BringToFront();
+		}
+
+
+		private void JobListParent_Resize(object sender, EventArgs e)
+		{
+			LayoutJobActionButtons();
+		}
+
+		private void LayoutJobActionButtons()
+		{
+			ListBox jobList = GetJobListBox();
+
+			if (jobList == null || jobList.Parent == null || panelJobButtons == null)
 			{
 				return;
 			}
 
-			panelJobButtons = new Panel();
-			panelJobButtons.Name = "panelJobButtons";
-			panelJobButtons.Height = 38;
-			panelJobButtons.BackColor = Color.Transparent;
-			panelJobButtons.Dock = DockStyle.Bottom;
-			panelJobButtons.Padding = new Padding(0, 6, 0, 0);
-
-			btnAddJob = CreateSmallSquareButton("+");
-			btnAddJob.Name = "btnAddJob";
-			btnAddJob.Click += btnAddJob_Click;
-
-			btnDeleteJob = CreateSmallSquareButton("-");
-			btnDeleteJob.Name = "btnDeleteJob";
-			btnDeleteJob.Click += btnDeleteJob_Click;
-
-			btnDeleteJob.Left = 50;
-
-			panelJobButtons.Controls.Add(btnAddJob);
-			panelJobButtons.Controls.Add(btnDeleteJob);
-
 			Control parent = jobList.Parent;
-			parent.Controls.Add(panelJobButtons);
+			int margin = 8;
+			int panelHeight = 40;
+
+			// 注意：这里必须取消 Dock。否则 listJobs 会占满父容器，把底部 + / - 按钮盖住。
+			jobList.Dock = DockStyle.None;
+			jobList.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
+
+			panelJobButtons.Left = jobList.Left;
+			panelJobButtons.Width = Math.Max(90, jobList.Width);
+			panelJobButtons.Height = panelHeight;
+			panelJobButtons.Top = Math.Max(jobList.Top + 40, parent.ClientSize.Height - panelHeight - margin);
+
+			jobList.Height = Math.Max(40, panelJobButtons.Top - jobList.Top - margin);
+
 			panelJobButtons.BringToFront();
 		}
+
 
 		private Button CreateSmallSquareButton(string text)
 		{
@@ -1269,7 +1390,7 @@ namespace Aron_V3
 					return;
 				}
 
-				newJobName = dialog.InputValue.Trim();
+				newJobName = NormalizeJobName(dialog.InputValue);
 			}
 
 			if (string.IsNullOrWhiteSpace(newJobName))
@@ -1278,7 +1399,7 @@ namespace Aron_V3
 				return;
 			}
 
-			if (jobList.Items.Cast<object>().Any(x => string.Equals(x.ToString(), newJobName, StringComparison.OrdinalIgnoreCase)))
+			if (GetAllLocalJobNames().Any(x => string.Equals(x, newJobName, StringComparison.OrdinalIgnoreCase)))
 			{
 				MessageBox.Show("Job already exists.", "Add Job", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
@@ -1290,9 +1411,14 @@ namespace Aron_V3
 			try
 			{
 				Directory.CreateDirectory(jobFolder);
-				jobList.Items.Add(newJobName);
-				jobList.SelectedItem = newJobName;
-				RefreshTriggerGridAfterSave();
+
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+				FlowConfigStore.GetOrCreateJob(config, newJobName);
+				FlowConfigStore.Save(config);
+
+				LoadFlowConfigToJobList();
+				SelectListItem(jobList, newJobName);
+				LoadCurrentJobTasksToGrid();
 			}
 			catch (Exception ex)
 			{
@@ -1300,16 +1426,17 @@ namespace Aron_V3
 			}
 		}
 
+
 		private string GetNextJobName(ListBox jobList)
 		{
 			int index = 1;
+			List<string> jobs = GetAllLocalJobNames();
 
 			while (true)
 			{
 				string name = "Job_" + index.ToString("000");
 
-				if (jobList == null ||
-					!jobList.Items.Cast<object>().Any(x => string.Equals(x.ToString(), name, StringComparison.OrdinalIgnoreCase)))
+				if (!jobs.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
 				{
 					return name;
 				}
@@ -1317,6 +1444,7 @@ namespace Aron_V3
 				index++;
 			}
 		}
+
 
 		private void btnDeleteJob_Click(object sender, EventArgs e)
 		{
@@ -1328,7 +1456,7 @@ namespace Aron_V3
 				return;
 			}
 
-			string jobName = jobList.SelectedItem.ToString();
+			string jobName = NormalizeJobName(jobList.SelectedItem.ToString());
 
 			if (string.IsNullOrWhiteSpace(jobName))
 			{
@@ -1336,7 +1464,7 @@ namespace Aron_V3
 			}
 
 			DialogResult result = MessageBox.Show(
-				"Delete Job [" + jobName + "] from DemoProject\\Job and all local Job files?",
+				"Delete Job [" + jobName + "] and all local files under Project\\Job?",
 				"Delete Job",
 				MessageBoxButtons.YesNo,
 				MessageBoxIcon.Warning);
@@ -1349,20 +1477,29 @@ namespace Aron_V3
 			try
 			{
 				DeleteLocalJobFiles(jobName);
-				jobList.Items.Remove(jobName);
 
-				if (jobList.Items.Count > 0)
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+
+				if (config.Jobs != null)
 				{
-					jobList.SelectedIndex = 0;
+					config.Jobs.RemoveAll(j => j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
 				}
 
-				RefreshTriggerGridAfterSave();
+				FlowConfigStore.Save(config);
+
+				LoadFlowConfigToJobList();
+
+				if (jobList.Items.Count == 0)
+				{
+					dgvTrigger.Rows.Clear();
+				}
 			}
 			catch (Exception ex)
 			{
 				MessageBox.Show("Delete Job failed: " + ex.Message, "Delete Job", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			}
 		}
+
 
 		private void DeleteLocalJobFiles(string jobName)
 		{
@@ -1411,85 +1548,24 @@ namespace Aron_V3
 
 		private void EnsureDemoProjectJobFolder()
 		{
+			// 保留方法名以兼容旧调用，但不再创建 DemoProject，也不再自动创建 Job_001。
 			string projectRoot = GetProjectRootFolderForJobFile();
-			string jobFolder = Path.Combine(projectRoot, "Job");
 
-			if (!Directory.Exists(jobFolder))
+			if (!Directory.Exists(projectRoot))
 			{
-				Directory.CreateDirectory(jobFolder);
+				Directory.CreateDirectory(projectRoot);
 			}
 		}
+
 
 
 
 		private void MoveLegacyJobFilesIntoJobFolder()
 		{
-			string projectRoot = GetProjectRootFolderForJobFile();
-			string jobRoot = GetFlowJobRootFolder();
-
-			if (!Directory.Exists(projectRoot) || !Directory.Exists(jobRoot))
-			{
-				return;
-			}
-
-			string[] legacyFolders = new string[]
-			{
-				Path.Combine(projectRoot, "Flow", "Jobs"),
-				Path.Combine(projectRoot, "Jobs"),
-				Path.Combine(projectRoot, "Steps")
-			};
-
-			foreach (string legacyFolder in legacyFolders)
-			{
-				if (!Directory.Exists(legacyFolder))
-				{
-					continue;
-				}
-
-				foreach (string dir in Directory.GetDirectories(legacyFolder))
-				{
-					string name = Path.GetFileName(dir);
-
-					if (string.IsNullOrWhiteSpace(name) ||
-						string.Equals(name, "System", StringComparison.OrdinalIgnoreCase))
-					{
-						continue;
-					}
-
-					string target = Path.Combine(jobRoot, name);
-
-					if (!Directory.Exists(target))
-					{
-						try
-						{
-							Directory.Move(dir, target);
-						}
-						catch
-						{
-							DirectoryCopy(dir, target, true);
-						}
-					}
-				}
-
-				foreach (string file in Directory.GetFiles(legacyFolder, "*.xml", SearchOption.TopDirectoryOnly))
-				{
-					string name = Path.GetFileNameWithoutExtension(file);
-
-					if (string.IsNullOrWhiteSpace(name) ||
-						string.Equals(name, "System", StringComparison.OrdinalIgnoreCase))
-					{
-						continue;
-					}
-
-					string target = Path.Combine(jobRoot, Path.GetFileName(file));
-
-					if (!File.Exists(target))
-					{
-						File.Copy(file, target, false);
-					}
-				}
-			}
+			// 已取消启动时迁移旧目录，避免删除 Project 后又被旧逻辑带出默认 Job。
+			// 如需迁移旧项目，可单独做手动导入。
 		}
+
 
 		private void DirectoryCopy(string sourceDir, string destDir, bool copySubDirs)
 		{
@@ -1526,7 +1602,21 @@ namespace Aron_V3
 
 		private ListBox GetJobListBox()
 		{
-			ListBox named = FindControlRecursive<ListBox>(this, "lstJob");
+			// Designer 文件里的真实控件名就是 listJobs，必须优先返回它。
+			// 之前先找 lstJob / lstJobs，Job 列表为空时会返回 null，导致 + / - 按钮创建失败。
+			if (listJobs != null)
+			{
+				return listJobs;
+			}
+
+			ListBox named = FindControlRecursive<ListBox>(this, "listJobs");
+
+			if (named != null)
+			{
+				return named;
+			}
+
+			named = FindControlRecursive<ListBox>(this, "lstJob");
 
 			if (named != null)
 			{
@@ -1626,41 +1716,20 @@ namespace Aron_V3
 
 		private string GetProjectRootFolderForJobFile()
 		{
-			string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-			string projectRoot = Path.Combine(baseDir, "Project");
-			string demoProject = Path.Combine(projectRoot, "DemoProject");
+			string projectRoot = ProjectPathStore.ProjectRoot;
 
-			if (Directory.Exists(demoProject))
+			if (!Directory.Exists(projectRoot))
 			{
-				return demoProject;
+				Directory.CreateDirectory(projectRoot);
 			}
 
-			if (Directory.Exists(projectRoot))
-			{
-				string[] dirs = Directory.GetDirectories(projectRoot);
-
-				if (dirs != null && dirs.Length > 0)
-				{
-					foreach (string dir in dirs)
-					{
-						string name = Path.GetFileName(dir);
-
-						if (!string.Equals(name, "System", StringComparison.OrdinalIgnoreCase))
-						{
-							return dir;
-						}
-					}
-				}
-			}
-
-			Directory.CreateDirectory(demoProject);
-			return demoProject;
+			return projectRoot;
 		}
+
 
 		private string GetFlowJobRootFolder()
 		{
-			string projectRoot = GetProjectRootFolderForJobFile();
-			string jobFolder = Path.Combine(projectRoot, "Job");
+			string jobFolder = Path.Combine(ProjectPathStore.ProjectRoot, "Job");
 
 			if (!Directory.Exists(jobFolder))
 			{
@@ -1669,6 +1738,7 @@ namespace Aron_V3
 
 			return jobFolder;
 		}
+
 
 		private List<string> GetPossibleJobLocalPaths(string jobName)
 		{
@@ -1679,98 +1749,24 @@ namespace Aron_V3
 				return paths;
 			}
 
+			string normalizedJobName = NormalizeJobName(jobName);
 			string jobRoot = GetFlowJobRootFolder();
+			string jobFolder = Path.Combine(jobRoot, normalizedJobName);
 
-			paths.Add(Path.Combine(jobRoot, jobName));
-			paths.Add(Path.Combine(jobRoot, jobName + ".xml"));
+			if (!paths.Any(x => string.Equals(x, jobFolder, StringComparison.OrdinalIgnoreCase)))
+			{
+				paths.Add(jobFolder);
+			}
 
 			return paths;
 		}
 
+
 		private void ReloadJobListFromLocalFiles()
 		{
-			ListBox jobList = GetJobListBox();
-
-			if (jobList == null)
-			{
-				return;
-			}
-
-			string oldSelected = GetSelectedJobNameSafe();
-			List<string> jobs = new List<string>();
-			string projectRoot = GetProjectRootFolderForJobFile();
-
-			string[] roots = new string[]
-			{
-				Path.Combine(projectRoot, "Flow", "Jobs"),
-				Path.Combine(projectRoot, "Steps"),
-				Path.Combine(projectRoot, "Jobs"),
-				Path.Combine(projectRoot, "Job")
-			};
-
-			foreach (string root in roots)
-			{
-				if (!Directory.Exists(root))
-				{
-					continue;
-				}
-
-				foreach (string dir in Directory.GetDirectories(root))
-				{
-					string name = Path.GetFileName(dir);
-
-					if (!string.IsNullOrWhiteSpace(name) &&
-						!jobs.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
-					{
-						jobs.Add(name);
-					}
-				}
-
-				foreach (string file in Directory.GetFiles(root, "*.xml", SearchOption.TopDirectoryOnly))
-				{
-					string name = Path.GetFileNameWithoutExtension(file);
-
-					if (!string.IsNullOrWhiteSpace(name) &&
-						name.StartsWith("Job", StringComparison.OrdinalIgnoreCase) &&
-						!jobs.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
-					{
-						jobs.Add(name);
-					}
-				}
-			}
-
-			if (jobs.Count <= 0)
-			{
-				jobs.Add("Job_001");
-			}
-
-			jobs.Sort(StringComparer.OrdinalIgnoreCase);
-
-			jobList.BeginUpdate();
-			jobList.Items.Clear();
-
-			foreach (string job in jobs)
-			{
-				jobList.Items.Add(job);
-			}
-
-			if (!string.IsNullOrWhiteSpace(oldSelected))
-			{
-				int index = jobList.FindStringExact(oldSelected);
-
-				if (index >= 0)
-				{
-					jobList.SelectedIndex = index;
-				}
-			}
-
-			if (jobList.SelectedIndex < 0 && jobList.Items.Count > 0)
-			{
-				jobList.SelectedIndex = 0;
-			}
-
-			jobList.EndUpdate();
+			LoadFlowConfigToJobList();
 		}
+
 
 
 		private void ShowAllTriggerRows()
@@ -2062,32 +2058,34 @@ namespace Aron_V3
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
 			this.MaximizeBox = false;
 			this.MinimizeBox = false;
-			this.ClientSize = new Size(420, 170);
+			this.ShowInTaskbar = false;
+			this.ClientSize = new Size(520, 210);
 			this.BackColor = Color.FromArgb(2, 10, 20);
 			this.Font = new Font("Microsoft YaHei UI", 9F);
+			this.KeyPreview = true;
 
 			Label label = new Label();
 			label.Text = labelText;
-			label.ForeColor = Color.White;
-			label.Location = new Point(28, 28);
-			label.Size = new Size(120, 24);
+			label.ForeColor = Color.FromArgb(220, 235, 245);
+			label.Location = new Point(42, 58);
+			label.Size = new Size(135, 30);
+			label.TextAlign = ContentAlignment.MiddleLeft;
+			label.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
 
 			_textBox = new TextBox();
-			_textBox.Text = defaultValue;
-			_textBox.Location = new Point(135, 26);
-			_textBox.Size = new Size(245, 24);
+			_textBox.Text = defaultValue == null ? string.Empty : defaultValue;
+			_textBox.Location = new Point(180, 58);
+			_textBox.Size = new Size(300, 30);
 			_textBox.BackColor = Color.FromArgb(3, 14, 27);
 			_textBox.ForeColor = Color.White;
 			_textBox.BorderStyle = BorderStyle.FixedSingle;
+			_textBox.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular);
+			_textBox.Margin = new Padding(0);
 
-			_btnOk = CreateDialogButton("OK", 175, 105, true);
-			_btnCancel = CreateDialogButton("Cancel", 285, 105, false);
+			_btnOk = CreateDialogButton("OK", 170, 135, true);
+			_btnCancel = CreateDialogButton("Cancel", 310, 135, false);
 
-			_btnOk.Click += delegate
-			{
-				this.DialogResult = DialogResult.OK;
-				this.Close();
-			};
+			_btnOk.Click += btnOk_Click;
 
 			_btnCancel.Click += delegate
 			{
@@ -2100,11 +2098,28 @@ namespace Aron_V3
 			this.Controls.Add(_btnOk);
 			this.Controls.Add(_btnCancel);
 
+			this.AcceptButton = _btnOk;
+			this.CancelButton = _btnCancel;
+
 			this.Shown += delegate
 			{
 				_textBox.Focus();
-				_textBox.SelectAll();
+				_textBox.SelectionStart = _textBox.Text.Length;
+				_textBox.SelectionLength = 0;
 			};
+		}
+
+		private void btnOk_Click(object sender, EventArgs e)
+		{
+			if (string.IsNullOrWhiteSpace(_textBox.Text))
+			{
+				MessageBox.Show("Job name cannot be empty.", "Add Job", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				_textBox.Focus();
+				return;
+			}
+
+			this.DialogResult = DialogResult.OK;
+			this.Close();
 		}
 
 		private Button CreateDialogButton(string text, int x, int y, bool primary)
@@ -2112,14 +2127,20 @@ namespace Aron_V3
 			Button button = new Button();
 			button.Text = text;
 			button.Location = new Point(x, y);
-			button.Size = new Size(90, 34);
+			button.Size = new Size(110, 38);
 			button.FlatStyle = FlatStyle.Flat;
 			button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(20, 110, 235) : Color.FromArgb(8, 35, 60);
+			button.FlatAppearance.MouseDownBackColor = primary ? Color.FromArgb(0, 75, 180) : Color.FromArgb(5, 25, 45);
 			button.BackColor = primary ? Color.FromArgb(0, 95, 220) : Color.FromArgb(3, 14, 27);
 			button.ForeColor = Color.White;
+			button.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
+			button.Cursor = Cursors.Hand;
+			button.UseVisualStyleBackColor = false;
 			return button;
 		}
 	}
+
 
 
 	public class ComboLikePopupForm : Form

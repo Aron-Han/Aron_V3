@@ -181,11 +181,7 @@ namespace Aron_V3
 	{
 		public static string ConfigFolder
 		{
-			get
-			{
-				// 用户账号独立保存到 Project 文件夹
-				return Path.Combine(Application.StartupPath, "Project", "DemoProject", "Config", "System");
-			}
+			get { return ProjectPathStore.SystemConfigRoot; }
 		}
 
 		public static string ConfigFile

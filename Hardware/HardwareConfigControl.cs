@@ -186,6 +186,12 @@ namespace Aron_V3
 			Button btnSave = CreateBottomButton("保存配置");
 			btnSave.Click += delegate
 			{
+				if (!HardwareConfigStore.HasCurrentJob)
+				{
+					MessageBox.Show("Please create or select a Job first. Hardware files are saved under Project\\Job\\[JobName]\\Hardware.", "Hardware", MessageBoxButtons.OK, MessageBoxIcon.Information);
+					return;
+				}
+
 				SaveCurrentCameraFromUi();
 				HardwareConfigStore.Save(_config);
 				MessageBox.Show("Hardware configuration saved.", "Hardware", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -210,6 +216,7 @@ namespace Aron_V3
 
 			try
 			{
+				HardwareConfigStore.AutoSelectFirstJobIfNeeded();
 				_config = HardwareConfigStore.LoadOrCreateDefault();
 				RebuildCameraCards();
 
@@ -217,10 +224,84 @@ namespace Aron_V3
 				{
 					SelectCamera(_config.Cameras[0], false);
 				}
+				else
+				{
+					_currentCamera = null;
+					_currentVproAcqTool = null;
+					_currentSdkPanel = null;
+					ShowEmptyHardwarePlaceholder();
+				}
 			}
 			finally
 			{
 				_loading = false;
+			}
+		}
+
+
+		private void ShowEmptyHardwarePlaceholder()
+		{
+			string jobName = HardwareConfigStore.CurrentJobName;
+
+			if (_lblCurrentCamera != null)
+			{
+				if (string.IsNullOrWhiteSpace(jobName))
+				{
+					_lblCurrentCamera.Text = "当前未选择 Job，请先在流程管理中新增或选择 Job。";
+				}
+				else
+				{
+					_lblCurrentCamera.Text = "当前 Job： " + jobName + "    |    尚未创建相机";
+				}
+			}
+
+			if (_modeHost != null)
+			{
+				_modeHost.Controls.Clear();
+
+				Label label = new Label();
+				label.Dock = DockStyle.Fill;
+				label.TextAlign = ContentAlignment.MiddleCenter;
+				label.ForeColor = _muted;
+				label.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
+
+				if (string.IsNullOrWhiteSpace(jobName))
+				{
+					label.Text = string.Concat(
+						"当前 Project\\Job 下没有可用 Job。",
+						Environment.NewLine,
+						"硬件配置不会自动创建 Cam1，也不会自动创建 Job_001。",
+						Environment.NewLine,
+						"请先在流程管理中点击 + 新增 Job，再进入硬件配置添加相机。");
+				}
+				else
+				{
+					label.Text = string.Concat(
+						"当前 Job：",
+						jobName,
+						Environment.NewLine,
+						"尚未创建相机。",
+						Environment.NewLine,
+						"点击左侧“+ 添加相机”后，配置会保存到：",
+						Environment.NewLine,
+						"Project\\Job\\",
+						jobName,
+						"\\Hardware");
+				}
+
+				_modeHost.Controls.Add(label);
+			}
+
+			if (_lblBottomStatus != null)
+			{
+				if (string.IsNullOrWhiteSpace(jobName))
+				{
+					_lblBottomStatus.Text = "当前未选择 Job，Hardware 不会生成默认 Cam1。";
+				}
+				else
+				{
+					_lblBottomStatus.Text = "当前 Job：" + jobName + "    |    Hardware 路径：" + HardwareConfigStore.ConfigFolder;
+				}
 			}
 		}
 
@@ -953,6 +1034,23 @@ namespace Aron_V3
 
 		private void btnAddCamera_Click(object sender, EventArgs e)
 		{
+			HardwareConfigStore.AutoSelectFirstJobIfNeeded();
+
+			if (!HardwareConfigStore.HasCurrentJob)
+			{
+				MessageBox.Show(
+					"Please create or select a Job first. Camera hardware files are saved under Project\\Job\\[JobName]\\Hardware.",
+					"Add Camera",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				return;
+			}
+
+			if (_config == null)
+			{
+				_config = new HardwareProjectConfig();
+			}
+
 			using (AddCameraDialog dialog = new AddCameraDialog(GetNextCameraName()))
 			{
 				if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -967,7 +1065,8 @@ namespace Aron_V3
 				camera.Sdk.Brand = dialog.SdkBrand;
 				camera.Status = "Disconnected";
 				camera.AcqProfileName = "Default";
-				camera.VisionPro.AcqVppPath = HardwareConfigStore.GetDefaultVisionProAcqPath(camera.CameraName, camera.AcqProfileName);
+				camera.VisionPro.ToolName = string.Empty;
+				camera.VisionPro.AcqVppPath = string.Empty;
 
 				_config.Cameras.Add(camera);
 				HardwareConfigStore.Save(_config);

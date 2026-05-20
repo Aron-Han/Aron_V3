@@ -1,4 +1,6 @@
-﻿namespace Aron_V3
+﻿using System.Windows.Forms;
+
+namespace Aron_V3
 {
 	partial class TriggerManagerControl
 	{
@@ -97,7 +99,7 @@
 			// 
 			this.listJobs.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(14)))), ((int)(((byte)(28)))));
 			this.listJobs.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-			this.listJobs.Dock = System.Windows.Forms.DockStyle.Fill;
+			this.listJobs.Dock = DockStyle.Top;
 			this.listJobs.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F);
 			this.listJobs.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(220)))), ((int)(((byte)(230)))), ((int)(((byte)(240)))));
 			this.listJobs.ItemHeight = 25;

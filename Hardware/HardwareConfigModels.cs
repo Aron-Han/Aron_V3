@@ -75,7 +75,7 @@ namespace Aron_V3
 
 		public VisionProAcqConfig()
 		{
-			ToolName = "Cam_Acq";
+			ToolName = string.Empty;
 			AcqVppPath = string.Empty;
 			DeviceName = "default";
 			VideoFormat = "Mono8";
@@ -219,60 +219,154 @@ namespace Aron_V3
 
 	public static class HardwareConfigStore
 	{
-		private static string _currentJobName = "Job_001";
+		private static string _currentJobName = string.Empty;
 
 		public static string CurrentJobName
 		{
 			get { return _currentJobName; }
 		}
 
+		public static bool HasCurrentJob
+		{
+			get { return !string.IsNullOrWhiteSpace(_currentJobName); }
+		}
+
 		public static void SetCurrentJobName(string jobName)
 		{
-			if (string.IsNullOrWhiteSpace(jobName))
-			{
-				_currentJobName = "Job_001";
-				return;
-			}
+			_currentJobName = NormalizeFileName(jobName, string.Empty);
+		}
 
-			_currentJobName = jobName.Trim();
+		public static void ClearCurrentJobName()
+		{
+			_currentJobName = string.Empty;
 		}
 
 		public static string ProjectRoot
 		{
-			get { return Path.Combine(Application.StartupPath, "Project"); }
+			get
+			{
+				string folder = Path.Combine(Application.StartupPath, "Project");
+				if (!Directory.Exists(folder))
+				{
+					Directory.CreateDirectory(folder);
+				}
+				return folder;
+			}
+		}
+
+		public static string JobRootContainer
+		{
+			get
+			{
+				string folder = Path.Combine(ProjectRoot, "Job");
+				if (!Directory.Exists(folder))
+				{
+					Directory.CreateDirectory(folder);
+				}
+				return folder;
+			}
 		}
 
 		public static string JobRootFolder
 		{
-			get { return GetJobRootFolder(_currentJobName); }
+			get { return GetJobRootFolder(_currentJobName, false); }
 		}
 
 		public static string ConfigFolder
 		{
-			get { return JobRootFolder; }
+			get
+			{
+				string jobFolder = JobRootFolder;
+				if (string.IsNullOrWhiteSpace(jobFolder))
+				{
+					return string.Empty;
+				}
+
+				string folder = Path.Combine(jobFolder, "Hardware");
+				if (!Directory.Exists(folder))
+				{
+					Directory.CreateDirectory(folder);
+				}
+
+				return folder;
+			}
 		}
 
 		public static string ConfigFilePath
 		{
-			get { return Path.Combine(ConfigFolder, "HardwareConfig.xml"); }
+			get
+			{
+				string folder = ConfigFolder;
+				if (string.IsNullOrWhiteSpace(folder))
+				{
+					return string.Empty;
+				}
+
+				return Path.Combine(folder, "HardwareConfig.xml");
+			}
 		}
 
 		public static string ImageSourceConfigPath
 		{
-			get { return Path.Combine(ConfigFolder, "ImageSources.xml"); }
+			get
+			{
+				string folder = ConfigFolder;
+				if (string.IsNullOrWhiteSpace(folder))
+				{
+					return string.Empty;
+				}
+
+				return Path.Combine(folder, "ImageSources.xml");
+			}
+		}
+
+		public static void AutoSelectFirstJobIfNeeded()
+		{
+			if (HasCurrentJob)
+			{
+				return;
+			}
+
+			string jobRoot = JobRootContainer;
+
+			if (!Directory.Exists(jobRoot))
+			{
+				return;
+			}
+
+			string[] dirs = Directory.GetDirectories(jobRoot);
+
+			if (dirs == null || dirs.Length == 0)
+			{
+				return;
+			}
+
+			Array.Sort(dirs, StringComparer.OrdinalIgnoreCase);
+			_currentJobName = Path.GetFileName(dirs[0]);
 		}
 
 		public static string GetJobRootFolder()
 		{
-			return GetJobRootFolder(_currentJobName);
+			return GetJobRootFolder(_currentJobName, false);
 		}
 
 		public static string GetJobRootFolder(string jobName)
 		{
-			string safeJob = NormalizeFileName(jobName, "Job_001");
-			string folder = Path.Combine(ProjectRoot, "Job", safeJob);
+			return GetJobRootFolder(jobName, true);
+		}
 
-			if (!Directory.Exists(folder))
+		private static string GetJobRootFolder(string jobName, bool createIfMissing)
+		{
+			string safeJob = NormalizeFileName(jobName, string.Empty);
+
+			if (string.IsNullOrWhiteSpace(safeJob))
+			{
+				return string.Empty;
+			}
+
+			string folder = Path.Combine(JobRootContainer, safeJob);
+
+			if (createIfMissing && !Directory.Exists(folder))
 			{
 				Directory.CreateDirectory(folder);
 			}
@@ -282,14 +376,26 @@ namespace Aron_V3
 
 		public static string GetCameraRootFolder()
 		{
-			return GetCameraRootFolder(_currentJobName);
+			return GetCameraRootFolder(_currentJobName, true);
 		}
 
 		public static string GetCameraRootFolder(string jobName)
 		{
-			string folder = Path.Combine(GetJobRootFolder(jobName), "Camera");
+			return GetCameraRootFolder(jobName, true);
+		}
 
-			if (!Directory.Exists(folder))
+		private static string GetCameraRootFolder(string jobName, bool createIfMissing)
+		{
+			string jobFolder = GetJobRootFolder(jobName, createIfMissing);
+
+			if (string.IsNullOrWhiteSpace(jobFolder))
+			{
+				return string.Empty;
+			}
+
+			string folder = Path.Combine(jobFolder, "Hardware", "Camera");
+
+			if (createIfMissing && !Directory.Exists(folder))
 			{
 				Directory.CreateDirectory(folder);
 			}
@@ -304,8 +410,15 @@ namespace Aron_V3
 
 		public static string GetCameraFolder(string cameraName, string jobName)
 		{
+			string root = GetCameraRootFolder(jobName, true);
+
+			if (string.IsNullOrWhiteSpace(root))
+			{
+				return string.Empty;
+			}
+
 			string safeCamera = NormalizeFileName(cameraName, "Cam1");
-			string folder = Path.Combine(GetCameraRootFolder(jobName), safeCamera);
+			string folder = Path.Combine(root, safeCamera);
 
 			if (!Directory.Exists(folder))
 			{
@@ -332,18 +445,26 @@ namespace Aron_V3
 
 		public static string GetDefaultVisionProAcqPath(string cameraName)
 		{
-			return GetVisionProAcqPath(cameraName, "Default", cameraName + "_Acq");
+			return string.Empty;
 		}
 
 		public static string GetDefaultVisionProAcqPath(string cameraName, string profileName)
 		{
-			return GetVisionProAcqPath(cameraName, profileName, cameraName + "_Acq");
+			return string.Empty;
 		}
+
 
 		public static string GetVisionProAcqPath(string cameraName, string profileName, string toolName)
 		{
+			string folder = GetVisionProFolder(cameraName, profileName);
+
+			if (string.IsNullOrWhiteSpace(folder))
+			{
+				return string.Empty;
+			}
+
 			toolName = NormalizeFileName(toolName, cameraName + "_Acq");
-			return Path.Combine(GetVisionProFolder(cameraName, profileName), toolName + ".vpp");
+			return Path.Combine(folder, toolName + ".vpp");
 		}
 
 		public static string NormalizeFileName(string fileName, string defaultName)
@@ -351,6 +472,11 @@ namespace Aron_V3
 			if (string.IsNullOrWhiteSpace(fileName))
 			{
 				fileName = defaultName;
+			}
+
+			if (fileName == null)
+			{
+				return string.Empty;
 			}
 
 			foreach (char c in Path.GetInvalidFileNameChars())
@@ -363,6 +489,11 @@ namespace Aron_V3
 				fileName = defaultName;
 			}
 
+			if (fileName == null)
+			{
+				return string.Empty;
+			}
+
 			return fileName.Trim();
 		}
 
@@ -373,8 +504,15 @@ namespace Aron_V3
 
 		public static string GetSdkConfigPath(string cameraName, string profileName, CameraSdkBrand brand, string toolName)
 		{
+			string folder = GetSdkFolder(cameraName, profileName);
+
+			if (string.IsNullOrWhiteSpace(folder))
+			{
+				return string.Empty;
+			}
+
 			toolName = NormalizeFileName(toolName, cameraName + "_" + brand + "_Sdk");
-			return Path.Combine(GetSdkFolder(cameraName, profileName), toolName + ".xml");
+			return Path.Combine(folder, toolName + ".xml");
 		}
 
 		public static string CopyImportedFileToProject(string sourceFile, string targetFolder, string targetFileNameWithoutExtension, string extensionWithDot, bool overwrite)
@@ -426,16 +564,23 @@ namespace Aron_V3
 		{
 			try
 			{
+				AutoSelectFirstJobIfNeeded();
+
+				if (!HasCurrentJob)
+				{
+					return CreateDefault();
+				}
+
 				if (!Directory.Exists(ConfigFolder))
 				{
 					Directory.CreateDirectory(ConfigFolder);
 				}
 
-				if (!File.Exists(ConfigFilePath))
+				if (string.IsNullOrWhiteSpace(ConfigFilePath) || !File.Exists(ConfigFilePath))
 				{
-					HardwareProjectConfig defaultConfig = CreateDefault();
-					Save(defaultConfig);
-					return defaultConfig;
+					HardwareProjectConfig emptyConfig = CreateDefault();
+					Save(emptyConfig);
+					return emptyConfig;
 				}
 
 				XmlSerializer serializer = new XmlSerializer(typeof(HardwareProjectConfig));
@@ -467,6 +612,16 @@ namespace Aron_V3
 				config = CreateDefault();
 			}
 
+			if (!HasCurrentJob)
+			{
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(ConfigFolder) || string.IsNullOrWhiteSpace(ConfigFilePath))
+			{
+				return;
+			}
+
 			if (!Directory.Exists(ConfigFolder))
 			{
 				Directory.CreateDirectory(ConfigFolder);
@@ -486,6 +641,11 @@ namespace Aron_V3
 
 		public static void SaveSdkConfig(CameraDeviceConfig camera)
 		{
+			if (!HasCurrentJob)
+			{
+				return;
+			}
+
 			if (camera == null || camera.Sdk == null)
 			{
 				return;
@@ -497,6 +657,12 @@ namespace Aron_V3
 			}
 
 			string path = GetSdkConfigPath(camera.CameraName, camera.AcqProfileName, camera.SdkBrand, camera.Sdk.ToolName);
+
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				return;
+			}
+
 			camera.Sdk.ConfigPath = path;
 
 			string folder = Path.GetDirectoryName(path);
@@ -531,14 +697,14 @@ namespace Aron_V3
 
 		public static void DeleteCameraFolder(string cameraName)
 		{
-			if (string.IsNullOrWhiteSpace(cameraName))
+			if (string.IsNullOrWhiteSpace(cameraName) || !HasCurrentJob)
 			{
 				return;
 			}
 
 			string folder = GetCameraFolder(cameraName);
 
-			if (!Directory.Exists(folder))
+			if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
 			{
 				return;
 			}
@@ -548,6 +714,11 @@ namespace Aron_V3
 
 		public static void SaveImageSourceList(HardwareProjectConfig config)
 		{
+			if (!HasCurrentJob || string.IsNullOrWhiteSpace(ImageSourceConfigPath))
+			{
+				return;
+			}
+
 			ImageSourceConfigList list = new ImageSourceConfigList();
 
 			if (config != null && config.Cameras != null)
@@ -559,29 +730,35 @@ namespace Aron_V3
 						continue;
 					}
 
-					ImageSourceConfig source = new ImageSourceConfig();
-					source.SourceName = cam.CameraName + ".Raw";
-					source.CameraName = cam.CameraName;
-					source.AcqMode = cam.AcquisitionMode.ToString();
-					source.SdkBrand = cam.SdkBrand.ToString();
-					source.ProfileName = string.IsNullOrWhiteSpace(cam.AcqProfileName) ? "Default" : cam.AcqProfileName;
-					source.OutputImageKey = cam.CameraName + ".Raw";
-					source.Enable = cam.Enable;
+					string cameraFolder = GetCameraFolder(cam.CameraName);
 
-					if (cam.AcquisitionMode == CameraAcquisitionMode.VPro)
+					if (string.IsNullOrWhiteSpace(cameraFolder) || !Directory.Exists(cameraFolder))
 					{
-						source.ToolName = cam.VisionPro == null ? string.Empty : cam.VisionPro.ToolName;
-						source.ConfigPath = cam.VisionPro == null ? string.Empty : cam.VisionPro.AcqVppPath;
-					}
-					else
-					{
-						source.ToolName = cam.Sdk == null ? string.Empty : cam.Sdk.ToolName;
-						source.ConfigPath = cam.Sdk == null || string.IsNullOrWhiteSpace(cam.Sdk.ConfigPath)
-							? GetSdkConfigPath(cam.CameraName, cam.AcqProfileName, cam.SdkBrand)
-							: cam.Sdk.ConfigPath;
+						continue;
 					}
 
-					list.Sources.Add(source);
+					string[] files = Directory.GetFiles(cameraFolder, "*.*", SearchOption.TopDirectoryOnly);
+
+					foreach (string file in files)
+					{
+						if (!IsCameraConfigFileForImageSource(file, cam))
+						{
+							continue;
+						}
+
+						ImageSourceConfig source = new ImageSourceConfig();
+						source.SourceName = cam.CameraName + "." + Path.GetFileName(file);
+						source.CameraName = cam.CameraName;
+						source.AcqMode = string.Equals(Path.GetExtension(file), ".vpp", StringComparison.OrdinalIgnoreCase) ? CameraAcquisitionMode.VPro.ToString() : CameraAcquisitionMode.SDK.ToString();
+						source.SdkBrand = cam.SdkBrand.ToString();
+						source.ProfileName = string.IsNullOrWhiteSpace(cam.AcqProfileName) ? "Default" : cam.AcqProfileName;
+						source.ToolName = Path.GetFileNameWithoutExtension(file);
+						source.ConfigPath = file;
+						source.OutputImageKey = source.SourceName;
+						source.Enable = cam.Enable;
+
+						list.Sources.Add(source);
+					}
 				}
 			}
 
@@ -598,29 +775,61 @@ namespace Aron_V3
 			}
 		}
 
+		private static bool IsCameraConfigFileForImageSource(string file, CameraDeviceConfig camera)
+		{
+			if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+			{
+				return false;
+			}
+
+			string ext = Path.GetExtension(file);
+
+			if (!string.Equals(ext, ".vpp", StringComparison.OrdinalIgnoreCase) &&
+				!string.Equals(ext, ".xml", StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			string name = Path.GetFileNameWithoutExtension(file);
+
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return false;
+			}
+
+			if (name.Equals("HardwareConfig", StringComparison.OrdinalIgnoreCase) ||
+				name.Equals("ImageSources", StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			if (name.Equals("Camera", StringComparison.OrdinalIgnoreCase))
+			{
+				string currentPath = camera == null || camera.VisionPro == null ? string.Empty : camera.VisionPro.AcqVppPath;
+
+				if (string.IsNullOrWhiteSpace(currentPath) ||
+					!string.Equals(Path.GetFullPath(file), Path.GetFullPath(currentPath), StringComparison.OrdinalIgnoreCase))
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+
 		private static HardwareProjectConfig CreateDefault()
 		{
-			HardwareProjectConfig config = new HardwareProjectConfig();
-
-			CameraDeviceConfig cam1 = new CameraDeviceConfig();
-			cam1.CameraName = "Cam1";
-			cam1.Enable = true;
-			cam1.AcquisitionMode = CameraAcquisitionMode.VPro;
-			cam1.SdkBrand = CameraSdkBrand.None;
-			cam1.Status = "Disconnected";
-			cam1.AcqProfileName = "Default";
-			cam1.VisionPro.ToolName = "Camera";
-			cam1.VisionPro.AcqVppPath = GetVisionProAcqPath(cam1.CameraName, cam1.AcqProfileName, cam1.VisionPro.ToolName);
-
-			config.Cameras.Add(cam1);
-
-			EnsureCameraFolders(config);
-			SaveImageSourceList(config);
-			return config;
+			return new HardwareProjectConfig();
 		}
 
 		private static void EnsureCameraFolders(HardwareProjectConfig config)
 		{
+			if (!HasCurrentJob)
+			{
+				return;
+			}
+
 			if (config == null || config.Cameras == null)
 			{
 				return;
@@ -640,7 +849,7 @@ namespace Aron_V3
 
 				string cameraFolder = GetCameraFolder(camera.CameraName);
 
-				if (!Directory.Exists(cameraFolder))
+				if (!string.IsNullOrWhiteSpace(cameraFolder) && !Directory.Exists(cameraFolder))
 				{
 					Directory.CreateDirectory(cameraFolder);
 				}
@@ -657,12 +866,26 @@ namespace Aron_V3
 
 				if (string.IsNullOrWhiteSpace(camera.VisionPro.ToolName))
 				{
-					camera.VisionPro.ToolName = "Camera";
+					camera.VisionPro.ToolName = string.Empty;
 				}
 
 				if (string.IsNullOrWhiteSpace(camera.VisionPro.AcqVppPath))
 				{
-					camera.VisionPro.AcqVppPath = GetVisionProAcqPath(camera.CameraName, camera.AcqProfileName, camera.VisionPro.ToolName);
+					camera.VisionPro.AcqVppPath = string.Empty;
+				}
+
+				if (!string.IsNullOrWhiteSpace(camera.VisionPro.AcqVppPath))
+				{
+					string fileName = Path.GetFileNameWithoutExtension(camera.VisionPro.AcqVppPath);
+					camera.VisionPro.ToolName = NormalizeFileName(fileName, camera.VisionPro.ToolName);
+
+					string fullPath = Path.GetFullPath(camera.VisionPro.AcqVppPath);
+					string cameraRoot = Path.GetFullPath(cameraFolder);
+
+					if (fullPath.StartsWith(cameraRoot, StringComparison.OrdinalIgnoreCase))
+					{
+						camera.VisionPro.AcqVppPath = fullPath;
+					}
 				}
 
 				if (camera.SdkBrand != CameraSdkBrand.None)
@@ -677,23 +900,50 @@ namespace Aron_V3
 
 				if (string.IsNullOrWhiteSpace(camera.Sdk.ConfigPath))
 				{
-					camera.Sdk.ConfigPath = GetSdkConfigPath(camera.CameraName, camera.AcqProfileName, camera.SdkBrand, camera.Sdk.ToolName);
-				}
-
-				if (!string.IsNullOrWhiteSpace(camera.VisionPro.AcqVppPath))
-				{
-					string fileName = Path.GetFileNameWithoutExtension(camera.VisionPro.AcqVppPath);
-					camera.VisionPro.ToolName = NormalizeFileName(fileName, camera.VisionPro.ToolName);
-					camera.VisionPro.AcqVppPath = GetVisionProAcqPath(camera.CameraName, camera.AcqProfileName, camera.VisionPro.ToolName);
+					camera.Sdk.ConfigPath = string.Empty;
 				}
 
 				if (!string.IsNullOrWhiteSpace(camera.Sdk.ConfigPath))
 				{
 					string fileName = Path.GetFileNameWithoutExtension(camera.Sdk.ConfigPath);
 					camera.Sdk.ToolName = NormalizeFileName(fileName, camera.Sdk.ToolName);
-					camera.Sdk.ConfigPath = GetSdkConfigPath(camera.CameraName, camera.AcqProfileName, camera.SdkBrand, camera.Sdk.ToolName);
 				}
+
+				DeleteLegacyCameraVppIfNotUsed(camera);
 			}
 		}
+
+		private static void DeleteLegacyCameraVppIfNotUsed(CameraDeviceConfig camera)
+		{
+			try
+			{
+				if (camera == null || string.IsNullOrWhiteSpace(camera.CameraName))
+				{
+					return;
+				}
+
+				string folder = GetCameraFolder(camera.CameraName);
+				string legacyFile = Path.Combine(folder, "Camera.vpp");
+
+				if (!File.Exists(legacyFile))
+				{
+					return;
+				}
+
+				string selected = camera.VisionPro == null ? string.Empty : camera.VisionPro.AcqVppPath;
+
+				if (!string.IsNullOrWhiteSpace(selected) &&
+					string.Equals(Path.GetFullPath(selected), Path.GetFullPath(legacyFile), StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+
+				File.Delete(legacyFile);
+			}
+			catch
+			{
+			}
+		}
+
 	}
 }

@@ -3038,7 +3038,7 @@ namespace Aron_V3
 		{
 			get
 			{
-				return Path.Combine(Application.StartupPath, "Project", "DemoProject", "Config", "Algorithm");
+				return ProjectPathStore.AlgorithmConfigRoot;
 			}
 		}
 

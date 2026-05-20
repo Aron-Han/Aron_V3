@@ -87,6 +87,7 @@
       <DependentUpon>HardwareConfigControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Hardware\HardwareConfigModels.cs" />
+    <Compile Include="ProjectPathStore.cs" />
     <Compile Include="User_Control\AlgorithmModuleControl.cs">
       <SubType>UserControl</SubType>
     </Compile>

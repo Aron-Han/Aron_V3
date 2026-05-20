@@ -564,7 +564,7 @@ namespace Aron_V3
 	{
 		public static event EventHandler FlowConfigSaved;
 
-		private static string _projectRoot = Path.Combine(Application.StartupPath, "Project");
+		private static string _projectRoot = ProjectPathStore.ProjectRoot;
 
 		public static string ProjectRoot
 		{
@@ -590,19 +590,24 @@ namespace Aron_V3
 
 		public static ProjectFlowConfig LoadOrCreateDefault()
 		{
-			PathManager.EnsureProjectFolders();
+			ProjectFlowConfig config = new ProjectFlowConfig();
 
-			ProjectFlowConfig config = XmlConfigHelper.Load<ProjectFlowConfig>(FlowConfigFile);
+			string filePath = FlowConfigFile;
 
-			if (config.Jobs.Count <= 0)
+			if (File.Exists(filePath))
 			{
-				config = CreateDefaultConfig();
-				Save(config);
+				config = XmlConfigHelper.Load<ProjectFlowConfig>(filePath);
+
+				if (config == null)
+				{
+					config = new ProjectFlowConfig();
+				}
 			}
 
 			NormalizeConfig(config);
 			return config;
 		}
+
 
 		public static void Save(ProjectFlowConfig config)
 		{
@@ -728,17 +733,12 @@ namespace Aron_V3
 
 		private static ProjectFlowConfig CreateDefaultConfig()
 		{
-			ProjectFlowConfig config = new ProjectFlowConfig();
-
-			JobConfig job = new JobConfig();
-			job.JobName = "Job_001";
-			job.Enabled = true;
-
-			// 默认只创建 Job，不自动创建 Task。
-			// Task 必须由流程管理页面手动新增，避免本地出现未配置的 Task 文件夹。
-			config.Jobs.Add(job);
-			return config;
+			// 不再自动创建 Job_001。
+			// 删除 Project 文件夹后重新启动，流程管理页面应为空。
+			// 只有用户点击“+”新增 Job 时，才创建 Project\Job\Job_xxx。
+			return new ProjectFlowConfig();
 		}
+
 
 		private static void NormalizeConfig(ProjectFlowConfig config)
 		{
