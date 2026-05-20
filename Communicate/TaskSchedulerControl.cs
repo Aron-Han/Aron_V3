@@ -742,7 +742,6 @@ namespace Aron_V3
 				return false;
 			}
 
-			// 已经保存到 Project 内部的，不重复处理。
 			if (!string.IsNullOrEmpty(step.ProjectFilePath))
 			{
 				string existedProjectFile = GetAbsoluteProjectStepFilePath(jobName, taskName, step);
@@ -755,8 +754,6 @@ namespace Aron_V3
 
 			string sourceFilePath = step.SourceFilePath;
 
-			// 兼容旧数据：
-			// 如果 SourceFilePath 为空，但 VppFiles / ScriptFiles 里已有相对路径，则尝试从 Project 目录读取。
 			if (string.IsNullOrEmpty(sourceFilePath))
 			{
 				string projectFile = GetAbsoluteProjectStepFilePath(jobName, taskName, step);
@@ -788,8 +785,8 @@ namespace Aron_V3
 			FlowConfigStore.PathManager.EnsureStepFolder(jobName, taskName, step.StepName);
 
 			// 新目录结构：
-			// Project/Steps/JobName/TaskName/VPP/xxx.vpp
-			// Project/Steps/JobName/TaskName/Scripts/xxx.csx
+			// Project\Job\<JobName>\Task\<TaskName>\VPP\xxx.vpp
+			// Project\Job\<JobName>\Task\<TaskName>\Scripts\xxx.csx
 			string taskFolder = FlowConfigStore.PathManager.GetStepFolder(jobName, taskName, step.StepName);
 			string subFolderName = step.StepType == StepType.Vpp ? "VPP" : "Scripts";
 			string targetFolder = Path.Combine(taskFolder, subFolderName);
@@ -833,11 +830,13 @@ namespace Aron_V3
 				step.ScriptFiles.Add(relativeFilePath);
 			}
 
-			// StepFolder 也改成新结构
-			step.StepFolder = Path.Combine("Steps", jobName, taskName);
+			// 新结构记录：
+			// Job\<JobName>\Task\<TaskName>
+			step.StepFolder = Path.Combine("Job", jobName, "Task", taskName);
 
 			return true;
 		}
+
 
 
 		private string GetRelativeStepFilePath(StepConfig step)
@@ -872,6 +871,7 @@ namespace Aron_V3
 			string stepFolder = FlowConfigStore.PathManager.GetStepFolder(jobName, taskName, step.StepName);
 			return Path.Combine(stepFolder, relativeFilePath);
 		}
+
 
 		#endregion
 
@@ -1002,43 +1002,24 @@ namespace Aron_V3
 			try
 			{
 				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName);
-				if (Directory.Exists(taskFolder)) Directory.Delete(taskFolder, true);
+
+				if (Directory.Exists(taskFolder))
+				{
+					Directory.Delete(taskFolder, true);
+				}
+
+				// 兼容旧目录：Project\Job\<JobName>\<TaskName>
+				string legacyTaskFolder = Path.Combine(FlowConfigStore.PathManager.GetJobFolder(jobName), taskName);
+
+				if (Directory.Exists(legacyTaskFolder) &&
+					!string.Equals(legacyTaskFolder, taskFolder, StringComparison.OrdinalIgnoreCase))
+				{
+					Directory.Delete(legacyTaskFolder, true);
+				}
 			}
 			catch (Exception ex)
 			{
 				MessageBox.Show("Failed to delete task folder.\r\n\r\n" + ex.Message, "Delete Task Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-			}
-		}
-
-		private void DeleteStepFolder(string jobName, string taskName, string stepName)
-		{
-			try
-			{
-				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-				TaskConfig task = GetTaskConfig(config, jobName, taskName);
-
-				if (task == null)
-				{
-					return;
-				}
-
-				StepConfig step = task.Steps.FirstOrDefault(s =>
-					string.Equals(s.StepName, stepName, StringComparison.OrdinalIgnoreCase));
-
-				if (step == null)
-				{
-					return;
-				}
-
-				DeleteStepProjectFile(jobName, taskName, step);
-			}
-			catch (Exception ex)
-			{
-				MessageBox.Show(
-					"Failed to delete step file.\r\n\r\n" + ex.Message,
-					"Delete Step File",
-					MessageBoxButtons.OK,
-					MessageBoxIcon.Warning);
 			}
 		}
 

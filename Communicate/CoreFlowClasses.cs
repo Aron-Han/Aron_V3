@@ -56,8 +56,13 @@ namespace Aron_V3
 		public string FlowConfigRoot { get { return Path.Combine(ProjectRoot, "Job"); } }
 		public string HardwareConfigRoot { get { return Path.Combine(ConfigRoot, "Hardware"); } }
 		public string CommunicationConfigRoot { get { return Path.Combine(ConfigRoot, "Communication"); } }
+
 		public string JobRoot { get { return Path.Combine(ProjectRoot, "Job"); } }
+
+		// 保留 StepsRoot 属性，兼容旧代码调用。
+		// 但新路径不再使用 Project\Steps，而是统一放在 Project\Job\<JobName>\Task\<TaskName> 下。
 		public string StepsRoot { get { return JobRoot; } }
+
 		public string ImagesRoot { get { return Path.Combine(ProjectRoot, "Images"); } }
 		public string LogsRoot { get { return Path.Combine(ProjectRoot, "Logs"); } }
 
@@ -77,43 +82,92 @@ namespace Aron_V3
 			Directory.CreateDirectory(ConfigRoot);
 			Directory.CreateDirectory(JobRoot);
 			Directory.CreateDirectory(FlowConfigRoot);
-			Directory.CreateDirectory(HardwareConfigRoot);
 			Directory.CreateDirectory(CommunicationConfigRoot);
-			Directory.CreateDirectory(JobRoot);
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Save"));
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Replay"));
 			Directory.CreateDirectory(LogsRoot);
+
+			// 注意：
+			// 不在这里创建 Config\Hardware。
+			// Hardware 已经改为每个 Job 内部：
+			// Project\Job\<JobName>\Hardware
 		}
 
 		public string GetJobFolder(string jobName)
 		{
-			return Path.Combine(StepsRoot, jobName);
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			return Path.Combine(JobRoot, MakeSafeName(jobName));
+		}
+
+		public string GetJobHardwareFolder(string jobName)
+		{
+			return Path.Combine(GetJobFolder(jobName), "Hardware");
+		}
+
+		public string GetTaskRootFolder(string jobName)
+		{
+			return Path.Combine(GetJobFolder(jobName), "Task");
 		}
 
 		public string GetTaskFolder(string jobName, string taskName)
 		{
-			return Path.Combine(StepsRoot, jobName, taskName);
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				taskName = "Task_New_01";
+			}
+
+			return Path.Combine(GetTaskRootFolder(jobName), MakeSafeName(taskName));
 		}
 
 		public string GetStepFolder(string jobName, string taskName, string stepName)
 		{
-			// 新目录结构不再使用 StepName 作为文件夹层级
-			// Project/Job/JobName/TaskName
-			return Path.Combine(JobRoot, jobName, taskName);
+			// 新目录结构不再使用 StepName 作为文件夹层级。
+			// 所有当前 Task 使用到的 VPP / Script 放在：
+			// Project\Job\<JobName>\Task\<TaskName>\VPP
+			// Project\Job\<JobName>\Task\<TaskName>\Scripts
+			return GetTaskFolder(jobName, taskName);
+		}
+
+		public void EnsureJobFolder(string jobName)
+		{
+			Directory.CreateDirectory(GetJobFolder(jobName));
+		}
+
+		public void EnsureTaskFolder(string jobName, string taskName)
+		{
+			string taskFolder = GetTaskFolder(jobName, taskName);
+			Directory.CreateDirectory(taskFolder);
 		}
 
 		public void EnsureStepFolder(string jobName, string taskName, string stepName)
 		{
-			// 新目录结构：
-			// Project/Job/JobName/TaskName/VPP
-			// Project/Job/JobName/TaskName/Scripts
 			string taskFolder = GetStepFolder(jobName, taskName, stepName);
 
 			Directory.CreateDirectory(taskFolder);
 			Directory.CreateDirectory(Path.Combine(taskFolder, "VPP"));
 			Directory.CreateDirectory(Path.Combine(taskFolder, "Scripts"));
 		}
+
+		public string MakeSafeName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return "New";
+			}
+
+			foreach (char c in Path.GetInvalidFileNameChars())
+			{
+				name = name.Replace(c, '_');
+			}
+
+			return name.Trim();
+		}
 	}
+
 
 	public class VisionImage
 	{
@@ -778,19 +832,70 @@ namespace Aron_V3
 		{
 			ProjectPathManager path = PathManager;
 
+			if (config == null || config.Jobs == null)
+			{
+				return;
+			}
+
 			foreach (JobConfig job in config.Jobs)
 			{
-				string jobFolder = path.GetJobFolder(job.JobName);
-
-				if (!Directory.Exists(jobFolder))
+				if (job == null || string.IsNullOrWhiteSpace(job.JobName))
 				{
-					Directory.CreateDirectory(jobFolder);
+					continue;
+				}
+
+				string jobFolder = path.GetJobFolder(job.JobName);
+				Directory.CreateDirectory(jobFolder);
+
+				if (job.Tasks == null)
+				{
+					continue;
 				}
 
 				foreach (TaskConfig task in job.Tasks)
 				{
+					if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
+					{
+						continue;
+					}
+
+					// 新标准路径：
+					// Project\Job\<JobName>\Task\<TaskName>
+					string taskFolder = path.GetTaskFolder(job.JobName, task.TaskName);
+					Directory.CreateDirectory(taskFolder);
+
+					// 兼容迁移旧路径：
+					// Project\Job\<JobName>\<TaskName>
+					// 如果旧目录存在，则迁移到：
+					// Project\Job\<JobName>\Task\<TaskName>
+					string legacyTaskFolder = Path.Combine(jobFolder, task.TaskName);
+
+					if (Directory.Exists(legacyTaskFolder) &&
+						!string.Equals(legacyTaskFolder, taskFolder, StringComparison.OrdinalIgnoreCase))
+					{
+						try
+						{
+							MoveDirectoryContent(legacyTaskFolder, taskFolder);
+							Directory.Delete(legacyTaskFolder, true);
+						}
+						catch
+						{
+							// 迁移失败不影响软件启动和保存，后续可以手动处理旧目录。
+						}
+					}
+
+					if (task.Steps == null)
+					{
+						continue;
+					}
+
 					foreach (StepConfig step in task.Steps)
 					{
+						if (step == null)
+						{
+							continue;
+						}
+
 						if (!string.IsNullOrEmpty(step.ProjectFilePath) ||
 							(step.VppFiles != null && step.VppFiles.Count > 0) ||
 							(step.ScriptFiles != null && step.ScriptFiles.Count > 0))
@@ -801,6 +906,55 @@ namespace Aron_V3
 				}
 			}
 		}
+
+		private static void MoveDirectoryContent(string sourceDir, string targetDir)
+		{
+			if (string.IsNullOrWhiteSpace(sourceDir) || string.IsNullOrWhiteSpace(targetDir))
+			{
+				return;
+			}
+
+			if (!Directory.Exists(sourceDir))
+			{
+				return;
+			}
+
+			if (!Directory.Exists(targetDir))
+			{
+				Directory.CreateDirectory(targetDir);
+			}
+
+			foreach (string file in Directory.GetFiles(sourceDir))
+			{
+				string targetFile = Path.Combine(targetDir, Path.GetFileName(file));
+
+				if (File.Exists(targetFile))
+				{
+					File.Delete(targetFile);
+				}
+
+				File.Move(file, targetFile);
+			}
+
+			foreach (string dir in Directory.GetDirectories(sourceDir))
+			{
+				string targetSubDir = Path.Combine(targetDir, Path.GetFileName(dir));
+				MoveDirectoryContent(dir, targetSubDir);
+
+				try
+				{
+					if (Directory.Exists(dir) && Directory.GetFiles(dir).Length == 0 && Directory.GetDirectories(dir).Length == 0)
+					{
+						Directory.Delete(dir, false);
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+
+
 	}
 
 	public interface IVisionStep

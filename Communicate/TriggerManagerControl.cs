@@ -1203,75 +1203,6 @@ namespace Aron_V3
 			return positions.Count > 0 ? positions[0] : "Not Use";
 		}
 
-		private List<string> LoadImageSourceOptions()
-		{
-			return GetAllCameraImageSourcesFromFiles();
-		}
-
-		private void AddImageSourcesFromHardwareXml(string xmlFile, List<string> result)
-		{
-			if (string.IsNullOrEmpty(xmlFile) || !File.Exists(xmlFile)) return;
-			try
-			{
-				XmlDocument doc = new XmlDocument(); doc.Load(xmlFile);
-				XmlNodeList nodes = doc.SelectNodes("//*");
-				if (nodes == null) return;
-				foreach (XmlNode node in nodes) AddImageSourceByNode(node, result);
-			}
-			catch { }
-		}
-
-		private void AddImageSourceByNode(XmlNode node, List<string> result)
-		{
-			if (node == null) return;
-			if (node.Attributes != null)
-			{
-				AddImageSourceByAttribute(node, "ImageSourceKey", result);
-				AddImageSourceByAttribute(node, "ImageKey", result);
-				AddImageSourceByAttribute(node, "Key", result);
-				AddImageSourceByAttribute(node, "Name", result);
-				AddImageSourceByAttribute(node, "CameraName", result);
-				AddImageSourceByAttribute(node, "CameraKey", result);
-				AddImageSourceByAttribute(node, "ChannelName", result);
-				AddImageSourceByAttribute(node, "DeviceName", result);
-			}
-			string nodeName = node.Name.ToLower();
-			if (nodeName.Contains("camera") || nodeName.Contains("imagesource") || nodeName.Contains("imagekey") || nodeName.Contains("channel"))
-			{
-				string text = node.InnerText == null ? string.Empty : node.InnerText.Trim();
-				if (!string.IsNullOrEmpty(text) && text.Length <= 64 && !text.Contains("<")) AddImageSourceValue(text, result);
-			}
-		}
-
-		private void AddImageSourceByAttribute(XmlNode node, string attributeName, List<string> result)
-		{
-			XmlAttribute attr = node.Attributes[attributeName];
-			if (attr != null) AddImageSourceValue(attr.Value, result);
-		}
-
-		private void AddImageSourceValue(string value, List<string> result)
-		{
-			if (string.IsNullOrWhiteSpace(value))
-			{
-				return;
-			}
-
-			string source = value.Trim();
-
-			if (!result.Any(x => string.Equals(x, source, StringComparison.OrdinalIgnoreCase)))
-			{
-				result.Add(source);
-			}
-		}
-
-
-		private void EnsureImageSourceValueExists(string imageSource)
-		{
-			// 图像源现在是多选文本，不再需要把值塞入 ComboBox Items。
-			// 保存/加载时通过 NormalizeImageSourceSelection 统一校验。
-		}
-
-
 		private void CreateJobActionButtons()
 		{
 			ListBox jobList = GetJobListBox();
@@ -1543,30 +1474,6 @@ namespace Aron_V3
 				if (!row.IsNewRow) dgvTrigger.Rows.Remove(row);
 		}
 
-
-
-
-		private void EnsureDemoProjectJobFolder()
-		{
-			// 保留方法名以兼容旧调用，但不再创建 DemoProject，也不再自动创建 Job_001。
-			string projectRoot = GetProjectRootFolderForJobFile();
-
-			if (!Directory.Exists(projectRoot))
-			{
-				Directory.CreateDirectory(projectRoot);
-			}
-		}
-
-
-
-
-		private void MoveLegacyJobFilesIntoJobFolder()
-		{
-			// 已取消启动时迁移旧目录，避免删除 Project 后又被旧逻辑带出默认 Job。
-			// 如需迁移旧项目，可单独做手动导入。
-		}
-
-
 		private void DirectoryCopy(string sourceDir, string destDir, bool copySubDirs)
 		{
 			DirectoryInfo dir = new DirectoryInfo(sourceDir);
@@ -1761,14 +1668,6 @@ namespace Aron_V3
 			return paths;
 		}
 
-
-		private void ReloadJobListFromLocalFiles()
-		{
-			LoadFlowConfigToJobList();
-		}
-
-
-
 		private void ShowAllTriggerRows()
 		{
 			if (dgvTrigger == null)
@@ -1863,15 +1762,86 @@ namespace Aron_V3
 				if (task.Steps == null) task.Steps = new List<StepConfig>();
 				if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
 				job.Tasks.Add(task);
+				Directory.CreateDirectory(FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName));
 				runOrder++;
 			}
 			FlowConfigStore.Save(config);
+			MoveLegacyTaskFoldersUnderTaskFolder(jobName);
 			RefreshTriggerGridAfterSave();
 
 			MessageBox.Show("Trigger configuration saved.", "Save", MessageBoxButtons.OK, MessageBoxIcon.Information);
 		}
 
+		private void MoveLegacyTaskFoldersUnderTaskFolder(string jobName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				return;
+			}
 
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+			JobConfig job = config.Jobs.FirstOrDefault(j => string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+
+			if (job == null || job.Tasks == null)
+			{
+				return;
+			}
+
+			string jobFolder = FlowConfigStore.PathManager.GetJobFolder(jobName);
+
+			foreach (TaskConfig task in job.Tasks)
+			{
+				if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
+				{
+					continue;
+				}
+
+				string legacyFolder = Path.Combine(jobFolder, task.TaskName);
+				string newFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, task.TaskName);
+
+				if (!Directory.Exists(legacyFolder))
+				{
+					continue;
+				}
+
+				if (!Directory.Exists(newFolder))
+				{
+					Directory.CreateDirectory(newFolder);
+				}
+
+				foreach (string file in Directory.GetFiles(legacyFolder))
+				{
+					string target = Path.Combine(newFolder, Path.GetFileName(file));
+
+					if (File.Exists(target))
+					{
+						File.Delete(target);
+					}
+
+					File.Move(file, target);
+				}
+
+				foreach (string dir in Directory.GetDirectories(legacyFolder))
+				{
+					string target = Path.Combine(newFolder, Path.GetFileName(dir));
+
+					if (Directory.Exists(target))
+					{
+						Directory.Delete(target, true);
+					}
+
+					Directory.Move(dir, target);
+				}
+
+				try
+				{
+					Directory.Delete(legacyFolder, true);
+				}
+				catch
+				{
+				}
+			}
+		}
 
 		private void SelectListItem(ListBox listBox, string itemText)
 		{
@@ -1888,14 +1858,6 @@ namespace Aron_V3
 			if (row.Cells[columnIndex].Value == null) return string.Empty;
 			return row.Cells[columnIndex].Value.ToString().Trim();
 		}
-
-		private int GetCellInt(DataGridViewRow row, int columnIndex, int defaultValue)
-		{
-			int value;
-			if (int.TryParse(GetCellString(row, columnIndex), out value)) return value;
-			return defaultValue;
-		}
-
 
 		private void CommunicationConfigChangedHub_ConfigChanged(object sender, EventArgs e)
 		{
@@ -1977,10 +1939,6 @@ namespace Aron_V3
 				dgvTrigger.ResumeLayout(true);
 			}
 		}
-
-
-
-
 
 		public List<string> DebugGetCurrentImageSourceItems()
 		{
