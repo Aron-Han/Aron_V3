@@ -264,6 +264,8 @@ namespace Aron_V3
 			InitLoginSystem();
 			InitRunStatusButton();
 			PreCreateAlgorithmPageIfEnabled();
+
+			CommunicationRuntimeManager.Instance.StartFromSavedConfig();
 		}
 
 		private void Form1_Load(object sender, EventArgs e)
@@ -1101,5 +1103,9 @@ namespace Aron_V3
 		}
 		#endregion
 
+		private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+		{
+			CommunicationRuntimeManager.Instance.Stop();
+		}
 	}
 }

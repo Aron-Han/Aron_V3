@@ -80,6 +80,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Communicate\TCPIP\CommunicationRuntimeContracts.cs" />
+    <Compile Include="Communicate\TCPIP\CommunicationRuntimeManager.cs" />
     <Compile Include="Display\DisplayLayoutControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -111,6 +113,7 @@
     </Compile>
     <Compile Include="Task\TaskRunContext.cs" />
     <Compile Include="Task\TaskTestDialog.cs" />
+    <Compile Include="Communicate\TCPIP\TcpIpCommunicationService.cs" />
     <Compile Include="User_Control\AlgorithmModuleControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -210,7 +213,6 @@
   <ItemGroup>
     <Folder Include="Communicate\Profinet\" />
     <Folder Include="Communicate\S7\" />
-    <Folder Include="Communicate\TCPIP\" />
     <Folder Include="Hardware\SDK\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

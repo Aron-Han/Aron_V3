@@ -900,6 +900,7 @@
 			this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
 			this.Text = "Betterway Vision-Base  |  工业视觉检测平台";
 			this.WindowState = System.Windows.Forms.FormWindowState.Maximized;
+			this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.Form1_FormClosing);
 			this.Load += new System.EventHandler(this.Form1_Load);
 			this.rootLayout.ResumeLayout(false);
 			this.titlePanel.ResumeLayout(false);

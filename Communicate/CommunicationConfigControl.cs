@@ -13,8 +13,17 @@ namespace Aron_V3
 		private CommunicationType _selectedType = CommunicationType.TcpIp;
 		private bool _loading = false;
 		private bool _isEnglish = false;
+		private bool _tcpRuntimeEventBound = false;
 
 		private CheckBox chkEnable;
+		private Button btnTcpConnect;
+		private Button btnTcpDisconnect;
+		private Panel pnlTcpStatusLight;
+		private Label lblTcpStatus;
+		private Label lblTcpParam1;
+		private TextBox txtTcpParam1;
+		private Label lblTcpParam2;
+		private TextBox txtTcpParam2;
 
 		private bool? _inputSecondColumnIsProfinet = null;
 
@@ -30,11 +39,14 @@ namespace Aron_V3
 			EnableDoubleBufferForPage();
 
 			InitializeEnableCheckBox();
+			InitializeTcpConnectionControls();
 			InitializeGridStyle();
 			InitializeComboColumns();
 
 			_config = CommunicationConfigStore.LoadOrCreateDefault();
 			LoadConfigToUI(_config);
+			BindTcpRuntimeEvents();
+			UpdateTcpStatusUi();
 		}
 
 		private void InitializeEnableCheckBox()
@@ -151,7 +163,605 @@ namespace Aron_V3
 			cmbMode.Items.Add("Server");
 			cmbMode.Items.Add("Client");
 			cmbMode.SelectedIndex = 0;
+			cmbMode.SelectedIndexChanged += cmbMode_SelectedIndexChanged;
 		}
+
+		private void cmbMode_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (_loading || _selectedType != CommunicationType.TcpIp)
+			{
+				return;
+			}
+
+			SaveCurrentTypeParamsFromUI();
+			SyncTcpDedicatedControlsFromConfig();
+			ApplyTcpModeParamVisibility();
+		}
+
+		private void InitializeTcpConnectionControls()
+		{
+			lblTcpParam1 = CreateTcpParamLabel();
+			txtTcpParam1 = CreateTcpParamTextBox();
+
+			lblTcpParam2 = CreateTcpParamLabel();
+			txtTcpParam2 = CreateTcpParamTextBox();
+
+			btnTcpConnect = CreateTcpSmallButton("连接", 0, 0, 90, 30);
+			btnTcpDisconnect = CreateTcpSmallButton("断开", 0, 0, 90, 30);
+
+			pnlTcpStatusLight = new Panel();
+			pnlTcpStatusLight.Name = "pnlTcpStatusLight";
+			pnlTcpStatusLight.Size = new Size(12, 12);
+			pnlTcpStatusLight.BackColor = Color.FromArgb(120, 120, 120);
+
+			lblTcpStatus = new Label();
+			lblTcpStatus.Name = "lblTcpStatus";
+			lblTcpStatus.Size = new Size(180, 28);
+			lblTcpStatus.TextAlign = ContentAlignment.MiddleLeft;
+			lblTcpStatus.ForeColor = Color.FromArgb(150, 170, 190);
+			lblTcpStatus.BackColor = Color.Transparent;
+			lblTcpStatus.Text = "Stopped";
+
+			btnTcpConnect.Click += btnTcpConnect_Click;
+			btnTcpDisconnect.Click += btnTcpDisconnect_Click;
+
+			EnsureTcpControlsParent();
+
+			grpParams.Resize += delegate
+			{
+				LayoutTcpParameterArea();
+			};
+
+			LayoutTcpParameterArea();
+		}
+
+		private Label CreateTcpParamLabel()
+		{
+			Label label = new Label();
+			label.AutoSize = false;
+			label.TextAlign = ContentAlignment.MiddleLeft;
+			label.ForeColor = Color.White;
+			label.BackColor = Color.Transparent;
+			label.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			label.Visible = false;
+			return label;
+		}
+
+		private TextBox CreateTcpParamTextBox()
+		{
+			TextBox txt = new TextBox();
+			txt.BorderStyle = BorderStyle.FixedSingle;
+			txt.BackColor = Color.FromArgb(2, 10, 20);
+			txt.ForeColor = Color.White;
+			txt.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular);
+			txt.Visible = false;
+			return txt;
+		}
+
+		private void PositionTcpConnectionControls()
+		{
+			LayoutTcpParameterArea();
+		}
+
+		private void EnsureTcpControlsParent()
+		{
+			if (grpParams == null)
+			{
+				return;
+			}
+
+			// TCP/IP 页面使用专用参数控件，避免复用 Designer 里的 txtP1~txtP6 时出现父容器和坐标错乱。
+			MoveControlToGroup(lblTcpParam1);
+			MoveControlToGroup(txtTcpParam1);
+			MoveControlToGroup(lblTcpParam2);
+			MoveControlToGroup(txtTcpParam2);
+
+			MoveControlToGroup(cmbMode);
+
+			MoveControlToGroup(btnTcpConnect);
+			MoveControlToGroup(btnTcpDisconnect);
+			MoveControlToGroup(pnlTcpStatusLight);
+			MoveControlToGroup(lblTcpStatus);
+		}
+
+		private void MoveControlToGroup(Control control)
+		{
+			if (control == null || grpParams == null)
+			{
+				return;
+			}
+
+			if (control.Parent == grpParams)
+			{
+				return;
+			}
+
+			grpParams.Controls.Add(control);
+		}
+
+		private void LayoutTcpParameterArea()
+		{
+			if (grpParams == null ||
+				lblTcpParam1 == null ||
+				txtTcpParam1 == null ||
+				lblTcpParam2 == null ||
+				txtTcpParam2 == null ||
+				btnTcpConnect == null ||
+				btnTcpDisconnect == null ||
+				pnlTcpStatusLight == null ||
+				lblTcpStatus == null)
+			{
+				return;
+			}
+
+			EnsureTcpControlsParent();
+
+			if (_selectedType != CommunicationType.TcpIp)
+			{
+				HideTcpDedicatedControls();
+				return;
+			}
+
+			bool isServer = true;
+			if (cmbMode != null)
+			{
+				isServer = cmbMode.SelectedIndex <= 0;
+			}
+
+			grpParams.SuspendLayout();
+
+			try
+			{
+				// TCP/IP 页面不再复用 lblP1~lblP6 / txtP1~txtP6 显示参数。
+				// 这些控件在 Designer 中可能属于不同父容器，容易造成坐标错乱或不可见。
+				HideCommonParamControls();
+
+				lblTcpParam1.Visible = true;
+				txtTcpParam1.Visible = true;
+
+				lblTcpParam2.Visible = !isServer;
+				txtTcpParam2.Visible = !isServer;
+
+				btnTcpConnect.Visible = true;
+				btnTcpDisconnect.Visible = true;
+				pnlTcpStatusLight.Visible = true;
+				lblTcpStatus.Visible = true;
+
+				if (cmbMode != null)
+				{
+					cmbMode.Visible = true;
+				}
+
+				if (isServer)
+				{
+					grpParams.Text = _isEnglish ? "TCP/IP Server Parameters" : "TCP/IP Server 参数";
+					lblTcpParam1.Text = _isEnglish ? "Listen Port" : "监听端口";
+					txtTcpParam1.Text = string.IsNullOrWhiteSpace(txtTcpParam1.Text)
+						? (_config == null || _config.TcpIp.LocalPort <= 0 ? "5000" : _config.TcpIp.LocalPort.ToString())
+						: txtTcpParam1.Text;
+				}
+				else
+				{
+					grpParams.Text = _isEnglish ? "TCP/IP Client Parameters" : "TCP/IP Client 参数";
+					lblTcpParam1.Text = _isEnglish ? "Server IP" : "服务器IP";
+					lblTcpParam2.Text = _isEnglish ? "Server Port" : "服务器端口";
+
+					if (string.IsNullOrWhiteSpace(txtTcpParam1.Text) && _config != null)
+					{
+						txtTcpParam1.Text = _config.TcpIp.RemoteIP;
+					}
+
+					if (string.IsNullOrWhiteSpace(txtTcpParam2.Text) && _config != null)
+					{
+						txtTcpParam2.Text = _config.TcpIp.RemotePort <= 0 ? "5000" : _config.TcpIp.RemotePort.ToString();
+					}
+				}
+
+				// 固定坐标：Server / Client 切换时，模式、连接、断开、状态灯位置保持不变。
+				int labelX = 28;
+				int inputX = 145;
+				int row1Y = 55;
+				int row2Y = 100;
+				int row3Y = 145;
+				int row4Y = 195;
+				int row5Y = 236;
+
+				int labelW = 110;
+				int inputH = 26;
+				int buttonW = 95;
+				int buttonH = 30;
+				int buttonGap = 14;
+
+				int inputWidth = grpParams.ClientSize.Width - inputX - 28;
+				if (inputWidth < 150)
+				{
+					inputWidth = 150;
+				}
+				if (inputWidth > 230)
+				{
+					inputWidth = 230;
+				}
+
+				lblTcpParam1.SetBounds(labelX, row1Y + 3, labelW, 24);
+				txtTcpParam1.SetBounds(inputX, row1Y, inputWidth, inputH);
+
+				lblTcpParam2.SetBounds(labelX, row2Y + 3, labelW, 24);
+				txtTcpParam2.SetBounds(inputX, row2Y, inputWidth, inputH);
+
+				if (lblP5 != null)
+				{
+					lblP5.Visible = true;
+					lblP5.Text = _isEnglish ? "Mode" : "模式";
+					lblP5.SetBounds(labelX, row3Y + 3, labelW, 24);
+					lblP5.Parent = grpParams;
+				}
+
+				if (cmbMode != null)
+				{
+					cmbMode.SetBounds(inputX, row3Y, inputWidth, inputH);
+				}
+
+				btnTcpConnect.SetBounds(labelX, row4Y, buttonW, buttonH);
+				btnTcpDisconnect.SetBounds(btnTcpConnect.Right + buttonGap, row4Y, buttonW, buttonH);
+
+				pnlTcpStatusLight.SetBounds(labelX + 6, row5Y + 8, 12, 12);
+
+				int statusWidth = grpParams.ClientSize.Width - pnlTcpStatusLight.Right - 40;
+				if (statusWidth < 120)
+				{
+					statusWidth = 120;
+				}
+
+				lblTcpStatus.SetBounds(pnlTcpStatusLight.Right + 12, row5Y, statusWidth, 28);
+
+				lblTcpParam1.BringToFront();
+				txtTcpParam1.BringToFront();
+				lblTcpParam2.BringToFront();
+				txtTcpParam2.BringToFront();
+
+				if (lblP5 != null)
+				{
+					lblP5.BringToFront();
+				}
+
+				if (cmbMode != null)
+				{
+					cmbMode.BringToFront();
+				}
+
+				btnTcpConnect.BringToFront();
+				btnTcpDisconnect.BringToFront();
+				pnlTcpStatusLight.BringToFront();
+				lblTcpStatus.BringToFront();
+			}
+			finally
+			{
+				grpParams.ResumeLayout(false);
+			}
+		}
+
+		private void HideCommonParamControls()
+		{
+			if (lblP1 != null) lblP1.Visible = false;
+			if (txtP1 != null) txtP1.Visible = false;
+
+			if (lblP2 != null) lblP2.Visible = false;
+			if (txtP2 != null) txtP2.Visible = false;
+
+			if (lblP3 != null) lblP3.Visible = false;
+			if (txtP3 != null) txtP3.Visible = false;
+
+			if (lblP4 != null) lblP4.Visible = false;
+			if (txtP4 != null) txtP4.Visible = false;
+
+			if (txtP5 != null) txtP5.Visible = false;
+
+			if (lblP6 != null) lblP6.Visible = false;
+			if (txtP6 != null) txtP6.Visible = false;
+		}
+
+		private void HideTcpDedicatedControls()
+		{
+			if (lblTcpParam1 != null) lblTcpParam1.Visible = false;
+			if (txtTcpParam1 != null) txtTcpParam1.Visible = false;
+			if (lblTcpParam2 != null) lblTcpParam2.Visible = false;
+			if (txtTcpParam2 != null) txtTcpParam2.Visible = false;
+
+			if (btnTcpConnect != null) btnTcpConnect.Visible = false;
+			if (btnTcpDisconnect != null) btnTcpDisconnect.Visible = false;
+			if (pnlTcpStatusLight != null) pnlTcpStatusLight.Visible = false;
+			if (lblTcpStatus != null) lblTcpStatus.Visible = false;
+		}
+
+		private void SyncTcpDedicatedControlsFromConfig()
+		{
+			if (_config == null || txtTcpParam1 == null || txtTcpParam2 == null || cmbMode == null)
+			{
+				return;
+			}
+
+			bool isServer = cmbMode.SelectedIndex <= 0;
+
+			if (isServer)
+			{
+				txtTcpParam1.Text = _config.TcpIp.LocalPort <= 0 ? "5000" : _config.TcpIp.LocalPort.ToString();
+				txtTcpParam2.Text = string.Empty;
+			}
+			else
+			{
+				txtTcpParam1.Text = _config.TcpIp.RemoteIP;
+				txtTcpParam2.Text = _config.TcpIp.RemotePort <= 0 ? "5000" : _config.TcpIp.RemotePort.ToString();
+			}
+		}
+
+		private void SetTcpParamVisible(
+			bool row1,
+			bool row2,
+			bool row3,
+			bool row4,
+			bool row5,
+			bool row6)
+		{
+			// 保留这个方法，避免旧代码调用时报错。
+			// TCP/IP 页面实际显示由专用控件 lblTcpParam1/txtTcpParam1/lblTcpParam2/txtTcpParam2 管理。
+			if (lblP1 != null) lblP1.Visible = row1;
+			if (txtP1 != null) txtP1.Visible = row1;
+
+			if (lblP2 != null) lblP2.Visible = row2;
+			if (txtP2 != null) txtP2.Visible = row2;
+
+			if (lblP3 != null) lblP3.Visible = row3;
+			if (txtP3 != null) txtP3.Visible = row3;
+
+			if (lblP4 != null) lblP4.Visible = row4;
+			if (txtP4 != null) txtP4.Visible = row4;
+
+			if (lblP5 != null) lblP5.Visible = row5;
+			if (txtP5 != null) txtP5.Visible = row5;
+
+			if (lblP6 != null) lblP6.Visible = row6;
+			if (txtP6 != null) txtP6.Visible = row6;
+
+			if (cmbMode != null) cmbMode.Visible = false;
+		}
+
+		private void btnTcpConnect_Click(object sender, EventArgs e)
+		{
+			PositionTcpConnectionControls();
+
+			if (_selectedType != CommunicationType.TcpIp)
+			{
+				return;
+			}
+
+			SaveCurrentTypeParamsFromUI();
+			SaveCurrentTypeVariablesFromGrid();
+
+			if (_config == null)
+			{
+				_config = new CommunicationConfig();
+			}
+
+			_config.TcpIp.Enabled = chkEnable.Checked;
+			_config.SelectedType = _selectedType;
+
+			CommunicationConfigStore.Save(_config);
+
+			if (!_config.TcpIp.Enabled)
+			{
+				MessageBox.Show("Please enable TCP/IP first.", "TCP/IP", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			CommunicationRuntimeManager.Instance.Start(_config);
+			UpdateTcpStatusUi();
+		}
+
+		private void btnTcpDisconnect_Click(object sender, EventArgs e)
+		{
+			ICommunicationRuntime runtime = CommunicationRuntimeManager.Instance.GetRuntime(CommunicationType.TcpIp);
+
+			if (runtime != null)
+			{
+				runtime.Stop();
+			}
+
+			UpdateTcpStatusUi();
+		}
+
+		private void BindTcpRuntimeEvents()
+		{
+			if (_tcpRuntimeEventBound)
+			{
+				return;
+			}
+
+			_tcpRuntimeEventBound = true;
+
+			CommunicationRuntimeManager.Instance.StatusChanged += CommunicationRuntime_StatusChanged;
+			CommunicationRuntimeManager.Instance.DataReceived += CommunicationRuntime_DataReceived;
+			CommunicationRuntimeManager.Instance.ErrorOccurred += CommunicationRuntime_ErrorOccurred;
+		}
+
+		private void CommunicationRuntime_StatusChanged(object sender, CommunicationStatusChangedEventArgs e)
+		{
+			if (e == null || e.CommunicationType != CommunicationType.TcpIp)
+			{
+				return;
+			}
+
+			AppendTcpReceiveText(
+				DateTime.Now.ToString("HH:mm:ss.fff") +
+				"  [TCP Status] " +
+				e.State +
+				"  " +
+				e.Message);
+
+			UpdateTcpStatusUiSafe();
+		}
+
+		private void CommunicationRuntime_DataReceived(object sender, CommunicationDataReceivedEventArgs e)
+		{
+			if (e == null || e.CommunicationType != CommunicationType.TcpIp)
+			{
+				return;
+			}
+
+			string text = DateTime.Now.ToString("HH:mm:ss.fff") +
+						  "  [TCP Receive] " +
+						  e.RawText;
+
+			if (e.Values != null && e.Values.Count > 0)
+			{
+				text += Environment.NewLine + "  Parsed: ";
+
+				foreach (KeyValuePair<string, string> pair in e.Values)
+				{
+					text += pair.Key + "=" + pair.Value + "; ";
+				}
+			}
+
+			AppendTcpReceiveText(text);
+			UpdateTcpStatusUiSafe();
+		}
+
+		private void CommunicationRuntime_ErrorOccurred(object sender, Exception e)
+		{
+			if (e == null)
+			{
+				return;
+			}
+
+			AppendTcpReceiveText(
+				DateTime.Now.ToString("HH:mm:ss.fff") +
+				"  [TCP Error] " +
+				e.Message);
+
+			UpdateTcpStatusUiSafe();
+		}
+
+		private void UpdateTcpStatusUiSafe()
+		{
+			if (this.IsDisposed)
+			{
+				return;
+			}
+
+			if (this.InvokeRequired)
+			{
+				this.BeginInvoke(new MethodInvoker(delegate
+				{
+					UpdateTcpStatusUi();
+				}));
+				return;
+			}
+
+			UpdateTcpStatusUi();
+		}
+
+		private void UpdateTcpStatusUi()
+		{
+			PositionTcpConnectionControls();
+			if (pnlTcpStatusLight == null || lblTcpStatus == null)
+			{
+				return;
+			}
+
+			ICommunicationRuntime runtime = CommunicationRuntimeManager.Instance.GetRuntime(CommunicationType.TcpIp);
+
+			CommunicationConnectionState state = CommunicationConnectionState.Stopped;
+			bool isRunning = false;
+			bool isConnected = false;
+
+			if (runtime != null)
+			{
+				state = runtime.State;
+				isRunning = runtime.IsRunning;
+				isConnected = runtime.IsConnected;
+			}
+
+			if (isConnected)
+			{
+				pnlTcpStatusLight.BackColor = Color.LimeGreen;
+				lblTcpStatus.ForeColor = Color.LimeGreen;
+				lblTcpStatus.Text = "Connected";
+			}
+			else if (state == CommunicationConnectionState.Listening)
+			{
+				pnlTcpStatusLight.BackColor = Color.DeepSkyBlue;
+				lblTcpStatus.ForeColor = Color.DeepSkyBlue;
+				lblTcpStatus.Text = "Listening";
+			}
+			else if (state == CommunicationConnectionState.Connecting)
+			{
+				pnlTcpStatusLight.BackColor = Color.Gold;
+				lblTcpStatus.ForeColor = Color.Gold;
+				lblTcpStatus.Text = "Connecting";
+			}
+			else if (state == CommunicationConnectionState.Error)
+			{
+				pnlTcpStatusLight.BackColor = Color.OrangeRed;
+				lblTcpStatus.ForeColor = Color.OrangeRed;
+				lblTcpStatus.Text = "Error";
+			}
+			else if (isRunning)
+			{
+				pnlTcpStatusLight.BackColor = Color.Gold;
+				lblTcpStatus.ForeColor = Color.Gold;
+				lblTcpStatus.Text = state.ToString();
+			}
+			else
+			{
+				pnlTcpStatusLight.BackColor = Color.FromArgb(120, 120, 120);
+				lblTcpStatus.ForeColor = Color.FromArgb(150, 170, 190);
+				lblTcpStatus.Text = "Stopped";
+			}
+
+			if (btnTcpConnect != null)
+			{
+				btnTcpConnect.Enabled = _selectedType == CommunicationType.TcpIp && !isRunning;
+			}
+
+			if (btnTcpDisconnect != null)
+			{
+				btnTcpDisconnect.Enabled = _selectedType == CommunicationType.TcpIp && isRunning;
+			}
+		}
+
+		private void AppendTcpReceiveText(string text)
+		{
+			if (txtReceive == null || txtReceive.IsDisposed)
+			{
+				return;
+			}
+
+			if (txtReceive.InvokeRequired)
+			{
+				txtReceive.BeginInvoke(new MethodInvoker(delegate
+				{
+					AppendTcpReceiveText(text);
+				}));
+				return;
+			}
+
+			txtReceive.AppendText(text + Environment.NewLine);
+		}
+
+
+		private Button CreateTcpSmallButton(string text, int x, int y, int w, int h)
+		{
+			Button btn = new Button();
+			btn.Text = text;
+			btn.Location = new Point(x, y);
+			btn.Size = new Size(w, h);
+			btn.FlatStyle = FlatStyle.Flat;
+			btn.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			btn.BackColor = Color.FromArgb(3, 14, 27);
+			btn.ForeColor = Color.White;
+			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			return btn;
+		}
+
 
 		private void RefreshDataTypeComboItems()
 		{
@@ -363,6 +973,8 @@ namespace Aron_V3
 				ApplySelectedTypeStyle();
 				LoadTypeParamsToUI();
 				LoadCurrentTypeVariablesToGrid();
+				ApplyTcpModeParamVisibility();
+				UpdateTcpStatusUi();
 			}
 			finally
 			{
@@ -397,6 +1009,8 @@ namespace Aron_V3
 				ApplySelectedTypeStyle();
 				LoadTypeParamsToUI();
 				LoadCurrentTypeVariablesToGrid();
+				ApplyTcpModeParamVisibility();
+				UpdateTcpStatusUi();
 			}
 			finally
 			{
@@ -454,15 +1068,15 @@ namespace Aron_V3
 
 					lblP1.Text = _isEnglish ? "Local IP" : "本地IP";
 					lblP2.Text = _isEnglish ? "Local Port" : "本地端口";
-					lblP3.Text = _isEnglish ? "Remote IP" : "远程IP";
-					lblP4.Text = _isEnglish ? "Remote Port" : "远程端口";
+					lblP3.Text = _isEnglish ? "Server IP" : "服务器IP";
+					lblP4.Text = _isEnglish ? "Server Port" : "服务器端口";
 					lblP5.Text = _isEnglish ? "Mode" : "模式";
 					lblP6.Text = string.Empty;
 
-					txtP1.Text = _config.TcpIp.LocalIP;
-					txtP2.Text = _config.TcpIp.LocalPort.ToString();
+					txtP1.Text = string.IsNullOrWhiteSpace(_config.TcpIp.LocalIP) ? "0.0.0.0" : _config.TcpIp.LocalIP;
+					txtP2.Text = _config.TcpIp.LocalPort <= 0 ? "5000" : _config.TcpIp.LocalPort.ToString();
 					txtP3.Text = _config.TcpIp.RemoteIP;
-					txtP4.Text = _config.TcpIp.RemotePort.ToString();
+					txtP4.Text = _config.TcpIp.RemotePort <= 0 ? "5000" : _config.TcpIp.RemotePort.ToString();
 					txtP5.Text = string.Empty;
 					txtP6.Text = string.Empty;
 
@@ -471,7 +1085,12 @@ namespace Aron_V3
 					lblP6.Visible = false;
 					cmbMode.Visible = true;
 					cmbMode.SelectedIndex = _config.TcpIp.IsServer ? 0 : 1;
+					SyncTcpDedicatedControlsFromConfig();
+
+					ApplyTcpModeParamVisibility();
+					UpdateTcpStatusUi();
 				}
+
 				else if (_selectedType == CommunicationType.Profinet)
 				{
 					grpParams.Text = _isEnglish ? "Profinet Status" : "Profinet 状态";
@@ -517,6 +1136,30 @@ namespace Aron_V3
 				_loading = false;
 			}
 		}
+
+		private void ApplyTcpModeParamVisibility()
+		{
+			if (_selectedType != CommunicationType.TcpIp)
+			{
+				if (btnTcpConnect != null) btnTcpConnect.Visible = false;
+				if (btnTcpDisconnect != null) btnTcpDisconnect.Visible = false;
+				if (pnlTcpStatusLight != null) pnlTcpStatusLight.Visible = false;
+				if (lblTcpStatus != null) lblTcpStatus.Visible = false;
+				return;
+			}
+
+			if (grpParams != null)
+			{
+				if (grpParams.Height < 300)
+				{
+					grpParams.Height = 300;
+				}
+			}
+
+			LayoutTcpParameterArea();
+		}
+
+
 
 		private void SetParamControlsVisible(
 			bool row1,
@@ -759,13 +1402,29 @@ namespace Aron_V3
 
 			if (_selectedType == CommunicationType.TcpIp)
 			{
+				bool isServer = cmbMode.SelectedIndex <= 0;
+
 				_config.TcpIp.Enabled = chkEnable.Checked;
-				_config.TcpIp.LocalIP = txtP1.Text.Trim();
-				_config.TcpIp.LocalPort = ToInt(txtP2.Text, 5000);
-				_config.TcpIp.RemoteIP = txtP3.Text.Trim();
-				_config.TcpIp.RemotePort = ToInt(txtP4.Text, 5000);
-				_config.TcpIp.IsServer = cmbMode.SelectedIndex <= 0;
+				_config.TcpIp.IsServer = isServer;
+
+				if (isServer)
+				{
+					_config.TcpIp.LocalIP = "0.0.0.0";
+					_config.TcpIp.LocalPort = ToInt(txtTcpParam1 == null ? txtP2.Text : txtTcpParam1.Text, 5000);
+
+					_config.TcpIp.RemoteIP = string.Empty;
+					_config.TcpIp.RemotePort = 0;
+				}
+				else
+				{
+					_config.TcpIp.LocalIP = "0.0.0.0";
+					_config.TcpIp.LocalPort = 0;
+
+					_config.TcpIp.RemoteIP = txtTcpParam1 == null ? txtP3.Text.Trim() : txtTcpParam1.Text.Trim();
+					_config.TcpIp.RemotePort = ToInt(txtTcpParam2 == null ? txtP4.Text : txtTcpParam2.Text, 5000);
+				}
 			}
+
 			else if (_selectedType == CommunicationType.Profinet)
 			{
 				_config.Profinet.Enabled = chkEnable.Checked;
@@ -1029,11 +1688,13 @@ namespace Aron_V3
 				"Save",
 				MessageBoxButtons.OK,
 				MessageBoxIcon.Information);
+
 		}
+
 
 		private void btnSendTest_Click(object sender, EventArgs e)
 		{
-			string send = txtSend.Text.Trim();
+			string send = txtSend.Text;
 
 			if (string.IsNullOrEmpty(send))
 			{
@@ -1045,12 +1706,50 @@ namespace Aron_V3
 				return;
 			}
 
-			txtReceive.AppendText(
+			if (_selectedType != CommunicationType.TcpIp)
+			{
+				MessageBox.Show(
+					"Current test send is for TCP/IP only.",
+					"Test",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				return;
+			}
+
+			ICommunicationRuntime runtime = CommunicationRuntimeManager.Instance.GetRuntime(CommunicationType.TcpIp);
+
+			if (runtime == null || !runtime.IsRunning)
+			{
+				MessageBox.Show(
+					"TCP/IP is not connected or listening. Please click Connect first.",
+					"TCP/IP",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				return;
+			}
+
+			bool ok = CommunicationRuntimeManager.Instance.SendTcpString(send);
+
+			AppendTcpReceiveText(
 				DateTime.Now.ToString("HH:mm:ss.fff") +
-				"  Test send: " +
+				"  [TCP Send] " +
 				send +
-				Environment.NewLine);
+				"  Result=" +
+				ok);
+
+			if (!ok)
+			{
+				MessageBox.Show(
+					"TCP/IP send failed. Please check connection state.",
+					"TCP/IP",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
+			}
+
+			UpdateTcpStatusUi();
+
 		}
+
 
 		private void btnClearTest_Click(object sender, EventArgs e)
 		{
@@ -1120,6 +1819,8 @@ namespace Aron_V3
 				btnSave.Text = "Save";
 				btnSendTest.Text = "Send Test";
 				btnClearTest.Text = "Clear";
+				if (btnTcpConnect != null) btnTcpConnect.Text = "Connect";
+				if (btnTcpDisconnect != null) btnTcpDisconnect.Text = "Disconnect";
 
 				colInputName.HeaderText = "Input Name";
 				if (dgvInput.Columns.Contains("colInputUseAsPosition")) dgvInput.Columns["colInputUseAsPosition"].HeaderText = "Use As Position";
@@ -1150,6 +1851,8 @@ namespace Aron_V3
 				btnSave.Text = "保存";
 				btnSendTest.Text = "发送测试";
 				btnClearTest.Text = "清空";
+				if (btnTcpConnect != null) btnTcpConnect.Text = "连接";
+				if (btnTcpDisconnect != null) btnTcpDisconnect.Text = "断开";
 
 				colInputName.HeaderText = "输入变量名称";
 				if (dgvInput.Columns.Contains("colInputUseAsPosition")) dgvInput.Columns["colInputUseAsPosition"].HeaderText = "作为位置号";
@@ -1170,6 +1873,8 @@ namespace Aron_V3
 			ApplyColumnModeByCommunicationType();
 			LoadTypeParamsToUI();
 			LoadCurrentTypeVariablesToGrid();
+			ApplyTcpModeParamVisibility();
+			UpdateTcpStatusUi();
 		}
 
 		private void EnableDoubleBufferForPage()
@@ -1279,6 +1984,19 @@ namespace Aron_V3
 			this.Refresh();
 		}
 
+
+		protected override void OnHandleDestroyed(EventArgs e)
+		{
+			if (_tcpRuntimeEventBound)
+			{
+				CommunicationRuntimeManager.Instance.StatusChanged -= CommunicationRuntime_StatusChanged;
+				CommunicationRuntimeManager.Instance.DataReceived -= CommunicationRuntime_DataReceived;
+				CommunicationRuntimeManager.Instance.ErrorOccurred -= CommunicationRuntime_ErrorOccurred;
+				_tcpRuntimeEventBound = false;
+			}
+
+			base.OnHandleDestroyed(e);
+		}
 
 	}
 }
