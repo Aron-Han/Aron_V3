@@ -28,6 +28,8 @@ namespace Aron_V3
 		private HardwareConfigControl _hardwareConfigPage;
 		private MainDisplayControl _mainDisplayControl;
 
+		private RuntimeFlowOrchestrator runtimeFlow;
+
 
 		#region Run State
 
@@ -266,6 +268,11 @@ namespace Aron_V3
 			PreCreateAlgorithmPageIfEnabled();
 
 			CommunicationRuntimeManager.Instance.StartFromSavedConfig();
+
+			runtimeFlow = new RuntimeFlowOrchestrator();
+			runtimeFlow.LogGenerated += RuntimeFlow_LogGenerated;
+			runtimeFlow.TaskFinished += RuntimeFlow_TaskFinished;
+			runtimeFlow.Start();
 		}
 
 		private void Form1_Load(object sender, EventArgs e)
@@ -273,6 +280,89 @@ namespace Aron_V3
 			this.WindowState = FormWindowState.Maximized;
 			ShowRuntimePage();
 		}
+
+
+
+		#region  Inspection Process
+
+		private void RuntimeFlow_LogGenerated(object sender, RuntimeFlowLogEventArgs e)
+		{
+			if (e == null)
+			{
+				return;
+			}
+
+			if (lstLog == null || lstLog.IsDisposed)
+			{
+				return;
+			}
+
+			if (lstLog.InvokeRequired)
+			{
+				lstLog.BeginInvoke(new MethodInvoker(delegate
+				{
+					RuntimeFlow_LogGenerated(sender, e);
+				}));
+				return;
+			}
+
+			lstLog.Items.Add(
+				e.Time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
+				"   [FLOW]  " +
+				e.Message);
+
+			lstLog.TopIndex = lstLog.Items.Count - 1;
+		}
+
+		private void RuntimeFlow_TaskFinished(object sender, RuntimeTaskFinishedEventArgs e)
+		{
+			if (e == null)
+			{
+				return;
+			}
+
+			if (dgvResults == null || dgvResults.IsDisposed)
+			{
+				return;
+			}
+
+			if (dgvResults.InvokeRequired)
+			{
+				dgvResults.BeginInvoke(new MethodInvoker(delegate
+				{
+					RuntimeFlow_TaskFinished(sender, e);
+				}));
+				return;
+			}
+
+			string resultText = e.FinalResult != null && e.FinalResult.IsOK ? "OK" : "NG";
+			int rowIndex = dgvResults.Rows.Add(
+				e.TaskName,
+				"Task Result",
+				resultText,
+				DateTime.Now.ToString("HH:mm:ss"));
+
+			if (resultText == "OK")
+			{
+				dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.FromArgb(65, 210, 70);
+			}
+			else
+			{
+				dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.FromArgb(235, 54, 65);
+			}
+
+			if (_mainDisplayControl != null)
+			{
+				// 这里先只刷新布局。
+				// 如果 MainDisplayControl 后续提供 SetImage(displayName, image) 方法，
+				// 可以在这里把 e.Context.Images 中的图像推到主界面。
+				_mainDisplayControl.ReloadLayout();
+			}
+		}
+
+
+
+		#endregion
 
 		#region Top Bar / Window
 
@@ -1105,7 +1195,17 @@ namespace Aron_V3
 
 		private void Form1_FormClosing(object sender, FormClosingEventArgs e)
 		{
+			if (runtimeFlow != null)
+			{
+				runtimeFlow.Stop();
+				runtimeFlow.LogGenerated -= RuntimeFlow_LogGenerated;
+				runtimeFlow.TaskFinished -= RuntimeFlow_TaskFinished;
+				runtimeFlow.Dispose();
+				runtimeFlow = null;
+			}
+
 			CommunicationRuntimeManager.Instance.Stop();
+
 		}
 	}
 }

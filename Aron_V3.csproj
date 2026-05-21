@@ -105,6 +105,7 @@
     </Compile>
     <Compile Include="ProjectPathStore.cs" />
     <Compile Include="Display\RuntimeStepDisplayBinding.cs" />
+    <Compile Include="Communicate\RuntimeFlowOrchestrator.cs" />
     <Compile Include="SystemManagementControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
