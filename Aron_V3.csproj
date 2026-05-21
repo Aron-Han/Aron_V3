@@ -80,6 +80,14 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Display\DisplayLayoutControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Display\DisplayLayoutControl.Designer.cs">
+      <DependentUpon>DisplayLayoutControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Display\DisplayRuntimeManager.cs" />
+    <Compile Include="Display\DisplayLayoutModels.cs" />
     <Compile Include="Hardware\HardwareConfigControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -87,7 +95,22 @@
       <DependentUpon>HardwareConfigControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Hardware\HardwareConfigModels.cs" />
+    <Compile Include="Display\MainDisplayControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Display\MainDisplayControl.Designer.cs">
+      <DependentUpon>MainDisplayControl.cs</DependentUpon>
+    </Compile>
     <Compile Include="ProjectPathStore.cs" />
+    <Compile Include="Display\RuntimeStepDisplayBinding.cs" />
+    <Compile Include="SystemManagementControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="SystemManagementControl.Designer.cs">
+      <DependentUpon>SystemManagementControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Task\TaskRunContext.cs" />
+    <Compile Include="Task\TaskTestDialog.cs" />
     <Compile Include="User_Control\AlgorithmModuleControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -105,7 +128,7 @@
       <DependentUpon>CommunicationConfigControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Communicate\CommunicationConfigModels.cs" />
-    <Compile Include="Communicate\CoreFlowClasses.cs" />
+    <Compile Include="Task\CoreFlowClasses.cs" />
     <Compile Include="Form\FlowConfigForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -116,16 +139,14 @@
     <Compile Include="Login\LoginForm.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Communicate\TaskSchedulerControl.cs">
+    <Compile Include="Task\TaskSchedulerControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="Communicate\TaskSchedulerControl.Designer.cs">
+    <Compile Include="Task\TaskSchedulerControl.Designer.cs">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </Compile>
-    <Compile Include="Communicate\TriggerManagerControl.cs">
-      <SubType>UserControl</SubType>
-    </Compile>
-    <Compile Include="Communicate\TriggerManagerControl.Designer.cs">
+    <Compile Include="Task\TriggerManagerControl.cs" />
+    <Compile Include="Task\TriggerManagerControl.Designer.cs">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Login\UserAccountModels.cs" />
@@ -164,10 +185,10 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
-    <EmbeddedResource Include="Communicate\TaskSchedulerControl.resx">
+    <EmbeddedResource Include="Task\TaskSchedulerControl.resx">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Communicate\TriggerManagerControl.resx">
+    <EmbeddedResource Include="Task\TriggerManagerControl.resx">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="User_Control\CameraViewControl.resx">
@@ -187,6 +208,9 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="Communicate\Profinet\" />
+    <Folder Include="Communicate\S7\" />
+    <Folder Include="Communicate\TCPIP\" />
     <Folder Include="Hardware\SDK\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

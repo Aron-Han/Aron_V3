@@ -8,12 +8,32 @@ using System.Xml;
 
 namespace Aron_V3
 {
+
+	public class TaskTestRequestedEventArgs : EventArgs
+	{
+		public string JobName { get; private set; }
+		public string TaskName { get; private set; }
+		public TaskRunOptions Options { get; private set; }
+		public bool Handled { get; set; }
+		public Exception Error { get; set; }
+
+		public TaskTestRequestedEventArgs(string jobName, string taskName, TaskRunOptions options)
+		{
+			JobName = jobName;
+			TaskName = taskName;
+			Options = options;
+			Handled = false;
+			Error = null;
+		}
+	}
+
 	public partial class TriggerManagerControl : UserControl, ILocalizable
 	{
 
 		private Panel panelJobButtons;
 		private Button btnAddJob;
 		private Button btnDeleteJob;
+		private Button btnTestTask;
 
 		private ComboLikePopupForm _activeComboPopup;
 
@@ -30,6 +50,14 @@ namespace Aron_V3
 		private bool _isEnglish = false;
 		private bool _refreshComboPending = false;
 
+		// 外部可绑定真实 Task 执行入口。
+		// 推荐在 Form1 或 FlowConfigForm 中赋值：
+		// triggerPage.TaskTestExecutor = delegate(string job, string task, TaskRunOptions options) { ...; return true; };
+		public Func<string, string, TaskRunOptions, bool> TaskTestExecutor { get; set; }
+
+		public event EventHandler<TaskTestRequestedEventArgs> TaskTestRequested;
+
+
 		public TriggerManagerControl()
 		{
 			InitializeComponent();
@@ -40,6 +68,7 @@ namespace Aron_V3
 
 			ConfigureTriggerGrid();
 			CreateJobActionButtons();
+			CreateTaskTestButton();
 
 			listJobs.SelectedIndexChanged -= listJobs_SelectedIndexChanged;
 			listJobs.SelectedIndexChanged += listJobs_SelectedIndexChanged;
@@ -79,6 +108,7 @@ namespace Aron_V3
 
 			LoadFlowConfigToJobList();
 			CreateJobActionButtons();
+			CreateTaskTestButton();
 		}
 
 		private void ConfigureTriggerGrid()
@@ -1203,6 +1233,104 @@ namespace Aron_V3
 			return positions.Count > 0 ? positions[0] : "Not Use";
 		}
 
+
+		private void CreateTaskTestButton()
+		{
+			if (panelButtons == null || panelButtons.IsDisposed)
+			{
+				return;
+			}
+
+			if (btnTestTask == null || btnTestTask.IsDisposed)
+			{
+				btnTestTask = CreateBottomActionButton(_isEnglish ? "Task Test" : "▶ Task测试");
+				btnTestTask.Name = "btnTestTask";
+				btnTestTask.Click -= btnTestTask_Click;
+				btnTestTask.Click += btnTestTask_Click;
+			}
+
+			TableLayoutPanel layout = panelButtons as TableLayoutPanel;
+
+			if (layout == null)
+			{
+				if (btnTestTask.Parent != panelButtons)
+				{
+					panelButtons.Controls.Add(btnTestTask);
+				}
+
+				btnTestTask.Width = 130;
+				btnTestTask.Height = 32;
+				btnTestTask.Left = Math.Max(0, panelButtons.ClientSize.Width - btnTestTask.Width - 150);
+				btnTestTask.Top = 10;
+				btnTestTask.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+				btnTestTask.BringToFront();
+				return;
+			}
+
+			layout.SuspendLayout();
+
+			try
+			{
+				layout.Controls.Remove(btnAddTask);
+				layout.Controls.Remove(btnDeleteSelected);
+				layout.Controls.Remove(btnTestTask);
+				layout.Controls.Remove(btnSave);
+
+				layout.ColumnStyles.Clear();
+				layout.ColumnCount = 5;
+				layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140F));
+				layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150F));
+				layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145F));
+				layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+				layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130F));
+
+				if (btnAddTask != null)
+				{
+					layout.Controls.Add(btnAddTask, 0, 0);
+				}
+
+				if (btnDeleteSelected != null)
+				{
+					layout.Controls.Add(btnDeleteSelected, 1, 0);
+				}
+
+				layout.Controls.Add(btnTestTask, 2, 0);
+
+				if (btnSave != null)
+				{
+					layout.Controls.Add(btnSave, 4, 0);
+				}
+			}
+			finally
+			{
+				layout.ResumeLayout(true);
+			}
+		}
+
+		private Button CreateBottomActionButton(string text)
+		{
+			Button button = new Button();
+			button.Text = text;
+			button.Dock = DockStyle.Fill;
+			button.Margin = new Padding(6, 0, 6, 0);
+			button.FlatStyle = FlatStyle.Flat;
+			button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			button.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 35, 60);
+			button.FlatAppearance.MouseDownBackColor = Color.FromArgb(5, 25, 45);
+			button.BackColor = Color.FromArgb(3, 14, 27);
+			button.ForeColor = Color.White;
+			button.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			button.Cursor = Cursors.Hand;
+			button.UseVisualStyleBackColor = false;
+			return button;
+		}
+
+		private void btnTestTask_Click(object sender, EventArgs e)
+		{
+			TestSelectedTask();
+		}
+
+
 		private void CreateJobActionButtons()
 		{
 			ListBox jobList = GetJobListBox();
@@ -1959,6 +2087,304 @@ namespace Aron_V3
 			base.OnHandleDestroyed(e);
 		}
 
+		private void TestSelectedTask()
+		{
+			CloseActiveComboPopup();
+			dgvTrigger.EndEdit();
+
+			string jobName = GetSelectedJobNameSafe();
+			string taskName = GetSelectedTaskNameSafe();
+
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				MessageBox.Show("Please select one Job first.", "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				MessageBox.Show("Please select one Task first.", "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+
+			if (config == null || config.Jobs == null)
+			{
+				MessageBox.Show("Flow configuration was not found.", "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
+
+			JobConfig job = config.Jobs.FirstOrDefault(j =>
+				j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+
+			if (job == null)
+			{
+				MessageBox.Show("Job not found: " + jobName, "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
+
+			TaskConfig task = job.Tasks == null ? null : job.Tasks.FirstOrDefault(t =>
+				t != null && string.Equals(t.TaskName, taskName, StringComparison.OrdinalIgnoreCase));
+
+			if (task == null)
+			{
+				MessageBox.Show("Task not found: " + taskName, "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
+
+			List<string> imageSources = CollectTaskImageSources(task);
+
+			string gridImageSourceText = GetCurrentTriggerGridImageSourceText();
+
+			AddImageSourceName(imageSources, gridImageSourceText);
+
+			using (TaskTestDialog dialog = new TaskTestDialog(taskName, imageSources))
+			{
+				if (dialog.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+
+				TaskRunOptions options = TaskRunOptions.Test(dialog.Options.EnableCommunicationOutput);
+
+				foreach (TaskTestImageSource item in dialog.Options.ImageSources)
+				{
+					object image = LoadLocalImageForTaskTest(item.LocalImagePath);
+
+					if (image != null)
+					{
+						options.OverrideImageSources[item.ImageSourceName] = image;
+					}
+				}
+
+				try
+				{
+					bool executed = ExecuteTaskTest(jobName, taskName, options);
+
+					if (executed)
+					{
+						MessageBox.Show("Task test finished.", "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Information);
+					}
+				}
+				catch (Exception ex)
+				{
+					MessageBox.Show("Task test failed:\r\n" + ex.Message, "Task Test", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				}
+			}
+		}
+
+		private string GetCurrentTriggerGridImageSourceText()
+		{
+			if (dgvTrigger == null)
+			{
+				return string.Empty;
+			}
+
+			DataGridViewRow row = null;
+
+			if (dgvTrigger.CurrentRow != null && !dgvTrigger.CurrentRow.IsNewRow)
+			{
+				row = dgvTrigger.CurrentRow;
+			}
+			else if (dgvTrigger.SelectedRows.Count > 0 && !dgvTrigger.SelectedRows[0].IsNewRow)
+			{
+				row = dgvTrigger.SelectedRows[0];
+			}
+
+			if (row == null)
+			{
+				return string.Empty;
+			}
+
+			try
+			{
+				if (dgvTrigger.Columns.Count > COL_IMAGE_SOURCE)
+				{
+					object value = row.Cells[COL_IMAGE_SOURCE].Value;
+					return value == null ? string.Empty : Convert.ToString(value);
+				}
+			}
+			catch
+			{
+			}
+
+			return string.Empty;
+		}
+
+
+
+		private bool ExecuteTaskTest(string jobName, string taskName, TaskRunOptions options)
+		{
+			if (TaskTestExecutor != null)
+			{
+				return TaskTestExecutor(jobName, taskName, options);
+			}
+
+			EventHandler<TaskTestRequestedEventArgs> handler = TaskTestRequested;
+
+			if (handler != null)
+			{
+				TaskTestRequestedEventArgs args = new TaskTestRequestedEventArgs(jobName, taskName, options);
+				handler(this, args);
+
+				if (args.Error != null)
+				{
+					throw args.Error;
+				}
+
+				if (args.Handled)
+				{
+					return true;
+				}
+			}
+
+			MessageBox.Show(
+				"Task test options are ready, but the real task execution entrance has not been bound.\r\n\r\n" +
+				"Please bind TriggerManagerControl.TaskTestExecutor in Form1 or FlowConfigForm.",
+				"Task Test",
+				MessageBoxButtons.OK,
+				MessageBoxIcon.Information);
+
+			return false;
+		}
+
+		private List<string> CollectTaskImageSources(TaskConfig task)
+		{
+			List<string> result = new List<string>();
+
+			if (task == null)
+			{
+				return result;
+			}
+
+			// 触发管理表格中的图像源字段。
+			// 如果你的 TaskConfig 没有 ImageSourceKey，则删除这一行。
+			AddImageSourceName(result, task.ImageSourceKey);
+
+			if (task.StepFlow != null)
+			{
+				foreach (StepFlowItem step in task.StepFlow)
+				{
+					if (step == null)
+					{
+						continue;
+					}
+
+					// 右侧 Task 调度 Step 表格里的图像源。
+					// 如果你的 StepFlowItem 没有 InputImageKey，则删除这一行。
+					AddImageSourceName(result, step.InputImageKey);
+				}
+			}
+
+			return result;
+		}
+
+
+
+
+		private string GetSelectedTaskNameSafe()
+		{
+			if (dgvTrigger == null || dgvTrigger.Rows.Count <= 0)
+			{
+				return string.Empty;
+			}
+
+			DataGridViewRow row = null;
+
+			if (dgvTrigger.CurrentRow != null && !dgvTrigger.CurrentRow.IsNewRow)
+			{
+				row = dgvTrigger.CurrentRow;
+			}
+			else if (dgvTrigger.SelectedRows.Count > 0 && !dgvTrigger.SelectedRows[0].IsNewRow)
+			{
+				row = dgvTrigger.SelectedRows[0];
+			}
+			else
+			{
+				foreach (DataGridViewRow item in dgvTrigger.Rows)
+				{
+					if (item != null && !item.IsNewRow)
+					{
+						row = item;
+						break;
+					}
+				}
+			}
+
+			if (row == null)
+			{
+				return string.Empty;
+			}
+
+			return GetCellString(row, COL_TASK_NAME);
+		}
+
+		private object LoadLocalImageForTaskTest(string imagePath)
+		{
+			if (string.IsNullOrWhiteSpace(imagePath))
+			{
+				return null;
+			}
+
+			if (!File.Exists(imagePath))
+			{
+				return null;
+			}
+
+			// 使用克隆方式读取，避免 Bitmap 长时间锁住本地测试图片文件。
+			using (Bitmap temp = new Bitmap(imagePath))
+			{
+				return new Bitmap(temp);
+			}
+		}
+
+		private void AddImageSourceName(List<string> result, string sourceName)
+		{
+			if (result == null)
+			{
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(sourceName))
+			{
+				return;
+			}
+
+			string normalized = sourceName.Replace("\r\n", "\n")
+										  .Replace("\r", "\n")
+										  .Replace("；", ";")
+										  .Replace("，", ",")
+										  .Replace("、", ";");
+
+			string[] parts = normalized.Split(
+				new char[] { ';', ',', '|', '\n', '\t' },
+				StringSplitOptions.RemoveEmptyEntries);
+
+			foreach (string part in parts)
+			{
+				string item = part.Trim();
+
+				if (string.IsNullOrWhiteSpace(item))
+				{
+					continue;
+				}
+
+				if (string.Equals(item, "Not Use", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(item, "None", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				if (!result.Exists(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
+				{
+					result.Add(item);
+				}
+			}
+		}
+
+
+
 
 		public void ApplyLanguage(bool isEnglish)
 		{
@@ -1978,6 +2404,7 @@ namespace Aron_V3
 				btnAddTask.Text = "+ Add Task";
 				btnDeleteSelected.Text = "Delete";
 				btnSave.Text = "Save";
+				if (btnTestTask != null) btnTestTask.Text = "Task Test";
 			}
 			else
 			{
@@ -1992,6 +2419,7 @@ namespace Aron_V3
 				btnAddTask.Text = "+ 新增 task";
 				btnDeleteSelected.Text = "▦ 删除选中";
 				btnSave.Text = "▣ 保存";
+				if (btnTestTask != null) btnTestTask.Text = "▶ Task测试";
 			}
 		}
 	}

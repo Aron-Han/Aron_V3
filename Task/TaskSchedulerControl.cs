@@ -2,16 +2,22 @@
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using System.Drawing;
 
 namespace Aron_V3
 {
 	public partial class TaskSchedulerControl : UserControl, ILocalizable
 	{
 		private bool _loading = false;
+		private const string COL_DISPLAY_OUTPUT = "DisplayOutputKey";
+		private const string COL_DISPLAY_SLOT = "DisplaySlotName";
+		private const string COL_DISPLAY_MODE = "DisplayMode";
 
 		public TaskSchedulerControl()
 		{
 			InitializeComponent();
+			InitDisplayBindingColumns();
+
 
 			listJobs.SelectedIndexChanged -= listJobs_SelectedIndexChanged;
 			listJobs.SelectedIndexChanged += listJobs_SelectedIndexChanged;
@@ -24,6 +30,8 @@ namespace Aron_V3
 
 			FlowConfigStore.FlowConfigSaved -= FlowConfigStore_FlowConfigSaved;
 			FlowConfigStore.FlowConfigSaved += FlowConfigStore_FlowConfigSaved;
+
+
 
 			LoadFlowConfigToUI();
 		}
@@ -533,6 +541,9 @@ namespace Aron_V3
 			item.RunOrder = GetNextDefaultRunOrder(task);
 			item.Enabled = true;
 			item.Remark = BuildStepFlowRemark(step);
+			item.DisplayOutputKey = "Not Use";
+			item.DisplaySlotName = "Not Show";
+			item.DisplayMode = "Fit";
 
 			task.StepFlow.Add(item);
 
@@ -555,22 +566,44 @@ namespace Aron_V3
 
 		private void RefreshStepFlowGrid(string jobName, string taskName)
 		{
+			InitDisplayBindingColumns();
+			RefreshDisplaySlotComboColumn();
+
 			dgvSteps.Rows.Clear();
 
-			if (string.IsNullOrEmpty(jobName) || string.IsNullOrEmpty(taskName)) return;
+			if (string.IsNullOrEmpty(jobName) || string.IsNullOrEmpty(taskName))
+			{
+				return;
+			}
 
 			TaskConfig task = GetTaskConfig(jobName, taskName);
-			if (task == null) return;
+
+			if (task == null)
+			{
+				return;
+			}
 
 			foreach (StepFlowItem item in task.StepFlow.OrderBy(x => x.RunOrder))
 			{
-				dgvSteps.Rows.Add(
-					item.StepName,
-					item.InputImageKey,
-					item.RunOrder.ToString(),
-					item.Remark);
+				int rowIndex = dgvSteps.Rows.Add();
+				DataGridViewRow row = dgvSteps.Rows[rowIndex];
+
+				row.Cells["colStep"].Value = item.StepName;
+				row.Cells["colImageSource"].Value = item.InputImageKey;
+				row.Cells["colRunOrder"].Value = item.RunOrder.ToString();
+				row.Cells["colRemark"].Value = item.Remark;
+
+				row.Cells[COL_DISPLAY_OUTPUT].Value =
+					string.IsNullOrWhiteSpace(item.DisplayOutputKey) ? "Not Use" : item.DisplayOutputKey;
+
+				row.Cells[COL_DISPLAY_SLOT].Value =
+					string.IsNullOrWhiteSpace(item.DisplaySlotName) ? "Not Show" : item.DisplaySlotName;
+
+				row.Cells[COL_DISPLAY_MODE].Value =
+					string.IsNullOrWhiteSpace(item.DisplayMode) ? "Fit" : item.DisplayMode;
 			}
 		}
+
 
 		private void btnDeleteSelected_Click(object sender, EventArgs e)
 		{
@@ -676,7 +709,7 @@ namespace Aron_V3
 					continue;
 				}
 
-				string stepName = GetCellString(row, 0);
+				string stepName = GetCellString(row, "colStep");
 
 				if (string.IsNullOrEmpty(stepName))
 				{
@@ -696,7 +729,6 @@ namespace Aron_V3
 					continue;
 				}
 
-				// 关键：只有右侧流程中真正使用到的 Step，点击保存时才复制到 Project/Steps 对应目录。
 				bool fileSaved = SaveUsedStepFileToProject(jobName, taskName, usedStep);
 
 				if (!fileSaved)
@@ -706,14 +738,29 @@ namespace Aron_V3
 
 				StepFlowItem item = new StepFlowItem();
 				item.StepName = stepName;
-				item.InputImageKey = GetCellString(row, 1);
-
-				// 关键：执行步序允许重复，例如 1、1、2。
-				// RunOrder 相同的一组 Step 后续由 TaskRunner 并行执行。
-				item.RunOrder = GetCellInt(row, 2, fallbackOrder);
-
+				item.InputImageKey = GetCellString(row, "colImageSource");
+				item.RunOrder = GetCellInt(row, "colRunOrder", fallbackOrder);
 				item.Enabled = true;
-				item.Remark = GetCellString(row, 3);
+				item.Remark = GetCellString(row, "colRemark");
+
+				item.DisplayOutputKey = GetCellString(row, COL_DISPLAY_OUTPUT);
+				item.DisplaySlotName = GetCellString(row, COL_DISPLAY_SLOT);
+				item.DisplayMode = GetCellString(row, COL_DISPLAY_MODE);
+
+				if (string.IsNullOrWhiteSpace(item.DisplayOutputKey))
+				{
+					item.DisplayOutputKey = "Not Use";
+				}
+
+				if (string.IsNullOrWhiteSpace(item.DisplaySlotName))
+				{
+					item.DisplaySlotName = "Not Show";
+				}
+
+				if (string.IsNullOrWhiteSpace(item.DisplayMode))
+				{
+					item.DisplayMode = "Fit";
+				}
 
 				task.StepFlow.Add(item);
 				fallbackOrder++;
@@ -730,6 +777,7 @@ namespace Aron_V3
 				MessageBoxButtons.OK,
 				MessageBoxIcon.Information);
 		}
+
 
 		#endregion
 
@@ -1035,6 +1083,145 @@ namespace Aron_V3
 
 		#endregion
 
+		private void InitDisplayBindingColumns()
+		{
+			if (dgvSteps == null)
+			{
+				return;
+			}
+
+			dgvSteps.AutoGenerateColumns = false;
+
+			if (!dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
+			{
+				DataGridViewComboBoxColumn col = new DataGridViewComboBoxColumn();
+				col.Name = COL_DISPLAY_OUTPUT;
+				col.HeaderText = "输出图像";
+				col.FlatStyle = FlatStyle.Flat;
+				col.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+				col.Items.AddRange(new object[]
+				{
+			"Not Use",
+			"InputImage",
+			"OutputImage",
+			"ResultImage",
+			"LastRun.OutputImage",
+			"DisplayImage",
+			"DebugImage"
+				});
+
+				dgvSteps.Columns.Insert(Math.Min(3, dgvSteps.Columns.Count), col);
+			}
+
+			if (!dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
+			{
+				DataGridViewComboBoxColumn col = new DataGridViewComboBoxColumn();
+				col.Name = COL_DISPLAY_SLOT;
+				col.HeaderText = "绑定显示框";
+				col.FlatStyle = FlatStyle.Flat;
+				col.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+
+				foreach (string slotName in DisplayLayoutStore.GetDisplaySlotNames())
+				{
+					col.Items.Add(slotName);
+				}
+
+				dgvSteps.Columns.Insert(Math.Min(4, dgvSteps.Columns.Count), col);
+			}
+
+			if (!dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
+			{
+				DataGridViewComboBoxColumn col = new DataGridViewComboBoxColumn();
+				col.Name = COL_DISPLAY_MODE;
+				col.HeaderText = "显示方式";
+				col.FlatStyle = FlatStyle.Flat;
+				col.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+				col.Items.AddRange(new object[]
+				{
+			"Fit",
+			"Center",
+			"Stretch",
+			"Original"
+				});
+
+				dgvSteps.Columns.Insert(Math.Min(5, dgvSteps.Columns.Count), col);
+			}
+
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
+			{
+				dgvSteps.Columns[COL_DISPLAY_OUTPUT].FillWeight = 90;
+			}
+
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
+			{
+				dgvSteps.Columns[COL_DISPLAY_SLOT].FillWeight = 90;
+			}
+
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
+			{
+				dgvSteps.Columns[COL_DISPLAY_MODE].FillWeight = 70;
+			}
+		}
+
+		private void RefreshDisplaySlotComboColumn()
+		{
+			if (dgvSteps == null || !dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
+			{
+				return;
+			}
+
+			DataGridViewComboBoxColumn col = dgvSteps.Columns[COL_DISPLAY_SLOT] as DataGridViewComboBoxColumn;
+
+			if (col == null)
+			{
+				return;
+			}
+
+			col.Items.Clear();
+
+			foreach (string slotName in DisplayLayoutStore.GetDisplaySlotNames())
+			{
+				col.Items.Add(slotName);
+			}
+		}
+
+		private string GetCellString(DataGridViewRow row, string columnName)
+		{
+			if (row == null || string.IsNullOrWhiteSpace(columnName))
+			{
+				return string.Empty;
+			}
+
+			if (!dgvSteps.Columns.Contains(columnName))
+			{
+				return string.Empty;
+			}
+
+			object value = row.Cells[columnName].Value;
+
+			if (value == null)
+			{
+				return string.Empty;
+			}
+
+			return value.ToString().Trim();
+		}
+
+		private int GetCellInt(DataGridViewRow row, string columnName, int defaultValue)
+		{
+			int value;
+
+			if (int.TryParse(GetCellString(row, columnName), out value))
+			{
+				return value;
+			}
+
+			return defaultValue;
+		}
+
+
+
+
 		#region Helper
 
 		private string GetSelectedJobName()
@@ -1211,7 +1398,20 @@ namespace Aron_V3
 				btnMoveDown.Text = "▼  下移选中";
 				btnSave.Text = "▣  保存";
 			}
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
+			{
+				dgvSteps.Columns[COL_DISPLAY_OUTPUT].HeaderText = isEnglish ? "Output Image" : "输出图像";
+			}
 
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
+			{
+				dgvSteps.Columns[COL_DISPLAY_SLOT].HeaderText = isEnglish ? "Display Slot" : "绑定显示框";
+			}
+
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
+			{
+				dgvSteps.Columns[COL_DISPLAY_MODE].HeaderText = isEnglish ? "Display Mode" : "显示方式";
+			}
 			btnAddStepItem.Text = "+";
 			btnBatchAddStepItem.Text = "▦";
 			btnDeleteStepItem.Text = "-";

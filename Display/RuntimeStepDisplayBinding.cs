@@ -1,0 +1,217 @@
+﻿using System;
+using System.Drawing;
+using System.Reflection;
+
+namespace Aron_V3
+{
+	public static class StepDisplayBindingRunner
+	{
+		public static void TryPublishStepImage(string jobName, string taskName, StepConfig step, object stepRunResult)
+		{
+			if (step == null)
+			{
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(step.DisplaySlotName) ||
+				string.Equals(step.DisplaySlotName, "Not Show", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(step.DisplayOutputKey) ||
+				string.Equals(step.DisplayOutputKey, "Not Use", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			object rawImage = TryGetOutputImage(stepRunResult, step.DisplayOutputKey);
+
+			if (rawImage == null)
+			{
+				return;
+			}
+
+			Bitmap bitmap = ImageConvertHelper.TryConvertToBitmap(rawImage);
+
+			if (bitmap == null)
+			{
+				return;
+			}
+
+			try
+			{
+				string title = step.StepName + " - " + step.DisplayOutputKey;
+				string sourceInfo = jobName + " / " + taskName + " / " + step.StepName;
+
+				DisplayRuntimeManager.ShowImage(step.DisplaySlotName, bitmap, title, sourceInfo, step.DisplayMode);
+			}
+			finally
+			{
+				bitmap.Dispose();
+			}
+		}
+
+		private static object TryGetOutputImage(object runResult, string outputKey)
+		{
+			if (runResult == null || string.IsNullOrWhiteSpace(outputKey))
+			{
+				return null;
+			}
+
+			if (runResult is Bitmap)
+			{
+				return runResult;
+			}
+
+			Type type = runResult.GetType();
+
+			PropertyInfo property = type.GetProperty(outputKey, BindingFlags.Instance | BindingFlags.Public);
+
+			if (property != null)
+			{
+				return property.GetValue(runResult, null);
+			}
+
+			FieldInfo field = type.GetField(outputKey, BindingFlags.Instance | BindingFlags.Public);
+
+			if (field != null)
+			{
+				return field.GetValue(runResult);
+			}
+
+			PropertyInfo outputsProp = type.GetProperty("Outputs", BindingFlags.Instance | BindingFlags.Public);
+
+			if (outputsProp != null)
+			{
+				object outputs = outputsProp.GetValue(runResult, null);
+				object value = TryReadNamedOutput(outputs, outputKey);
+
+				if (value != null)
+				{
+					return value;
+				}
+			}
+
+			if (outputKey.IndexOf(".", StringComparison.OrdinalIgnoreCase) > 0)
+			{
+				string[] parts = outputKey.Split(new char[] { '.' }, 2);
+
+				object parent = TryGetOutputImage(runResult, parts[0]);
+
+				if (parent != null)
+				{
+					return TryGetOutputImage(parent, parts[1]);
+				}
+			}
+
+			return null;
+		}
+
+		private static object TryReadNamedOutput(object outputs, string outputKey)
+		{
+			if (outputs == null)
+			{
+				return null;
+			}
+
+			try
+			{
+				object item = null;
+
+				PropertyInfo itemProp = outputs.GetType().GetProperty("Item", new Type[] { typeof(string) });
+
+				if (itemProp != null)
+				{
+					item = itemProp.GetValue(outputs, new object[] { outputKey });
+				}
+
+				if (item == null)
+				{
+					MethodInfo getItem = outputs.GetType().GetMethod("get_Item", new Type[] { typeof(string) });
+
+					if (getItem != null)
+					{
+						item = getItem.Invoke(outputs, new object[] { outputKey });
+					}
+				}
+
+				if (item == null)
+				{
+					return null;
+				}
+
+				PropertyInfo valueProp = item.GetType().GetProperty("Value", BindingFlags.Instance | BindingFlags.Public);
+
+				if (valueProp != null)
+				{
+					return valueProp.GetValue(item, null);
+				}
+
+				return item;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+	}
+
+	public static class ImageConvertHelper
+	{
+		public static Bitmap TryConvertToBitmap(object image)
+		{
+			if (image == null)
+			{
+				return null;
+			}
+
+			Bitmap bmp = image as Bitmap;
+
+			if (bmp != null)
+			{
+				return new Bitmap(bmp);
+			}
+
+			try
+			{
+				MethodInfo toBitmapMethod = image.GetType().GetMethod("ToBitmap", Type.EmptyTypes);
+
+				if (toBitmapMethod != null)
+				{
+					object result = toBitmapMethod.Invoke(image, null);
+					Bitmap resultBmp = result as Bitmap;
+
+					if (resultBmp != null)
+					{
+						return new Bitmap(resultBmp);
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			try
+			{
+				PropertyInfo bitmapProp = image.GetType().GetProperty("Bitmap", BindingFlags.Instance | BindingFlags.Public);
+
+				if (bitmapProp != null)
+				{
+					object result = bitmapProp.GetValue(image, null);
+					Bitmap resultBmp = result as Bitmap;
+
+					if (resultBmp != null)
+					{
+						return new Bitmap(resultBmp);
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return null;
+		}
+	}
+}

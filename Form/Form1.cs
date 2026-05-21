@@ -26,6 +26,7 @@ namespace Aron_V3
 		private ContextMenuStrip _userMenu;
 		private UserActivityMessageFilter _activityMessageFilter;
 		private HardwareConfigControl _hardwareConfigPage;
+		private MainDisplayControl _mainDisplayControl;
 
 
 		#region Run State
@@ -246,6 +247,8 @@ namespace Aron_V3
 		{
 			InitializeComponent();
 
+			InitMainDisplayArea();
+
 			EnableDoubleBuffer(this);
 
 			_runtimePage = mainLayout;
@@ -254,7 +257,7 @@ namespace Aron_V3
 			BindTopBarDragEvents();
 
 			LoadDemoData();
-			BuildCameraLayout(4);
+			//BuildCameraLayout(4);
 
 			SelectMainPage(MainPageType.Login, false);
 
@@ -470,7 +473,16 @@ namespace Aron_V3
 
 		private void ShowRuntimePage()
 		{
+			ReloadMainDisplayLayout();
 			ShowCachedPage(_runtimePage);
+		}
+
+		private void ReloadMainDisplayLayout()
+		{
+			if (_mainDisplayControl != null)
+			{
+				_mainDisplayControl.ReloadLayout();
+			}
 		}
 
 		private void ShowHardwareConfigPage()
@@ -540,11 +552,15 @@ namespace Aron_V3
 
 		private void ShowSystemPage()
 		{
-			if (_systemPage == null)
-				_systemPage = CreatePlaceholderPage(_isEnglish ? "System Settings" : "系统设置");
+			if (_systemPage == null || _systemPage.IsDisposed)
+			{
+				_systemPage = new SystemManagementControl();
+				_systemPage.Dock = DockStyle.Fill;
+			}
 
 			ShowCachedPage(_systemPage);
 		}
+
 
 		private Control CreatePlaceholderPage(string title)
 		{
@@ -724,10 +740,48 @@ namespace Aron_V3
 			return view;
 		}
 
-		private void ReloadCameraLayoutFromConfig()
+		private void InitMainDisplayArea()
 		{
-			BuildCameraLayout(9);
+			if (tableLayoutPanelCameras == null)
+			{
+				return;
+			}
+
+			tableLayoutPanelCameras.SuspendLayout();
+
+			try
+			{
+				if (_mainDisplayControl != null)
+				{
+					_mainDisplayControl.Dispose();
+					_mainDisplayControl = null;
+				}
+
+				tableLayoutPanelCameras.Controls.Clear();
+				tableLayoutPanelCameras.RowStyles.Clear();
+				tableLayoutPanelCameras.ColumnStyles.Clear();
+
+				tableLayoutPanelCameras.RowCount = 1;
+				tableLayoutPanelCameras.ColumnCount = 1;
+				tableLayoutPanelCameras.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+				tableLayoutPanelCameras.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+				_mainDisplayControl = new MainDisplayControl();
+				_mainDisplayControl.Dock = DockStyle.Fill;
+				_mainDisplayControl.Margin = new Padding(0);
+
+				tableLayoutPanelCameras.Controls.Add(_mainDisplayControl, 0, 0);
+				tableLayoutPanelCameras.SetRowSpan(_mainDisplayControl, 1);
+				tableLayoutPanelCameras.SetColumnSpan(_mainDisplayControl, 1);
+			}
+			finally
+			{
+				tableLayoutPanelCameras.ResumeLayout(true);
+			}
 		}
+
+
+
 
 		#endregion
 

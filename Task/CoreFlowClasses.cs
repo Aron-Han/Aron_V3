@@ -365,6 +365,10 @@ namespace Aron_V3
 		[XmlArrayItem("Pin")]
 		public List<PinConfig> OutputPins { get; set; }
 
+		public string DisplayOutputKey { get; set; }
+		public string DisplaySlotName { get; set; }
+		public string DisplayMode { get; set; }
+
 		public StepConfig()
 		{
 			StepName = string.Empty;
@@ -383,6 +387,10 @@ namespace Aron_V3
 			ScriptFiles = new List<string>();
 			InputPins = new List<PinConfig>();
 			OutputPins = new List<PinConfig>();
+
+			DisplayOutputKey = "Not Use";
+			DisplaySlotName = "Not Show";
+			DisplayMode = "Fit";
 		}
 	}
 
@@ -405,13 +413,21 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string Remark { get; set; }
 
+		public string DisplayOutputKey { get; set; }
+		public string DisplaySlotName { get; set; }
+		public string DisplayMode { get; set; }
+
 		public StepFlowItem()
 		{
-			StepName = string.Empty;
-			InputImageKey = string.Empty;
-			RunOrder = 0;
+			StepName = "";
+			InputImageKey = "";
+			RunOrder = 1;
 			Enabled = true;
-			Remark = string.Empty;
+			Remark = "";
+
+			DisplayOutputKey = "Not Use";
+			DisplaySlotName = "Not Show";
+			DisplayMode = "Fit";
 		}
 	}
 
