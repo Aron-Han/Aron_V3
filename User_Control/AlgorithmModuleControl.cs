@@ -109,10 +109,171 @@ namespace Aron_V3
 			_moduleConfig = AlgorithmModuleConfigStore.LoadOrCreateDefault();
 
 			InitializeComponent();
+
+			// 设计器打开控件时不要执行加载 Job / 选择库 / 文件扫描等运行时逻辑，
+			// 否则 WinForms Designer 会把这些语句误认为 InitializeComponent 的设计器代码。
+			if (IsInDesignMode())
+			{
+				return;
+			}
+
 			EnableDoubleBuffer(this);
+			BindRuntimeEvents();
+			ApplyLibraryEnabledState();
 			LoadJobs();
 
+			AlgorithmLibraryType? firstEnabled = GetFirstEnabledLibrary();
+			if (firstEnabled.HasValue)
+			{
+				SelectLibrary(firstEnabled.Value);
+			}
+			else
+			{
+				ShowNoEnabledModuleMessage();
+			}
 		}
+
+		private bool IsInDesignMode()
+		{
+			try
+			{
+				if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
+				{
+					return true;
+				}
+
+				Control c = this;
+				while (c != null)
+				{
+					if (c.Site != null && c.Site.DesignMode)
+					{
+						return true;
+					}
+
+					c = c.Parent;
+				}
+			}
+			catch
+			{
+			}
+
+			return false;
+		}
+
+		private void BindRuntimeEvents()
+		{
+			if (btnVpp != null)
+			{
+				btnVpp.Click -= btnVpp_Click;
+				btnVpp.Click += btnVpp_Click;
+			}
+
+			if (btnScript != null)
+			{
+				btnScript.Click -= btnScript_Click;
+				btnScript.Click += btnScript_Click;
+			}
+
+			if (btnHdev != null)
+			{
+				btnHdev.Click -= btnHdev_Click;
+				btnHdev.Click += btnHdev_Click;
+			}
+
+			if (btnVM != null)
+			{
+				btnVM.Click -= btnVM_Click;
+				btnVM.Click += btnVM_Click;
+			}
+
+			if (chkEnableVpp != null)
+			{
+				chkEnableVpp.CheckedChanged -= chkEnable_CheckedChanged;
+				chkEnableVpp.CheckedChanged += chkEnable_CheckedChanged;
+			}
+
+			if (chkEnableScript != null)
+			{
+				chkEnableScript.CheckedChanged -= chkEnable_CheckedChanged;
+				chkEnableScript.CheckedChanged += chkEnable_CheckedChanged;
+			}
+
+			if (chkEnableHdev != null)
+			{
+				chkEnableHdev.CheckedChanged -= chkEnable_CheckedChanged;
+				chkEnableHdev.CheckedChanged += chkEnable_CheckedChanged;
+			}
+
+			if (chkEnableVM != null)
+			{
+				chkEnableVM.CheckedChanged -= chkEnable_CheckedChanged;
+				chkEnableVM.CheckedChanged += chkEnable_CheckedChanged;
+			}
+
+			if (listJobs != null)
+			{
+				listJobs.DoubleClick -= listJobs_DoubleClick;
+				listJobs.DoubleClick += listJobs_DoubleClick;
+			}
+
+			if (listTasks != null)
+			{
+				listTasks.DoubleClick -= listTasks_DoubleClick;
+				listTasks.DoubleClick += listTasks_DoubleClick;
+			}
+
+			if (listAlgorithmFiles != null)
+			{
+				listAlgorithmFiles.DoubleClick -= listAlgorithmFiles_DoubleClick;
+				listAlgorithmFiles.DoubleClick += listAlgorithmFiles_DoubleClick;
+			}
+
+			if (btnApplyInputs != null)
+			{
+				btnApplyInputs.Click -= btnApplyInputs_Click;
+				btnApplyInputs.Click += btnApplyInputs_Click;
+			}
+
+			if (btnRunReplay != null)
+			{
+				btnRunReplay.Click -= btnRunReplay_Click;
+				btnRunReplay.Click += btnRunReplay_Click;
+			}
+
+			if (btnSaveVpp != null)
+			{
+				btnSaveVpp.Click -= btnSaveVpp_Click;
+				btnSaveVpp.Click += btnSaveVpp_Click;
+			}
+
+			if (btnLoadEditor != null)
+			{
+				btnLoadEditor.Click -= btnLoadEditor_Click;
+				btnLoadEditor.Click += btnLoadEditor_Click;
+			}
+		}
+
+		private void btnVpp_Click(object sender, EventArgs e)
+		{
+			SelectLibrary(AlgorithmLibraryType.Vpp);
+		}
+
+		private void btnScript_Click(object sender, EventArgs e)
+		{
+			SelectLibrary(AlgorithmLibraryType.Script);
+		}
+
+		private void btnHdev_Click(object sender, EventArgs e)
+		{
+			SelectLibrary(AlgorithmLibraryType.Hdev);
+		}
+
+		private void btnVM_Click(object sender, EventArgs e)
+		{
+			SelectLibrary(AlgorithmLibraryType.VM);
+		}
+
+
 
 		// 不再在控件创建/页面切换时自动预加载，避免点击“算法模块”时卡住主界面。
 		// 真正的软件启动预加载，请在 Form1 启动完成后延迟调用 StartPreloadIfNeeded()。
@@ -464,8 +625,16 @@ namespace Aron_V3
 			listJobs.Items.Clear();
 			listTasks.Items.Clear();
 			listAlgorithmFiles.Items.Clear();
-			dgvPins.Rows.Clear();
-			ClearVppEditor();
+
+			if (_currentLibrary != AlgorithmLibraryType.Script)
+			{
+				dgvPins.Rows.Clear();
+				ClearVppEditor();
+			}
+			else
+			{
+				ShowScriptEditorForCurrentSelection(null, false);
+			}
 
 			if (grpFiles != null) grpFiles.Text = "未启用模块";
 			if (grpPins != null) grpPins.Text = "参数";
@@ -550,49 +719,65 @@ namespace Aron_V3
 				grpFiles.Text = "所有 VPP";
 				grpPins.Text = "VPP 输入/输出引脚";
 				grpEditor.Text = "VPP 编辑器";
-				lblEditorInfo.Text = "请选择 Job、Task 和 VPP。";
 
-				RestoreVppPinPanel();
+				if (lblEditorInfo != null)
+				{
+					lblEditorInfo.Text = "请选择 Job、Task 和 VPP。";
+				}
+
+				// 关键修复：从 Script 页面切回 VPP 时，必须强制把 Script 编辑器从 splitRight.Panel1 移除，
+				// 并把 VPP 的 grpPins / dgvPins 放回右侧主区域。
+				ShowVppPinPanel(true);
+				ClearVppEditor();
+				LoadAlgorithmFilesForCurrentTask();
+				return;
 			}
-			else if (library == AlgorithmLibraryType.Script)
+
+			if (library == AlgorithmLibraryType.Script)
 			{
 				grpFiles.Text = "所有 Script";
 				grpPins.Text = "C# Script 编辑器";
 				grpEditor.Text = "Script 编辑器";
-				lblEditorInfo.Text = "请选择 Job、Task 和 Script。";
 
-				ShowScriptEditorForCurrentSelection();
+				if (lblEditorInfo != null)
+				{
+					lblEditorInfo.Text = "请选择 Job、Task 和 Script。";
+				}
+
+				ShowScriptEditorForCurrentSelection(null, false);
 				LoadAlgorithmFilesForCurrentTask();
 				return;
 			}
-			else if (library == AlgorithmLibraryType.Hdev)
+
+			if (library == AlgorithmLibraryType.Hdev)
 			{
 				grpFiles.Text = "所有 Hdev";
 				grpPins.Text = "Hdev 参数";
 				grpEditor.Text = "HDevelop 编辑器";
-				lblEditorInfo.Text = "Hdev 模式后续扩展。";
 
-				RestoreVppPinPanel();
+				if (lblEditorInfo != null)
+				{
+					lblEditorInfo.Text = "Hdev 模式后续扩展。";
+				}
+
+				ShowVppPinPanel(true);
+				ClearVppEditor();
+				LoadAlgorithmFilesForCurrentTask();
+				return;
 			}
-			else
+
+			grpFiles.Text = "所有 VM";
+			grpPins.Text = "VM 参数";
+			grpEditor.Text = "VisionMaster 编辑器";
+
+			if (lblEditorInfo != null)
 			{
-				grpFiles.Text = "所有 VM";
-				grpPins.Text = "VM 参数";
-				grpEditor.Text = "VisionMaster 编辑器";
 				lblEditorInfo.Text = "VM 模式后续扩展。";
-
-				RestoreVppPinPanel();
 			}
 
+			ShowVppPinPanel(true);
 			ClearVppEditor();
-
-			if (dgvPins != null)
-			{
-				dgvPins.Rows.Clear();
-			}
-
 			LoadAlgorithmFilesForCurrentTask();
-
 		}
 
 		private void ApplyLibraryButtonStyle(Button btn, bool selected)
@@ -729,22 +914,40 @@ namespace Aron_V3
 
 		private void LoadAlgorithmFilesForCurrentTask()
 		{
-			listAlgorithmFiles.Items.Clear();
-
-			if (dgvPins != null)
-			{
-				dgvPins.Rows.Clear();
-			}
-
-			ClearVppEditor();
-
-			if (string.IsNullOrEmpty(_currentJobName) || string.IsNullOrEmpty(_currentTaskName))
+			if (listAlgorithmFiles == null)
 			{
 				return;
 			}
 
+			listAlgorithmFiles.BeginUpdate();
+
 			try
 			{
+				listAlgorithmFiles.Items.Clear();
+
+				if (_currentLibrary == AlgorithmLibraryType.Script)
+				{
+					// Script 模式下只显示编辑器壳，不自动加载第一个脚本。
+					ShowScriptEditorForCurrentSelection(null, false);
+				}
+				else
+				{
+					// VPP/Hdev/VM 模式必须强制恢复参数区域，避免右侧残留 Script 编辑器。
+					ShowVppPinPanel(false);
+
+					if (dgvPins != null)
+					{
+						dgvPins.Rows.Clear();
+					}
+
+					ClearVppEditor();
+				}
+
+				if (string.IsNullOrEmpty(_currentJobName) || string.IsNullOrEmpty(_currentTaskName))
+				{
+					return;
+				}
+
 				List<AlgorithmFileItem> items = new List<AlgorithmFileItem>();
 
 				if (_currentLibrary == AlgorithmLibraryType.Vpp)
@@ -757,7 +960,11 @@ namespace Aron_V3
 				}
 				else
 				{
-					lblEditorInfo.Text = "当前库模式后续扩展。";
+					if (lblEditorInfo != null)
+					{
+						lblEditorInfo.Text = "当前库模式后续扩展。";
+					}
+
 					return;
 				}
 
@@ -770,18 +977,37 @@ namespace Aron_V3
 				{
 					if (_currentLibrary == AlgorithmLibraryType.Vpp)
 					{
-						lblEditorInfo.Text = "当前 Task 下没有 VPP。";
+						if (lblEditorInfo != null)
+						{
+							lblEditorInfo.Text = "当前 Task 下没有 VPP。";
+						}
 					}
 					else if (_currentLibrary == AlgorithmLibraryType.Script)
 					{
-						lblEditorInfo.Text = "当前 Task 下没有 Script。";
-						ShowScriptEditorForCurrentSelection();
+						if (_scriptEditor != null && !_scriptEditor.IsDisposed)
+						{
+							_scriptEditor.LoadScriptStep(_currentJobName, _currentTaskName, string.Empty);
+						}
+
+						if (lblEditorInfo != null)
+						{
+							lblEditorInfo.Text = "当前 Task 下没有 Script。";
+						}
 					}
+				}
+				else if (_currentLibrary == AlgorithmLibraryType.Script)
+				{
+					// 只选中，不自动加载。用户双击哪个脚本，就加载哪个脚本。
+					listAlgorithmFiles.SelectedIndex = -1;
 				}
 			}
 			catch (Exception ex)
 			{
 				MessageBox.Show("Load algorithm files failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			}
+			finally
+			{
+				listAlgorithmFiles.EndUpdate();
 			}
 		}
 
@@ -1274,7 +1500,7 @@ namespace Aron_V3
 
 			if (_currentLibrary == AlgorithmLibraryType.Script)
 			{
-				ShowScriptEditorForCurrentSelection();
+				ShowScriptEditorForCurrentSelection(item, true);
 				return;
 			}
 
@@ -1298,20 +1524,34 @@ namespace Aron_V3
 
 		private void RestoreVppPinPanel()
 		{
-			if (splitRight == null || grpPins == null || vppPinContent == null)
+			ShowVppPinPanel(false);
+		}
+
+		/// <summary>
+		/// 强制显示 VPP/Hdev/VM 参数区域。
+		/// 这个方法专门解决：从 Script 编辑器切回 VPP 时，右侧仍停留在 Script 编辑器的问题。
+		/// </summary>
+		private void ShowVppPinPanel(bool clearPinRows)
+		{
+			if (splitRight == null || grpPins == null)
 			{
 				return;
 			}
 
-			splitRight.Panel1.SuspendLayout();
-			grpPins.SuspendLayout();
+			SuspendControlRedraw(splitRight);
+			SuspendControlRedraw(grpPins);
 
 			try
 			{
 				splitRight.Panel2Collapsed = true;
 
-				// ShowScriptEditorForCurrentSelection 会把 splitRight.Panel1 清空并放入 Script 控件。
-				// 切回 VPP 时必须先把 grpPins 放回 Panel1，否则 VPP 的输入/输出引脚界面不会显示。
+				// 先把 Script 编辑器从右侧区域移除，否则它会继续占据 Panel1。
+				if (_scriptEditor != null && !_scriptEditor.IsDisposed && _scriptEditor.Parent != null)
+				{
+					_scriptEditor.Parent.Controls.Remove(_scriptEditor);
+				}
+
+				// 强制把 VPP 参数 GroupBox 放回 splitRight.Panel1。
 				if (grpPins.Parent != splitRight.Panel1)
 				{
 					if (grpPins.Parent != null)
@@ -1321,36 +1561,60 @@ namespace Aron_V3
 
 					splitRight.Panel1.Controls.Clear();
 					splitRight.Panel1.Controls.Add(grpPins);
-					grpPins.Dock = DockStyle.Fill;
+				}
+				else if (!splitRight.Panel1.Controls.Contains(grpPins))
+				{
+					splitRight.Panel1.Controls.Clear();
+					splitRight.Panel1.Controls.Add(grpPins);
 				}
 
-				if (vppPinContent.Parent != grpPins)
+				grpPins.Dock = DockStyle.Fill;
+				grpPins.Visible = true;
+
+				// 确保原来的 VPP pinLayout / dgvPins 没有被 Script 编辑器替换掉。
+				if (vppPinContent != null)
 				{
-					if (vppPinContent.Parent != null)
+					if (vppPinContent.Parent != grpPins)
 					{
-						vppPinContent.Parent.Controls.Remove(vppPinContent);
+						if (vppPinContent.Parent != null)
+						{
+							vppPinContent.Parent.Controls.Remove(vppPinContent);
+						}
+
+						grpPins.Controls.Clear();
+						grpPins.Controls.Add(vppPinContent);
 					}
 
-					grpPins.Controls.Clear();
-					grpPins.Controls.Add(vppPinContent);
+					vppPinContent.Dock = DockStyle.Fill;
+					vppPinContent.Visible = true;
 				}
 
-				vppPinContent.Dock = DockStyle.Fill;
-				vppPinContent.Visible = true;
-				grpPins.Visible = true;
+				if (dgvPins != null)
+				{
+					dgvPins.Visible = true;
+					if (clearPinRows)
+					{
+						dgvPins.Rows.Clear();
+					}
+				}
+
 				grpPins.BringToFront();
+				_showingScriptEditor = false;
 			}
 			finally
 			{
-				grpPins.ResumeLayout(true);
-				splitRight.Panel1.ResumeLayout(true);
+				ResumeControlRedraw(grpPins);
+				ResumeControlRedraw(splitRight);
 			}
-
-			_showingScriptEditor = false;
 		}
 
 
 		private void ShowScriptEditorForCurrentSelection()
+		{
+			ShowScriptEditorForCurrentSelection(null, true);
+		}
+
+		private void ShowScriptEditorForCurrentSelection(AlgorithmFileItem selectedItem, bool loadScript)
 		{
 			string jobName = _currentJobName;
 			string taskName = _currentTaskName;
@@ -1375,34 +1639,119 @@ namespace Aron_V3
 				taskName = "Task_New_01";
 			}
 
-			string stepName = "CS_Script";
+			if (selectedItem == null)
+			{
+				selectedItem = _currentAlgorithmItem;
+
+				if ((selectedItem == null || selectedItem.Step == null) &&
+					listAlgorithmFiles != null &&
+					listAlgorithmFiles.SelectedItem is AlgorithmFileItem)
+				{
+					selectedItem = (AlgorithmFileItem)listAlgorithmFiles.SelectedItem;
+				}
+			}
 
 			if (_scriptEditor == null || _scriptEditor.IsDisposed)
 			{
 				_scriptEditor = new CSharpScriptStepEditorControl();
 				_scriptEditor.Dock = DockStyle.Fill;
+				_scriptEditor.ApplyLanguage(_isEnglish);
 			}
 
-			splitRight.Panel1.SuspendLayout();
+			SuspendControlRedraw(splitRight);
 
 			try
 			{
 				splitRight.Panel2Collapsed = true;
-				splitRight.Panel1.Controls.Clear();
 
-				splitRight.Panel1.Controls.Add(_scriptEditor);
+				// 如果当前已经显示的是同一个 ScriptEditor，不要反复 Clear/Add。
+				// 这样能明显减少进入界面、切换脚本、写代码时的闪烁。
+				if (_scriptEditor.Parent != splitRight.Panel1)
+				{
+					if (_scriptEditor.Parent != null)
+					{
+						_scriptEditor.Parent.Controls.Remove(_scriptEditor);
+					}
+
+					splitRight.Panel1.Controls.Clear();
+					splitRight.Panel1.Controls.Add(_scriptEditor);
+				}
+
 				_scriptEditor.Dock = DockStyle.Fill;
 				_scriptEditor.BringToFront();
-
 				_showingScriptEditor = true;
 			}
 			finally
 			{
-				splitRight.Panel1.ResumeLayout(true);
+				ResumeControlRedraw(splitRight);
 			}
 
-			// 注意：LoadScriptStep 放到 Add 控件之后
-			_scriptEditor.LoadScriptStep(jobName, taskName, stepName);
+			if (!loadScript)
+			{
+				return;
+			}
+
+			string loadKey = GetScriptLoadKey(selectedItem);
+
+			if (string.IsNullOrWhiteSpace(loadKey))
+			{
+				loadKey = selectedItem != null && !string.IsNullOrWhiteSpace(selectedItem.Name)
+					? selectedItem.Name
+					: string.Empty;
+			}
+
+			// 关键修复：
+			// 这里必须传当前双击的脚本路径/名称，不能再固定传 CS_Script。
+			_scriptEditor.LoadScriptStep(jobName, taskName, loadKey);
+		}
+
+		private string GetScriptLoadKey(AlgorithmFileItem item)
+		{
+			if (item == null)
+			{
+				return string.Empty;
+			}
+
+			if (!string.IsNullOrWhiteSpace(item.FilePath) && File.Exists(item.FilePath))
+			{
+				return item.FilePath;
+			}
+
+			if (item.Step != null)
+			{
+				if (item.Step.ScriptFiles != null && item.Step.ScriptFiles.Count > 0)
+				{
+					foreach (string file in item.Step.ScriptFiles)
+					{
+						if (string.IsNullOrWhiteSpace(file))
+						{
+							continue;
+						}
+
+						if (Path.IsPathRooted(file) && File.Exists(file))
+						{
+							return file;
+						}
+					}
+				}
+
+				if (!string.IsNullOrWhiteSpace(item.Step.ProjectFilePath))
+				{
+					return item.Step.ProjectFilePath;
+				}
+
+				if (!string.IsNullOrWhiteSpace(item.Step.SourceFilePath))
+				{
+					return item.Step.SourceFilePath;
+				}
+
+				if (!string.IsNullOrWhiteSpace(item.Step.StepName))
+				{
+					return item.Step.StepName;
+				}
+			}
+
+			return item.Name;
 		}
 
 
@@ -2881,6 +3230,33 @@ namespace Aron_V3
 			panelEditorHost.Controls.Add(lblEditorInfo);
 		}
 
+		private const int WM_SETREDRAW = 0x000B;
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+		private void EnableAlgorithmModuleSmoothUi()
+		{
+			try
+			{
+				this.SetStyle(ControlStyles.AllPaintingInWmPaint |
+							  ControlStyles.OptimizedDoubleBuffer |
+							  ControlStyles.ResizeRedraw, true);
+				this.UpdateStyles();
+			}
+			catch
+			{
+			}
+
+			EnableDoubleBuffer(this);
+
+			EnableListBoxDoubleBuffer(listJobs);
+			EnableListBoxDoubleBuffer(listTasks);
+			EnableListBoxDoubleBuffer(listAlgorithmFiles);
+
+			EnableDataGridViewSmooth(dgvPins);
+		}
+
 		private void EnableDoubleBuffer(Control control)
 		{
 			if (control == null)
@@ -2906,6 +3282,95 @@ namespace Aron_V3
 			foreach (Control child in control.Controls)
 			{
 				EnableDoubleBuffer(child);
+			}
+		}
+
+		private void EnableListBoxDoubleBuffer(ListBox list)
+		{
+			if (list == null)
+			{
+				return;
+			}
+
+			try
+			{
+				PropertyInfo p = typeof(Control).GetProperty(
+					"DoubleBuffered",
+					BindingFlags.Instance | BindingFlags.NonPublic);
+
+				if (p != null)
+				{
+					p.SetValue(list, true, null);
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private void EnableDataGridViewSmooth(DataGridView grid)
+		{
+			if (grid == null)
+			{
+				return;
+			}
+
+			try
+			{
+				PropertyInfo p = typeof(DataGridView).GetProperty(
+					"DoubleBuffered",
+					BindingFlags.Instance | BindingFlags.NonPublic);
+
+				if (p != null)
+				{
+					p.SetValue(grid, true, null);
+				}
+			}
+			catch
+			{
+			}
+
+			try
+			{
+				grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+				grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+			}
+			catch
+			{
+			}
+		}
+
+		private void SuspendControlRedraw(Control control)
+		{
+			if (control == null || control.IsDisposed || !control.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+			}
+			catch
+			{
+			}
+		}
+
+		private void ResumeControlRedraw(Control control)
+		{
+			if (control == null || control.IsDisposed || !control.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+				control.Invalidate(true);
+				control.Update();
+			}
+			catch
+			{
 			}
 		}
 

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 
 namespace Aron_V3
 {
@@ -161,6 +162,10 @@ namespace Aron_V3
 		{
 			Dictionary<string, object> result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
+			// 先把流程管理中为 Script 选择的前序模块输出加入输入字典。
+			// 这样脚本可直接 context.GetInput("Inspection.ResultX") 或 context.GetInput("ResultX")。
+			AddSelectedStepOutputsToRuntimeInputs(result, context);
+
 			if (config == null || config.Inputs == null)
 			{
 				return result;
@@ -194,6 +199,96 @@ namespace Aron_V3
 				}
 
 				result[input.Name] = value;
+			}
+
+			return result;
+		}
+
+
+		private void AddSelectedStepOutputsToRuntimeInputs(Dictionary<string, object> result, VisionRunContext context)
+		{
+			if (result == null || context == null || _config == null)
+			{
+				return;
+			}
+
+			List<string> stepNames = ParseSeparatedKeys(_config.ScriptInputStepKeys);
+			if (stepNames.Count <= 0)
+			{
+				return;
+			}
+
+			foreach (string stepName in stepNames)
+			{
+				if (string.IsNullOrWhiteSpace(stepName))
+				{
+					continue;
+				}
+
+				StepResult stepResult = null;
+				if (context.StepResults != null)
+				{
+					context.StepResults.TryGetValue(stepName, out stepResult);
+				}
+
+				if (stepResult != null && stepResult.Outputs != null)
+				{
+					foreach (KeyValuePair<string, object> pair in stepResult.Outputs)
+					{
+						SetInputIfMissing(result, stepName + "." + pair.Key, pair.Value);
+						SetInputIfMissing(result, pair.Key, pair.Value);
+					}
+				}
+
+				if (context.Data != null)
+				{
+					string prefix = stepName + ".";
+					foreach (KeyValuePair<string, object> pair in context.Data)
+					{
+						if (pair.Key != null && pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+						{
+							SetInputIfMissing(result, pair.Key, pair.Value);
+						}
+					}
+				}
+			}
+		}
+
+		private void SetInputIfMissing(Dictionary<string, object> inputs, string key, object value)
+		{
+			if (inputs == null || string.IsNullOrWhiteSpace(key))
+			{
+				return;
+			}
+
+			if (!inputs.ContainsKey(key))
+			{
+				inputs[key] = value;
+			}
+		}
+
+		private List<string> ParseSeparatedKeys(string text)
+		{
+			List<string> result = new List<string>();
+
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return result;
+			}
+
+			string[] parts = text.Split(new char[] { ';', ',', '|', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+			foreach (string part in parts)
+			{
+				string item = (part ?? string.Empty).Trim();
+				if (string.IsNullOrWhiteSpace(item))
+				{
+					continue;
+				}
+
+				if (!result.Any(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
+				{
+					result.Add(item);
+				}
 			}
 
 			return result;

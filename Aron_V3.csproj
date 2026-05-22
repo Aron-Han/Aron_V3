@@ -208,6 +208,9 @@
     <EmbeddedResource Include="Task\TriggerManagerControl.resx">
       <DependentUpon>TriggerManagerControl.cs</DependentUpon>
     </EmbeddedResource>
+    <EmbeddedResource Include="User_Control\AlgorithmModuleControl.resx">
+      <DependentUpon>AlgorithmModuleControl.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="User_Control\CameraViewControl.resx">
       <DependentUpon>CameraViewControl.cs</DependentUpon>
     </EmbeddedResource>

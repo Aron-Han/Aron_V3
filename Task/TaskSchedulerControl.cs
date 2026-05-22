@@ -2,8 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.Text;
 using System.Windows.Forms;
 using System.Drawing;
 
@@ -20,6 +18,10 @@ namespace Aron_V3
 		{
 			InitializeComponent();
 			InitDisplayBindingColumns();
+			MakeStepNameColumnReadOnly();
+			BindStepGridReadOnlyEvents();
+			ApplyFlowUiPolicy();
+			BindStepFlowGridEvents();
 
 
 			listJobs.SelectedIndexChanged -= listJobs_SelectedIndexChanged;
@@ -290,7 +292,6 @@ namespace Aron_V3
 		}
 
 		// 中间 Step 库上方 “+”：从本地选择 VPP 或 Script，只添加到 Step 库，不加入右侧执行流程，不立即复制到 Project。
-		// 中间 Step 库上方 “+”：新建 Step。可选择 Vpp / Script / Hdev(Halcon)。
 		private void btnAddStepItem_Click(object sender, EventArgs e)
 		{
 			string jobName = GetSelectedJobName();
@@ -298,21 +299,20 @@ namespace Aron_V3
 
 			if (string.IsNullOrEmpty(jobName) || string.IsNullOrEmpty(taskName))
 			{
-				MessageBox.Show("Please select Job and Task first.", "New Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show("Please select Job and Task first.", "Add Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
-			using (NewStepDialog dialog = new NewStepDialog(GetNextStepName(jobName, taskName), GetSupportedNewStepTypes()))
+			using (OpenFileDialog dialog = CreateStepFileDialog(false))
 			{
 				if (dialog.ShowDialog(this) != DialogResult.OK)
 				{
 					return;
 				}
 
-				AddNewStepToLibrary(jobName, taskName, dialog.StepName, dialog.StepTypeName);
+				AddStepToLibraryByLocalFile(jobName, taskName, dialog.FileName);
 			}
 		}
-
 
 		// 中间 Step 库上方 “批量”：从本地选择多个 VPP 或 Script，只添加到 Step 库，不加入右侧执行流程，不立即复制到 Project。
 		private void btnBatchAddStepItem_Click(object sender, EventArgs e)
@@ -343,8 +343,8 @@ namespace Aron_V3
 		private OpenFileDialog CreateStepFileDialog(bool multiSelect)
 		{
 			OpenFileDialog dialog = new OpenFileDialog();
-			dialog.Title = multiSelect ? "Import VPP / Script / HDev Files" : "Import VPP / Script / HDev File";
-			dialog.Filter = "Vision Step Files (*.vpp;*.cs;*.csx;*.txt;*.hdev)|*.vpp;*.cs;*.csx;*.txt;*.hdev|VPP Files (*.vpp)|*.vpp|Script Files (*.cs;*.csx;*.txt)|*.cs;*.csx;*.txt|HDev Files (*.hdev)|*.hdev|All Files (*.*)|*.*";
+			dialog.Title = multiSelect ? "Select VPP or Script Files" : "Select VPP or Script File";
+			dialog.Filter = "Vision Step Files (*.vpp;*.cs;*.csx;*.txt)|*.vpp;*.cs;*.csx;*.txt|VPP Files (*.vpp)|*.vpp|Script Files (*.cs;*.csx;*.txt)|*.cs;*.csx;*.txt|All Files (*.*)|*.*";
 			dialog.Multiselect = multiSelect;
 			dialog.CheckFileExists = true;
 			dialog.CheckPathExists = true;
@@ -368,7 +368,7 @@ namespace Aron_V3
 			if (stepType == StepType.Unknown)
 			{
 				MessageBox.Show(
-					"Unsupported file type.\r\n\r\nOnly .vpp, .cs, .csx, .txt, .hdev are supported now.\r\n\r\nFile: " + sourceFilePath,
+					"Unsupported file type.\r\n\r\nOnly .vpp, .cs, .csx, .txt are supported now.\r\n\r\nFile: " + sourceFilePath,
 					"Add Step Error",
 					MessageBoxButtons.OK,
 					MessageBoxIcon.Warning);
@@ -423,40 +423,21 @@ namespace Aron_V3
 				task.Steps.Count + 1,
 				stepType);
 
-			// 如果导入的文件已经在当前 Task 的标准目录下，直接识别为 Project 文件，
-			// 不再二次复制，避免生成 CS_Script_CS_Script.csx 这类重复文件。
-			string projectRelativePath = TryGetRelativePathIfFileUnderCurrentTask(jobName, taskName, stepType, sourceFilePath);
-
-			if (!string.IsNullOrWhiteSpace(projectRelativePath))
-			{
-				step.SourceFilePath = string.Empty;
-				step.ProjectFilePath = projectRelativePath;
-				step.StepFolder = Path.Combine("Job", jobName, "Task", taskName);
-				step.Remark = "Project: " + projectRelativePath;
-			}
-			else
-			{
-				step.SourceFilePath = sourceFilePath;
-				step.ProjectFilePath = string.Empty;
-				step.Remark = "Source: " + sourceFilePath;
-			}
+			// 添加 Step 时只记录原始路径，不立即复制到 Project。
+			// 只有 Step 加入右侧执行流程并点击保存时，才复制到 Project/Steps/Job/Task/VPP 或 Scripts。
+			step.SourceFilePath = sourceFilePath;
+			step.ProjectFilePath = string.Empty;
+			step.Remark = "Source: " + sourceFilePath;
 
 			if (stepType == StepType.Vpp)
 			{
 				step.VppFiles.Clear();
-				if (!string.IsNullOrWhiteSpace(projectRelativePath)) step.VppFiles.Add(projectRelativePath);
 				step.InputImageKey = "Cam1.Raw";
 				step.OutputImageKey = step.StepName + ".OutputImage";
 			}
 			else if (stepType == StepType.Script)
 			{
 				step.ScriptFiles.Clear();
-				if (!string.IsNullOrWhiteSpace(projectRelativePath)) step.ScriptFiles.Add(projectRelativePath);
-				step.InputImageKey = string.Empty;
-				step.OutputImageKey = string.Empty;
-			}
-			else if (IsHalconStepType(stepType))
-			{
 				step.InputImageKey = string.Empty;
 				step.OutputImageKey = string.Empty;
 			}
@@ -472,317 +453,6 @@ namespace Aron_V3
 			UpdateStepDetailTitle();
 		}
 
-
-
-		private void AddNewStepToLibrary(string jobName, string taskName, string inputStepName, string stepTypeName)
-		{
-			if (string.IsNullOrWhiteSpace(jobName) || string.IsNullOrWhiteSpace(taskName))
-			{
-				MessageBox.Show("Please select Job and Task first.", "New Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-				return;
-			}
-
-			string stepName = MakeSafeName(inputStepName);
-			if (string.IsNullOrWhiteSpace(stepName))
-			{
-				MessageBox.Show("Step name cannot be empty.", "New Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-				return;
-			}
-
-			StepType stepType;
-			if (!TryGetStepTypeByName(stepTypeName, out stepType))
-			{
-				MessageBox.Show("Unsupported Step Type: " + stepTypeName, "New Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-				return;
-			}
-
-			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			TaskConfig task = GetTaskConfig(config, jobName, taskName);
-
-			if (task == null)
-			{
-				MessageBox.Show("Task config was not found.\r\n\r\nJob: " + jobName + "\r\nTask: " + taskName, "New Step Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-				return;
-			}
-
-			bool isStepNameExists = task.Steps.Any(s => string.Equals(s.StepName, stepName, StringComparison.OrdinalIgnoreCase));
-			if (isStepNameExists)
-			{
-				MessageBox.Show("Create step failed.\r\n\r\nA step with the same name already exists in the current task.\r\n\r\nStep: " + stepName, "New Step Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-				return;
-			}
-
-			StepConfig step = FlowConfigStore.CreateDefaultStep(jobName, taskName, stepName, task.Steps.Count + 1, stepType);
-
-			string relativeFilePath;
-			try
-			{
-				relativeFilePath = CreateNewStepProjectFile(jobName, taskName, stepName, stepType);
-			}
-			catch (Exception ex)
-			{
-				MessageBox.Show("Create step file failed.\r\n\r\nStep: " + stepName + "\r\nType: " + stepTypeName + "\r\n\r\n" + ex.Message, "New Step Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-				return;
-			}
-
-			step.SourceFilePath = string.Empty;
-			step.ProjectFilePath = relativeFilePath;
-			step.StepFolder = Path.Combine("Job", jobName, "Task", taskName);
-			step.Remark = "New " + stepTypeName + " | " + relativeFilePath;
-
-			if (stepType == StepType.Vpp)
-			{
-				step.VppFiles.Clear();
-				step.VppFiles.Add(relativeFilePath);
-				step.InputImageKey = "Cam1.Raw";
-				step.OutputImageKey = step.StepName + ".OutputImage";
-			}
-			else if (stepType == StepType.Script)
-			{
-				step.ScriptFiles.Clear();
-				step.ScriptFiles.Add(relativeFilePath);
-				step.InputImageKey = string.Empty;
-				step.OutputImageKey = string.Empty;
-			}
-			else
-			{
-				step.InputImageKey = string.Empty;
-				step.OutputImageKey = string.Empty;
-			}
-
-			task.Steps.Add(step);
-			ReorderStepLibrary(task);
-			FlowConfigStore.Save(config);
-
-			RefreshStepLibraryByTask(jobName, taskName);
-			SelectListItem(listSteps, stepName);
-			RefreshStepFlowGrid(jobName, taskName);
-			UpdateStepDetailTitle();
-		}
-
-		private string CreateNewStepProjectFile(string jobName, string taskName, string stepName, StepType stepType)
-		{
-			FlowConfigStore.PathManager.EnsureStepFolder(jobName, taskName, stepName);
-
-			string taskFolder = FlowConfigStore.PathManager.GetStepFolder(jobName, taskName, stepName);
-			string subFolderName = GetStepSubFolderName(stepType);
-			string targetFolder = Path.Combine(taskFolder, subFolderName);
-			Directory.CreateDirectory(targetFolder);
-
-			string extension = GetStepDefaultExtension(stepType);
-			string fileName = MakeSafeName(stepName) + extension;
-			string filePath = Path.Combine(targetFolder, fileName);
-
-			if (File.Exists(filePath))
-			{
-				throw new InvalidOperationException("Step file already exists: " + filePath);
-			}
-
-			if (stepType == StepType.Vpp)
-			{
-				CreateBlankVppByReflection(filePath);
-			}
-			else if (stepType == StepType.Script)
-			{
-				File.WriteAllText(filePath, BuildDefaultScriptCode(stepName), Encoding.UTF8);
-			}
-			else if (IsHalconStepType(stepType))
-			{
-				File.WriteAllText(filePath, BuildDefaultHdevCode(stepName), Encoding.UTF8);
-			}
-			else
-			{
-				File.WriteAllText(filePath, string.Empty, Encoding.UTF8);
-			}
-
-			return Path.Combine(subFolderName, fileName);
-		}
-
-		private string GetNextStepName(string jobName, string taskName)
-		{
-			TaskConfig task = GetTaskConfig(jobName, taskName);
-			int index = 1;
-
-			while (true)
-			{
-				string name = "Step_New_" + index.ToString("00");
-
-				if (task == null || task.Steps == null || !task.Steps.Any(s => string.Equals(s.StepName, name, StringComparison.OrdinalIgnoreCase)))
-				{
-					return name;
-				}
-
-				index++;
-			}
-		}
-
-		private string[] GetSupportedNewStepTypes()
-		{
-			List<string> types = new List<string>();
-			types.Add("Vpp");
-			types.Add("Script");
-
-			// 当前模型里是 StepType.Halcon，界面显示成 Hdev，方便你后续按 HDevelop 文件理解。
-			if (Enum.GetNames(typeof(StepType)).Any(x => string.Equals(x, "Halcon", StringComparison.OrdinalIgnoreCase) || string.Equals(x, "Hdev", StringComparison.OrdinalIgnoreCase) || string.Equals(x, "HDev", StringComparison.OrdinalIgnoreCase)))
-			{
-				types.Add("Hdev");
-			}
-
-			return types.ToArray();
-		}
-
-		private bool TryGetStepTypeByName(string stepTypeName, out StepType stepType)
-		{
-			stepType = StepType.Unknown;
-
-			if (string.IsNullOrWhiteSpace(stepTypeName))
-			{
-				return false;
-			}
-
-			if (string.Equals(stepTypeName, "Hdev", StringComparison.OrdinalIgnoreCase) || string.Equals(stepTypeName, "HDev", StringComparison.OrdinalIgnoreCase))
-			{
-				if (Enum.GetNames(typeof(StepType)).Any(x => string.Equals(x, "Halcon", StringComparison.OrdinalIgnoreCase)))
-				{
-					stepType = (StepType)Enum.Parse(typeof(StepType), "Halcon");
-					return true;
-				}
-			}
-
-			foreach (string name in Enum.GetNames(typeof(StepType)))
-			{
-				if (string.Equals(name, stepTypeName, StringComparison.OrdinalIgnoreCase))
-				{
-					stepType = (StepType)Enum.Parse(typeof(StepType), name);
-					return stepType != StepType.Unknown;
-				}
-			}
-
-			return false;
-		}
-
-		private bool IsHalconStepType(StepType stepType)
-		{
-			return string.Equals(stepType.ToString(), "Halcon", StringComparison.OrdinalIgnoreCase) ||
-				   string.Equals(stepType.ToString(), "Hdev", StringComparison.OrdinalIgnoreCase) ||
-				   string.Equals(stepType.ToString(), "HDev", StringComparison.OrdinalIgnoreCase);
-		}
-
-		private string GetStepSubFolderName(StepType stepType)
-		{
-			if (stepType == StepType.Vpp)
-			{
-				return "VPP";
-			}
-
-			if (stepType == StepType.Script)
-			{
-				return "Scripts";
-			}
-
-			if (IsHalconStepType(stepType))
-			{
-				return "Hdev";
-			}
-
-			return stepType.ToString();
-		}
-
-		private string GetStepDefaultExtension(StepType stepType)
-		{
-			if (stepType == StepType.Vpp)
-			{
-				return ".vpp";
-			}
-
-			if (stepType == StepType.Script)
-			{
-				return ".csx";
-			}
-
-			if (IsHalconStepType(stepType))
-			{
-				return ".hdev";
-			}
-
-			return ".txt";
-		}
-
-		private string BuildDefaultScriptCode(string stepName)
-		{
-			return
-@"public class ScriptMain : IScriptMain
-{
-    public void Execute(IScriptContext context)
-    {
-        int jobId = context.GetInputInt(""JobID"");
-        double measure1 = context.GetInputDouble(""Measure1"");
-        string barcode = context.GetInputString(""Barcode"");
-
-        double result = jobId + measure1;
-        context.SetOutput(""ResultSum"", result);
-
-        MessageBox.Show(""ResultSum = "" + result.ToString(""0.###""));
-    }
-}
-";
-		}
-
-		private string BuildDefaultHdevCode(string stepName)
-		{
-			return
-"* " + stepName + "\r\n" +
-"* HALCON / HDevelop step template\r\n" +
-"dev_update_off ()\r\n" +
-"* TODO: Add HALCON operators here.\r\n";
-		}
-
-		private void CreateBlankVppByReflection(string filePath)
-		{
-			Type toolBlockType = FindTypeByFullName("Cognex.VisionPro.ToolBlock.CogToolBlock");
-			Type serializerType = FindTypeByFullName("Cognex.VisionPro.CogSerializer");
-
-			if (toolBlockType == null || serializerType == null)
-			{
-				throw new InvalidOperationException("VisionPro assemblies are not loaded, so a blank VPP cannot be created automatically.\r\n\r\nPlease import an existing .vpp file, or open the VPP edit module after VisionPro is loaded.");
-			}
-
-			object toolBlock = Activator.CreateInstance(toolBlockType);
-			MethodInfo saveMethod = serializerType.GetMethods(BindingFlags.Public | BindingFlags.Static)
-				.FirstOrDefault(m => string.Equals(m.Name, "SaveObjectToFile", StringComparison.OrdinalIgnoreCase) && m.GetParameters().Length == 2);
-
-			if (saveMethod == null)
-			{
-				throw new MissingMethodException("Cognex.VisionPro.CogSerializer.SaveObjectToFile(object, string) was not found.");
-			}
-
-			saveMethod.Invoke(null, new object[] { toolBlock, filePath });
-		}
-
-		private Type FindTypeByFullName(string fullName)
-		{
-			foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
-			{
-				try
-				{
-					if (asm == null || asm.IsDynamic)
-					{
-						continue;
-					}
-
-					Type type = asm.GetType(fullName, false, true);
-					if (type != null)
-					{
-						return type;
-					}
-				}
-				catch
-				{
-				}
-			}
-
-			return null;
-		}
 
 		private void btnDeleteStepItem_Click(object sender, EventArgs e)
 		{
@@ -860,7 +530,12 @@ namespace Aron_V3
 			StepFlowItem item = new StepFlowItem();
 			item.StepName = step.StepName;
 
-			if (!string.IsNullOrEmpty(task.ImageSourceKey) &&
+			// Script 不需要图像源；VPP/Hdev/VM 等视觉检测算子才使用图像源。
+			if (step.StepType == StepType.Script)
+			{
+				item.InputImageKey = string.Empty;
+			}
+			else if (!string.IsNullOrEmpty(task.ImageSourceKey) &&
 				!task.ImageSourceKey.Equals("Not Use", StringComparison.OrdinalIgnoreCase) &&
 				!task.ImageSourceKey.Equals("None", StringComparison.OrdinalIgnoreCase))
 			{
@@ -876,9 +551,19 @@ namespace Aron_V3
 			item.RunOrder = GetNextDefaultRunOrder(task);
 			item.Enabled = true;
 			item.Remark = BuildStepFlowRemark(step);
-			item.DisplayOutputKey = "Not Use";
-			item.DisplaySlotName = "Not Show";
-			item.DisplayMode = "Fit";
+			if (step.StepType == StepType.Script)
+			{
+				item.DisplayOutputKey = "Not Use";
+				item.DisplaySlotName = "Not Show";
+				item.DisplayMode = "Fit";
+				item.ScriptInputStepKeys = string.Empty;
+			}
+			else
+			{
+				item.DisplayOutputKey = "Not Use";
+				item.DisplaySlotName = "Not Show";
+				item.DisplayMode = "Fit";
+			}
 
 			task.StepFlow.Add(item);
 
@@ -902,6 +587,7 @@ namespace Aron_V3
 		private void RefreshStepFlowGrid(string jobName, string taskName)
 		{
 			InitDisplayBindingColumns();
+			MakeStepNameColumnReadOnly();
 			RefreshDisplaySlotComboColumn();
 
 			dgvSteps.Rows.Clear();
@@ -923,19 +609,25 @@ namespace Aron_V3
 				int rowIndex = dgvSteps.Rows.Add();
 				DataGridViewRow row = dgvSteps.Rows[rowIndex];
 
+				row.Tag = item;
 				row.Cells["colStep"].Value = item.StepName;
 				row.Cells["colImageSource"].Value = item.InputImageKey;
 				row.Cells["colRunOrder"].Value = item.RunOrder.ToString();
 				row.Cells["colRemark"].Value = item.Remark;
 
-				row.Cells[COL_DISPLAY_OUTPUT].Value =
-					string.IsNullOrWhiteSpace(item.DisplayOutputKey) ? "Not Use" : item.DisplayOutputKey;
+				if (dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
+				{
+					row.Cells[COL_DISPLAY_OUTPUT].Value =
+						string.IsNullOrWhiteSpace(item.DisplayOutputKey) ? "Not Use" : item.DisplayOutputKey;
+				}
 
-				row.Cells[COL_DISPLAY_SLOT].Value =
-					string.IsNullOrWhiteSpace(item.DisplaySlotName) ? "Not Show" : item.DisplaySlotName;
+				if (dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
+				{
+					row.Cells[COL_DISPLAY_SLOT].Value =
+						string.IsNullOrWhiteSpace(item.DisplaySlotName) ? "Not Show" : item.DisplaySlotName;
+				}
 
-				row.Cells[COL_DISPLAY_MODE].Value =
-					string.IsNullOrWhiteSpace(item.DisplayMode) ? "Fit" : item.DisplayMode;
+				ApplyStepFlowRowVisual(row, task);
 			}
 		}
 
@@ -1078,23 +770,30 @@ namespace Aron_V3
 				item.Enabled = true;
 				item.Remark = GetCellString(row, "colRemark");
 
-				item.DisplayOutputKey = GetCellString(row, COL_DISPLAY_OUTPUT);
-				item.DisplaySlotName = GetCellString(row, COL_DISPLAY_SLOT);
-				item.DisplayMode = GetCellString(row, COL_DISPLAY_MODE);
-
-				if (string.IsNullOrWhiteSpace(item.DisplayOutputKey))
+				if (usedStep.StepType == StepType.Script)
 				{
+					// Script 只处理数据，不绑定图像源/输出图像/显示框。
+					item.InputImageKey = string.Empty;
 					item.DisplayOutputKey = "Not Use";
-				}
-
-				if (string.IsNullOrWhiteSpace(item.DisplaySlotName))
-				{
 					item.DisplaySlotName = "Not Show";
-				}
-
-				if (string.IsNullOrWhiteSpace(item.DisplayMode))
-				{
 					item.DisplayMode = "Fit";
+					item.ScriptInputStepKeys = GetRowScriptInputStepKeys(row);
+				}
+				else
+				{
+					item.DisplayOutputKey = GetCellString(row, COL_DISPLAY_OUTPUT);
+					item.DisplaySlotName = GetCellString(row, COL_DISPLAY_SLOT);
+					item.DisplayMode = "Fit";
+
+					if (string.IsNullOrWhiteSpace(item.DisplayOutputKey))
+					{
+						item.DisplayOutputKey = "Not Use";
+					}
+
+					if (string.IsNullOrWhiteSpace(item.DisplaySlotName))
+					{
+						item.DisplaySlotName = "Not Show";
+					}
 				}
 
 				task.StepFlow.Add(item);
@@ -1171,53 +870,31 @@ namespace Aron_V3
 			// Project\Job\<JobName>\Task\<TaskName>\VPP\xxx.vpp
 			// Project\Job\<JobName>\Task\<TaskName>\Scripts\xxx.csx
 			string taskFolder = FlowConfigStore.PathManager.GetStepFolder(jobName, taskName, step.StepName);
-			string subFolderName = GetStepSubFolderName(step.StepType);
+			string subFolderName = step.StepType == StepType.Vpp ? "VPP" : "Scripts";
 			string targetFolder = Path.Combine(taskFolder, subFolderName);
 
 			Directory.CreateDirectory(targetFolder);
 
 			string sourceFileName = Path.GetFileName(sourceFilePath);
-			string targetFileName = sourceFileName;
+			string targetFileName = MakeUniqueProjectStepFileName(taskFolder, subFolderName, sourceFileName, step.StepName);
 			string targetFilePath = Path.Combine(targetFolder, targetFileName);
 
-			string sourceFull = Path.GetFullPath(sourceFilePath);
-			string targetFull = Path.GetFullPath(targetFilePath);
-
-			// 源文件已经在目标目录下：直接识别，不复制、不改名。
-			if (!string.Equals(sourceFull, targetFull, StringComparison.OrdinalIgnoreCase))
+			try
 			{
-				if (File.Exists(targetFilePath))
-				{
-					MessageBox.Show(
-						"Save step failed. A file with the same name already exists in the project folder.\r\n\r\n" +
-						"Current policy: do not auto rename step files. Please rename the source file or delete the duplicate project file first.\r\n\r\n" +
-						"Step: " + step.StepName +
-						"\r\nSource: " + sourceFilePath +
-						"\r\nTarget: " + targetFilePath,
-						"Save Step File",
-						MessageBoxButtons.OK,
-						MessageBoxIcon.Warning);
+				File.Copy(sourceFilePath, targetFilePath, true);
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show(
+					"Failed to copy step file to project folder.\r\n\r\nStep: " + step.StepName +
+					"\r\nSource: " + sourceFilePath +
+					"\r\nTarget: " + targetFilePath +
+					"\r\n\r\n" + ex.Message,
+					"Save Step File",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
 
-					return false;
-				}
-
-				try
-				{
-					File.Copy(sourceFilePath, targetFilePath, false);
-				}
-				catch (Exception ex)
-				{
-					MessageBox.Show(
-						"Failed to copy step file to project folder.\r\n\r\nStep: " + step.StepName +
-						"\r\nSource: " + sourceFilePath +
-						"\r\nTarget: " + targetFilePath +
-						"\r\n\r\n" + ex.Message,
-						"Save Step File",
-						MessageBoxButtons.OK,
-						MessageBoxIcon.Warning);
-
-					return false;
-				}
+				return false;
 			}
 
 			string relativeFilePath = Path.Combine(subFolderName, targetFileName);
@@ -1296,39 +973,33 @@ namespace Aron_V3
 
 		private string BuildStepFlowRemark(StepConfig step)
 		{
-			if (step == null)
-			{
-				return string.Empty;
-			}
-
 			string remark = step.StepType.ToString();
 
 			if (step.StepType == StepType.Vpp)
 			{
-				if (step.VppFiles.Count > 0) remark += " | VPP: " + step.VppFiles[0];
-				else if (!string.IsNullOrEmpty(step.ProjectFilePath)) remark += " | VPP: " + step.ProjectFilePath;
-				else if (!string.IsNullOrEmpty(step.SourceFilePath)) remark += " | Source: " + step.SourceFilePath;
+				if (step.VppFiles.Count > 0)
+				{
+					remark += " | VPP: " + step.VppFiles[0];
+				}
+				else if (!string.IsNullOrEmpty(step.SourceFilePath))
+				{
+					remark += " | Source: " + step.SourceFilePath;
+				}
 			}
 			else if (step.StepType == StepType.Script)
 			{
-				if (step.ScriptFiles.Count > 0) remark += " | Script: " + step.ScriptFiles[0];
-				else if (!string.IsNullOrEmpty(step.ProjectFilePath)) remark += " | Script: " + step.ProjectFilePath;
-				else if (!string.IsNullOrEmpty(step.SourceFilePath)) remark += " | Source: " + step.SourceFilePath;
-			}
-			else if (IsHalconStepType(step.StepType))
-			{
-				if (!string.IsNullOrEmpty(step.ProjectFilePath)) remark += " | Hdev: " + step.ProjectFilePath;
-				else if (!string.IsNullOrEmpty(step.SourceFilePath)) remark += " | Source: " + step.SourceFilePath;
-			}
-			else
-			{
-				if (!string.IsNullOrEmpty(step.ProjectFilePath)) remark += " | File: " + step.ProjectFilePath;
-				else if (!string.IsNullOrEmpty(step.SourceFilePath)) remark += " | Source: " + step.SourceFilePath;
+				if (step.ScriptFiles.Count > 0)
+				{
+					remark += " | Script: " + step.ScriptFiles[0];
+				}
+				else if (!string.IsNullOrEmpty(step.SourceFilePath))
+				{
+					remark += " | Source: " + step.SourceFilePath;
+				}
 			}
 
 			return remark;
 		}
-
 
 		private void SelectFlowGridRowByStepName(string stepName)
 		{
@@ -1492,22 +1163,10 @@ namespace Aron_V3
 				dgvSteps.Columns.Insert(Math.Min(4, dgvSteps.Columns.Count), col);
 			}
 
-			if (!dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
+			// 显示方式固定为 Fit，不再在流程表中显示该列。
+			if (dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
 			{
-				DataGridViewComboBoxColumn col = new DataGridViewComboBoxColumn();
-				col.Name = COL_DISPLAY_MODE;
-				col.HeaderText = "显示方式";
-				col.FlatStyle = FlatStyle.Flat;
-				col.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
-				col.Items.AddRange(new object[]
-				{
-			"Fit",
-			"Center",
-			"Stretch",
-			"Original"
-				});
-
-				dgvSteps.Columns.Insert(Math.Min(5, dgvSteps.Columns.Count), col);
+				dgvSteps.Columns.Remove(COL_DISPLAY_MODE);
 			}
 
 			if (dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
@@ -1520,10 +1179,6 @@ namespace Aron_V3
 				dgvSteps.Columns[COL_DISPLAY_SLOT].FillWeight = 90;
 			}
 
-			if (dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
-			{
-				dgvSteps.Columns[COL_DISPLAY_MODE].FillWeight = 70;
-			}
 		}
 
 		private void RefreshDisplaySlotComboColumn()
@@ -1582,6 +1237,432 @@ namespace Aron_V3
 			return defaultValue;
 		}
 
+
+
+		#region Step Flow Row Policy / Selection Dialogs
+
+		private void ApplyFlowUiPolicy()
+		{
+			HideMoveButtons();
+
+			if (dgvSteps != null)
+			{
+				dgvSteps.EditMode = DataGridViewEditMode.EditOnEnter;
+				dgvSteps.MultiSelect = false;
+				dgvSteps.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+				dgvSteps.DataError -= dgvSteps_DataError;
+				dgvSteps.DataError += dgvSteps_DataError;
+			}
+		}
+
+		private void HideMoveButtons()
+		{
+			if (btnMoveUp != null)
+			{
+				btnMoveUp.Visible = false;
+				btnMoveUp.Enabled = false;
+			}
+
+			if (btnMoveDown != null)
+			{
+				btnMoveDown.Visible = false;
+				btnMoveDown.Enabled = false;
+			}
+		}
+
+		private void BindStepFlowGridEvents()
+		{
+			if (dgvSteps == null)
+			{
+				return;
+			}
+
+			dgvSteps.CellDoubleClick -= dgvSteps_CellDoubleClick;
+			dgvSteps.CellDoubleClick += dgvSteps_CellDoubleClick;
+		}
+
+		private void dgvSteps_DataError(object sender, DataGridViewDataErrorEventArgs e)
+		{
+			e.ThrowException = false;
+		}
+
+		private void dgvSteps_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+		{
+			if (e.RowIndex < 0 || e.ColumnIndex < 0)
+			{
+				return;
+			}
+
+			DataGridViewRow row = dgvSteps.Rows[e.RowIndex];
+			string columnName = dgvSteps.Columns[e.ColumnIndex].Name;
+
+			if (string.Equals(columnName, "colImageSource", StringComparison.OrdinalIgnoreCase))
+			{
+				ShowImageSourceSelectorForRow(row);
+				return;
+			}
+
+			if (string.Equals(columnName, "colStep", StringComparison.OrdinalIgnoreCase))
+			{
+				ShowScriptInputStepSelectorForRow(row);
+			}
+		}
+
+		private StepConfig GetStepConfigForRow(DataGridViewRow row, TaskConfig task)
+		{
+			if (row == null || task == null || task.Steps == null)
+			{
+				return null;
+			}
+
+			string stepName = GetCellString(row, "colStep");
+			if (string.IsNullOrWhiteSpace(stepName))
+			{
+				return null;
+			}
+
+			return task.Steps.FirstOrDefault(s => string.Equals(s.StepName, stepName, StringComparison.OrdinalIgnoreCase));
+		}
+
+		private bool IsScriptRow(DataGridViewRow row, TaskConfig task)
+		{
+			StepConfig step = GetStepConfigForRow(row, task);
+			return step != null && step.StepType == StepType.Script;
+		}
+
+		private void ApplyStepFlowRowVisual(DataGridViewRow row, TaskConfig task)
+		{
+			if (row == null || task == null)
+			{
+				return;
+			}
+
+			bool isScript = IsScriptRow(row, task);
+			Color disabledBack = Color.FromArgb(18, 28, 40);
+			Color disabledFore = Color.FromArgb(120, 140, 155);
+			Color normalBack = Color.FromArgb(1, 8, 16);
+			Color normalFore = Color.White;
+
+			SetOptionalCellState(row, "colImageSource", !isScript, isScript ? string.Empty : null, disabledBack, disabledFore, normalBack, normalFore);
+			SetOptionalCellState(row, COL_DISPLAY_OUTPUT, !isScript, isScript ? "Not Use" : null, disabledBack, disabledFore, normalBack, normalFore);
+			SetOptionalCellState(row, COL_DISPLAY_SLOT, !isScript, isScript ? "Not Show" : null, disabledBack, disabledFore, normalBack, normalFore);
+		}
+
+		private void SetOptionalCellState(DataGridViewRow row, string columnName, bool enabled, string forcedValue,
+			Color disabledBack, Color disabledFore, Color normalBack, Color normalFore)
+		{
+			if (row == null || string.IsNullOrWhiteSpace(columnName) || !dgvSteps.Columns.Contains(columnName))
+			{
+				return;
+			}
+
+			DataGridViewCell cell = row.Cells[columnName];
+
+			if (forcedValue != null)
+			{
+				cell.Value = forcedValue;
+			}
+
+			cell.ReadOnly = !enabled;
+			cell.Style.BackColor = enabled ? normalBack : disabledBack;
+			cell.Style.ForeColor = enabled ? normalFore : disabledFore;
+			cell.Style.SelectionForeColor = Color.White;
+			cell.Style.SelectionBackColor = enabled ? Color.FromArgb(0, 120, 200) : Color.FromArgb(45, 60, 75);
+		}
+
+		private void ShowImageSourceSelectorForRow(DataGridViewRow row)
+		{
+			string jobName = GetSelectedJobName();
+			string taskName = GetSelectedTaskName();
+			TaskConfig task = GetTaskConfig(jobName, taskName);
+
+			if (row == null || task == null)
+			{
+				return;
+			}
+
+			if (IsScriptRow(row, task))
+			{
+				MessageBox.Show("Script step does not use image source.", "Image Source", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			List<string> available = GetAvailableImageSources(task);
+			if (available.Count <= 0)
+			{
+				MessageBox.Show("No image source is available for current Task. Please configure image source in Trigger Manager first.", "Image Source", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			List<string> selected = ParseSeparatedKeys(GetCellString(row, "colImageSource"));
+
+			using (MultiCheckSelectForm form = new MultiCheckSelectForm("Select Image Sources", "Select one or more image sources", available, selected, null))
+			{
+				if (form.ShowDialog(this) == DialogResult.OK)
+				{
+					row.Cells["colImageSource"].Value = JoinKeys(form.SelectedItems);
+				}
+			}
+		}
+
+		private void ShowScriptInputStepSelectorForRow(DataGridViewRow row)
+		{
+			string jobName = GetSelectedJobName();
+			string taskName = GetSelectedTaskName();
+			TaskConfig task = GetTaskConfig(jobName, taskName);
+
+			if (row == null || task == null)
+			{
+				return;
+			}
+
+			if (!IsScriptRow(row, task))
+			{
+				return;
+			}
+
+			int currentOrder = GetCellInt(row, "colRunOrder", 1);
+			string currentStepName = GetCellString(row, "colStep");
+
+			List<SelectableStepSourceItem> items = new List<SelectableStepSourceItem>();
+
+			foreach (DataGridViewRow r in dgvSteps.Rows)
+			{
+				if (r == null || r.IsNewRow || r == row)
+				{
+					continue;
+				}
+
+				string stepName = GetCellString(r, "colStep");
+				if (string.IsNullOrWhiteSpace(stepName))
+				{
+					continue;
+				}
+
+				int order = GetCellInt(r, "colRunOrder", 1);
+
+				SelectableStepSourceItem item = new SelectableStepSourceItem();
+				item.Name = stepName;
+				item.DisplayText = stepName + "    RunOrder=" + order.ToString();
+				item.Enabled = order < currentOrder;
+				item.ToolTip = item.Enabled ? "" : "Only steps with a smaller RunOrder can be used as Script input source.";
+				items.Add(item);
+			}
+
+			if (items.Count <= 0)
+			{
+				MessageBox.Show("No previous step can be selected. Script can only receive data from modules with smaller RunOrder.", "Script Input Source", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			List<string> selected = ParseSeparatedKeys(GetRowScriptInputStepKeys(row));
+
+			using (ScriptInputSourceSelectForm form = new ScriptInputSourceSelectForm("Select Script Input Sources", "Select previous modules used as input objects", items, selected))
+			{
+				if (form.ShowDialog(this) == DialogResult.OK)
+				{
+					string selectedKeys = JoinKeys(form.SelectedItems);
+					SetRowScriptInputStepKeys(row, selectedKeys);
+					string remark = GetCellString(row, "colRemark");
+					row.Cells["colRemark"].Value = MergeScriptInputRemark(remark, selectedKeys);
+				}
+			}
+		}
+
+		private string MergeScriptInputRemark(string remark, string selectedKeys)
+		{
+			string prefix = "Script Inputs:";
+			string clean = remark ?? string.Empty;
+			int index = clean.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+			if (index >= 0)
+			{
+				clean = clean.Substring(0, index).Trim();
+			}
+
+			if (string.IsNullOrWhiteSpace(selectedKeys))
+			{
+				return clean;
+			}
+
+			if (!string.IsNullOrWhiteSpace(clean))
+			{
+				clean += " | ";
+			}
+
+			return clean + prefix + " " + selectedKeys;
+		}
+
+		private List<string> GetAvailableImageSources(TaskConfig task)
+		{
+			List<string> result = new List<string>();
+
+			if (task == null)
+			{
+				return result;
+			}
+
+			foreach (string key in task.ImageSourceKeyList)
+			{
+				AddUniqueKey(result, key);
+			}
+
+			// 兜底：如果 Task 没有配置图像源，也允许从当前 Task 的 VPP Step 中选择。
+
+			if (result.Count <= 0 && task.Steps != null)
+			{
+				foreach (StepConfig step in task.Steps)
+				{
+					if (step == null || step.StepType != StepType.Vpp)
+					{
+						continue;
+					}
+
+					if (step.VppFiles != null && step.VppFiles.Count > 0)
+					{
+						foreach (string file in step.VppFiles)
+						{
+							AddUniqueKey(result, Path.GetFileName(file));
+						}
+					}
+					else if (!string.IsNullOrWhiteSpace(step.StepName))
+					{
+						AddUniqueKey(result, step.StepName);
+					}
+				}
+			}
+
+			return result;
+		}
+
+		private void AddUniqueKey(List<string> list, string key)
+		{
+			if (list == null || string.IsNullOrWhiteSpace(key))
+			{
+				return;
+			}
+
+			key = key.Trim();
+
+			if (key.Equals("Not Use", StringComparison.OrdinalIgnoreCase) || key.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			if (!list.Any(x => string.Equals(x, key, StringComparison.OrdinalIgnoreCase)))
+			{
+				list.Add(key);
+			}
+		}
+
+		private List<string> ParseSeparatedKeys(string text)
+		{
+			List<string> result = new List<string>();
+
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return result;
+			}
+
+			string[] parts = text.Split(new char[] { ';', ',', '|', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+			foreach (string part in parts)
+			{
+				AddUniqueKey(result, part);
+			}
+
+			return result;
+		}
+
+		private string JoinKeys(List<string> keys)
+		{
+			if (keys == null || keys.Count <= 0)
+			{
+				return string.Empty;
+			}
+
+			return string.Join(";", keys.ToArray());
+		}
+
+		private string GetRowScriptInputStepKeys(DataGridViewRow row)
+		{
+			if (row == null)
+			{
+				return string.Empty;
+			}
+
+			StepFlowItem item = row.Tag as StepFlowItem;
+			if (item != null)
+			{
+				return item.ScriptInputStepKeys ?? string.Empty;
+			}
+
+			return string.Empty;
+		}
+
+		private void SetRowScriptInputStepKeys(DataGridViewRow row, string keys)
+		{
+			if (row == null)
+			{
+				return;
+			}
+
+			StepFlowItem item = row.Tag as StepFlowItem;
+			if (item == null)
+			{
+				item = new StepFlowItem();
+				row.Tag = item;
+			}
+
+			item.ScriptInputStepKeys = keys ?? string.Empty;
+		}
+
+		private void MakeStepNameColumnReadOnly()
+		{
+			if (dgvSteps == null)
+			{
+				return;
+			}
+
+			if (!dgvSteps.Columns.Contains("colStep"))
+			{
+				return;
+			}
+
+			DataGridViewColumn col = dgvSteps.Columns["colStep"];
+
+			col.ReadOnly = true;
+			col.SortMode = DataGridViewColumnSortMode.NotSortable;
+
+			col.DefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
+			col.DefaultCellStyle.ForeColor = Color.FromArgb(210, 230, 245);
+			col.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
+			col.DefaultCellStyle.SelectionForeColor = Color.White;
+		}
+
+		private void BindStepGridReadOnlyEvents()
+		{
+			if (dgvSteps == null)
+			{
+				return;
+			}
+
+			dgvSteps.CellBeginEdit -= dgvSteps_CellBeginEdit;
+			dgvSteps.CellBeginEdit += dgvSteps_CellBeginEdit;
+		}
+
+		private void dgvSteps_CellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
+		{
+			if (e.RowIndex < 0 || e.ColumnIndex < 0)
+			{
+				return;
+			}
+
+			if (dgvSteps.Columns[e.ColumnIndex].Name == "colStep")
+			{
+				e.Cancel = true;
+			}
+		}
+
+		#endregion
 
 
 
@@ -1720,60 +1801,7 @@ namespace Aron_V3
 			}
 		}
 
-		private string TryGetRelativePathIfFileUnderCurrentTask(
-	string jobName,
-	string taskName,
-	StepType stepType,
-	string sourceFilePath)
-		{
-			if (string.IsNullOrWhiteSpace(jobName) ||
-				string.IsNullOrWhiteSpace(taskName) ||
-				string.IsNullOrWhiteSpace(sourceFilePath))
-			{
-				return string.Empty;
-			}
 
-			try
-			{
-				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName);
-
-				if (string.IsNullOrWhiteSpace(taskFolder))
-				{
-					return string.Empty;
-				}
-
-				string fullTaskFolder = Path.GetFullPath(taskFolder)
-					.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-				string fullFilePath = Path.GetFullPath(sourceFilePath);
-
-				string prefix = fullTaskFolder + Path.DirectorySeparatorChar;
-
-				if (!fullFilePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-				{
-					return string.Empty;
-				}
-
-				string relativePath = fullFilePath.Substring(prefix.Length);
-				relativePath = relativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
-
-				if (string.IsNullOrWhiteSpace(relativePath))
-				{
-					return string.Empty;
-				}
-
-				if (relativePath.StartsWith(".."))
-				{
-					return string.Empty;
-				}
-
-				return relativePath;
-			}
-			catch
-			{
-				return string.Empty;
-			}
-		}
 		#endregion
 
 		public void ApplyLanguage(bool isEnglish)
@@ -1792,8 +1820,7 @@ namespace Aron_V3
 
 				btnAddStep.Text = "+  Add Operator";
 				btnDeleteSelected.Text = "▦  Delete";
-				btnMoveUp.Text = "▲  Move Up";
-				btnMoveDown.Text = "▼  Move Down";
+				HideMoveButtons();
 				btnSave.Text = "▣  Save";
 			}
 			else
@@ -1810,8 +1837,7 @@ namespace Aron_V3
 
 				btnAddStep.Text = "+  新增算子";
 				btnDeleteSelected.Text = "▦  删除选中";
-				btnMoveUp.Text = "▲  上移选中";
-				btnMoveDown.Text = "▼  下移选中";
+				HideMoveButtons();
 				btnSave.Text = "▣  保存";
 			}
 			if (dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
@@ -1824,10 +1850,6 @@ namespace Aron_V3
 				dgvSteps.Columns[COL_DISPLAY_SLOT].HeaderText = isEnglish ? "Display Slot" : "绑定显示框";
 			}
 
-			if (dgvSteps.Columns.Contains(COL_DISPLAY_MODE))
-			{
-				dgvSteps.Columns[COL_DISPLAY_MODE].HeaderText = isEnglish ? "Display Mode" : "显示方式";
-			}
 			btnAddStepItem.Text = "+";
 			btnBatchAddStepItem.Text = "▦";
 			btnDeleteStepItem.Text = "-";
@@ -1845,31 +1867,43 @@ namespace Aron_V3
 
 			string fileName = string.Empty;
 
+			// 1. 优先显示原始导入文件名
 			if (!string.IsNullOrEmpty(step.SourceFilePath))
 			{
 				fileName = Path.GetFileName(step.SourceFilePath);
 			}
 
-			if (string.IsNullOrEmpty(fileName) && step.StepType == StepType.Vpp && step.VppFiles != null && step.VppFiles.Count > 0)
+			// 2. 如果原始路径没有，就显示 Project 内部 VPP 文件名
+			if (string.IsNullOrEmpty(fileName) &&
+				step.StepType == StepType.Vpp &&
+				step.VppFiles != null &&
+				step.VppFiles.Count > 0)
 			{
 				fileName = Path.GetFileName(step.VppFiles[0]);
 			}
 
-			if (string.IsNullOrEmpty(fileName) && step.StepType == StepType.Script && step.ScriptFiles != null && step.ScriptFiles.Count > 0)
+			// 3. 如果是 Script，就显示 Project 内部 Script 文件名
+			if (string.IsNullOrEmpty(fileName) &&
+				step.StepType == StepType.Script &&
+				step.ScriptFiles != null &&
+				step.ScriptFiles.Count > 0)
 			{
 				fileName = Path.GetFileName(step.ScriptFiles[0]);
 			}
 
-			if (string.IsNullOrEmpty(fileName) && !string.IsNullOrEmpty(step.ProjectFilePath))
-			{
-				fileName = Path.GetFileName(step.ProjectFilePath);
-			}
-
+			// 4. 兜底：如果没有文件路径，则根据 StepType 添加后缀提示
 			if (string.IsNullOrEmpty(fileName))
 			{
-				if (step.StepType == StepType.Vpp) return step.StepName + ".vpp";
-				if (step.StepType == StepType.Script) return step.StepName + ".csx";
-				if (IsHalconStepType(step.StepType)) return step.StepName + ".hdev";
+				if (step.StepType == StepType.Vpp)
+				{
+					return step.StepName + ".vpp";
+				}
+
+				if (step.StepType == StepType.Script)
+				{
+					return step.StepName + ".csx";
+				}
+
 				return step.StepName;
 			}
 
@@ -1877,123 +1911,328 @@ namespace Aron_V3
 		}
 
 
+	}
 
-		private class NewStepDialog : Form
+
+	public class SelectableStepSourceItem
+	{
+		public string Name { get; set; }
+		public string DisplayText { get; set; }
+		public bool Enabled { get; set; }
+		public string ToolTip { get; set; }
+
+		public SelectableStepSourceItem()
 		{
-			private readonly TextBox txtName;
-			private readonly ComboBox cmbType;
-			private readonly Button btnOK;
-			private readonly Button btnCancel;
+			Name = string.Empty;
+			DisplayText = string.Empty;
+			Enabled = true;
+			ToolTip = string.Empty;
+		}
+	}
 
-			public string StepName
+	public class MultiCheckSelectForm : Form
+	{
+		protected CheckedListBox list;
+		private Button btnClear;
+		private Button btnOK;
+		private Button btnCancel;
+
+		public List<string> SelectedItems { get; private set; }
+
+		public MultiCheckSelectForm(string title, string prompt, List<string> items, List<string> selected, List<string> disabledItems)
+		{
+			SelectedItems = new List<string>();
+			InitializeUi(title, prompt);
+			LoadItems(items, selected, disabledItems);
+		}
+
+		protected virtual void InitializeUi(string title, string prompt)
+		{
+			Text = title;
+			StartPosition = FormStartPosition.CenterParent;
+			Size = new Size(760, 560);
+			MinimumSize = new Size(620, 420);
+			BackColor = Color.FromArgb(2, 10, 20);
+			ForeColor = Color.White;
+
+			Label lbl = new Label();
+			lbl.Text = prompt;
+			lbl.Dock = DockStyle.Top;
+			lbl.Height = 54;
+			lbl.TextAlign = ContentAlignment.MiddleLeft;
+			lbl.Padding = new Padding(28, 0, 0, 0);
+			lbl.ForeColor = Color.White;
+			lbl.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
+
+			list = new CheckedListBox();
+			list.Dock = DockStyle.Fill;
+			list.CheckOnClick = true;
+			list.BorderStyle = BorderStyle.FixedSingle;
+			list.BackColor = Color.FromArgb(1, 8, 16);
+			list.ForeColor = Color.White;
+			list.Font = new Font("Microsoft YaHei UI", 10F);
+			list.IntegralHeight = false;
+
+			Panel panel = new Panel();
+			panel.Dock = DockStyle.Bottom;
+			panel.Height = 70;
+			panel.BackColor = BackColor;
+
+			btnClear = CreateButton("Clear", 32, 18, 130);
+			btnOK = CreateButton("OK", 420, 18, 130);
+			btnCancel = CreateButton("Cancel", 575, 18, 130);
+
+			btnClear.Click += btnClear_Click;
+			btnOK.Click += btnOK_Click;
+			btnCancel.Click += btnCancel_Click;
+
+			panel.Controls.Add(btnClear);
+			panel.Controls.Add(btnOK);
+			panel.Controls.Add(btnCancel);
+
+			Controls.Add(list);
+			Controls.Add(panel);
+			Controls.Add(lbl);
+		}
+
+		private Button CreateButton(string text, int x, int y, int width)
+		{
+			Button btn = new Button();
+			btn.Text = text;
+			btn.Location = new Point(x, y);
+			btn.Size = new Size(width, 34);
+			btn.FlatStyle = FlatStyle.Flat;
+			btn.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			btn.BackColor = Color.FromArgb(0, 95, 190);
+			btn.ForeColor = Color.White;
+			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			btn.UseVisualStyleBackColor = false;
+			return btn;
+		}
+
+		protected virtual void LoadItems(List<string> items, List<string> selected, List<string> disabledItems)
+		{
+			list.Items.Clear();
+			if (items == null)
 			{
-				get { return txtName.Text.Trim(); }
+				return;
 			}
 
-			public string StepTypeName
+			foreach (string item in items)
 			{
-				get { return cmbType.SelectedItem == null ? string.Empty : cmbType.SelectedItem.ToString(); }
-			}
-
-			public NewStepDialog(string defaultName, string[] supportedTypes)
-			{
-				Text = "New Step";
-				StartPosition = FormStartPosition.CenterParent;
-				FormBorderStyle = FormBorderStyle.FixedDialog;
-				MaximizeBox = false;
-				MinimizeBox = false;
-				ShowInTaskbar = false;
-				ClientSize = new Size(430, 165);
-				BackColor = Color.FromArgb(2, 10, 20);
-				ForeColor = Color.FromArgb(220, 235, 245);
-
-				Label lblName = new Label();
-				lblName.Text = "Step Name";
-				lblName.AutoSize = true;
-				lblName.Location = new Point(22, 25);
-				lblName.ForeColor = ForeColor;
-
-				txtName = new TextBox();
-				txtName.Location = new Point(125, 20);
-				txtName.Size = new Size(275, 24);
-				txtName.Text = string.IsNullOrWhiteSpace(defaultName) ? "Step_New_01" : defaultName;
-				txtName.BackColor = Color.FromArgb(1, 8, 16);
-				txtName.ForeColor = ForeColor;
-
-				Label lblType = new Label();
-				lblType.Text = "Step Type";
-				lblType.AutoSize = true;
-				lblType.Location = new Point(22, 65);
-				lblType.ForeColor = ForeColor;
-
-				cmbType = new ComboBox();
-				cmbType.DropDownStyle = ComboBoxStyle.DropDownList;
-				cmbType.Location = new Point(125, 60);
-				cmbType.Size = new Size(275, 24);
-				cmbType.BackColor = Color.FromArgb(1, 8, 16);
-				cmbType.ForeColor = ForeColor;
-
-				if (supportedTypes != null && supportedTypes.Length > 0)
+				if (string.IsNullOrWhiteSpace(item))
 				{
-					cmbType.Items.AddRange(supportedTypes.Cast<object>().ToArray());
-				}
-				else
-				{
-					cmbType.Items.Add("Vpp");
-					cmbType.Items.Add("Script");
+					continue;
 				}
 
-				if (cmbType.Items.Count > 0)
+				int index = list.Items.Add(item);
+				if (selected != null && selected.Any(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
 				{
-					cmbType.SelectedIndex = 0;
+					list.SetItemChecked(index, true);
 				}
-
-				btnOK = new Button();
-				btnOK.Text = "OK";
-				btnOK.Location = new Point(230, 115);
-				btnOK.Size = new Size(80, 30);
-				btnOK.DialogResult = DialogResult.OK;
-
-				btnCancel = new Button();
-				btnCancel.Text = "Cancel";
-				btnCancel.Location = new Point(320, 115);
-				btnCancel.Size = new Size(80, 30);
-				btnCancel.DialogResult = DialogResult.Cancel;
-
-				AcceptButton = btnOK;
-				CancelButton = btnCancel;
-
-				Controls.Add(lblName);
-				Controls.Add(txtName);
-				Controls.Add(lblType);
-				Controls.Add(cmbType);
-				Controls.Add(btnOK);
-				Controls.Add(btnCancel);
-			}
-
-			protected override void OnFormClosing(FormClosingEventArgs e)
-			{
-				if (DialogResult == DialogResult.OK)
-				{
-					if (string.IsNullOrWhiteSpace(StepName))
-					{
-						MessageBox.Show("Step name cannot be empty.", "New Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-						e.Cancel = true;
-						return;
-					}
-
-					if (string.IsNullOrWhiteSpace(StepTypeName))
-					{
-						MessageBox.Show("Please select step type.", "New Step", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-						e.Cancel = true;
-						return;
-					}
-				}
-
-				base.OnFormClosing(e);
 			}
 		}
 
+		private void btnClear_Click(object sender, EventArgs e)
+		{
+			for (int i = 0; i < list.Items.Count; i++)
+			{
+				list.SetItemChecked(i, false);
+			}
+		}
 
+		private void btnOK_Click(object sender, EventArgs e)
+		{
+			SelectedItems.Clear();
+			foreach (object item in list.CheckedItems)
+			{
+				if (item != null)
+				{
+					SelectedItems.Add(item.ToString());
+				}
+			}
+
+			DialogResult = DialogResult.OK;
+			Close();
+		}
+
+		private void btnCancel_Click(object sender, EventArgs e)
+		{
+			DialogResult = DialogResult.Cancel;
+			Close();
+		}
+	}
+
+	public class ScriptInputSourceSelectForm : Form
+	{
+		private CheckedListBox list;
+		private Button btnOK;
+		private Button btnCancel;
+		private Button btnClear;
+		private List<SelectableStepSourceItem> _items;
+
+		public List<string> SelectedItems { get; private set; }
+
+		public ScriptInputSourceSelectForm(string title, string prompt, List<SelectableStepSourceItem> items, List<string> selected)
+		{
+			SelectedItems = new List<string>();
+			_items = items ?? new List<SelectableStepSourceItem>();
+			InitializeUi(title, prompt);
+			LoadItems(selected);
+		}
+
+		private void InitializeUi(string title, string prompt)
+		{
+			Text = title;
+			StartPosition = FormStartPosition.CenterParent;
+			Size = new Size(760, 560);
+			MinimumSize = new Size(620, 420);
+			BackColor = Color.FromArgb(2, 10, 20);
+			ForeColor = Color.White;
+
+			Label lbl = new Label();
+			lbl.Text = prompt;
+			lbl.Dock = DockStyle.Top;
+			lbl.Height = 54;
+			lbl.TextAlign = ContentAlignment.MiddleLeft;
+			lbl.Padding = new Padding(28, 0, 0, 0);
+			lbl.ForeColor = Color.White;
+			lbl.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
+
+			list = new CheckedListBox();
+			list.Dock = DockStyle.Fill;
+			list.CheckOnClick = true;
+			list.BorderStyle = BorderStyle.FixedSingle;
+			list.BackColor = Color.FromArgb(1, 8, 16);
+			list.ForeColor = Color.White;
+			list.Font = new Font("Microsoft YaHei UI", 10F);
+			list.IntegralHeight = false;
+			list.ItemCheck += list_ItemCheck;
+			list.DrawMode = DrawMode.OwnerDrawFixed;
+			list.DrawItem += list_DrawItem;
+
+			Panel panel = new Panel();
+			panel.Dock = DockStyle.Bottom;
+			panel.Height = 70;
+			panel.BackColor = BackColor;
+
+			btnClear = CreateButton("Clear", 32, 18, 130);
+			btnOK = CreateButton("OK", 420, 18, 130);
+			btnCancel = CreateButton("Cancel", 575, 18, 130);
+
+			btnClear.Click += btnClear_Click;
+			btnOK.Click += btnOK_Click;
+			btnCancel.Click += btnCancel_Click;
+
+			panel.Controls.Add(btnClear);
+			panel.Controls.Add(btnOK);
+			panel.Controls.Add(btnCancel);
+
+			Controls.Add(list);
+			Controls.Add(panel);
+			Controls.Add(lbl);
+		}
+
+		private Button CreateButton(string text, int x, int y, int width)
+		{
+			Button btn = new Button();
+			btn.Text = text;
+			btn.Location = new Point(x, y);
+			btn.Size = new Size(width, 34);
+			btn.FlatStyle = FlatStyle.Flat;
+			btn.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			btn.BackColor = Color.FromArgb(0, 95, 190);
+			btn.ForeColor = Color.White;
+			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			btn.UseVisualStyleBackColor = false;
+			return btn;
+		}
+
+		private void LoadItems(List<string> selected)
+		{
+			list.Items.Clear();
+			foreach (SelectableStepSourceItem item in _items)
+			{
+				int index = list.Items.Add(item.DisplayText);
+				if (item.Enabled && selected != null && selected.Any(x => string.Equals(x, item.Name, StringComparison.OrdinalIgnoreCase)))
+				{
+					list.SetItemChecked(index, true);
+				}
+			}
+		}
+
+		private void list_ItemCheck(object sender, ItemCheckEventArgs e)
+		{
+			if (e.Index < 0 || e.Index >= _items.Count)
+			{
+				return;
+			}
+
+			if (!_items[e.Index].Enabled)
+			{
+				e.NewValue = CheckState.Unchecked;
+			}
+		}
+
+		private void list_DrawItem(object sender, DrawItemEventArgs e)
+		{
+			if (e.Index < 0 || e.Index >= list.Items.Count)
+			{
+				return;
+			}
+
+			bool enabled = e.Index < _items.Count && _items[e.Index].Enabled;
+			Color back = (e.State & DrawItemState.Selected) == DrawItemState.Selected ? Color.FromArgb(0, 120, 200) : Color.FromArgb(1, 8, 16);
+			Color fore = enabled ? Color.White : Color.FromArgb(120, 140, 155);
+
+			using (SolidBrush b = new SolidBrush(back))
+			{
+				e.Graphics.FillRectangle(b, e.Bounds);
+			}
+
+			string text = Convert.ToString(list.Items[e.Index]);
+			if (!enabled)
+			{
+				text += "    (not previous)";
+			}
+
+			TextRenderer.DrawText(e.Graphics, text, e.Font, e.Bounds, fore, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+			e.DrawFocusRectangle();
+		}
+
+		private void btnClear_Click(object sender, EventArgs e)
+		{
+			for (int i = 0; i < list.Items.Count; i++)
+			{
+				list.SetItemChecked(i, false);
+			}
+		}
+
+		private void btnOK_Click(object sender, EventArgs e)
+		{
+			SelectedItems.Clear();
+
+			for (int i = 0; i < list.Items.Count && i < _items.Count; i++)
+			{
+				if (!_items[i].Enabled)
+				{
+					continue;
+				}
+
+				if (list.GetItemChecked(i))
+				{
+					SelectedItems.Add(_items[i].Name);
+				}
+			}
+
+			DialogResult = DialogResult.OK;
+			Close();
+		}
+
+		private void btnCancel_Click(object sender, EventArgs e)
+		{
+			DialogResult = DialogResult.Cancel;
+			Close();
+		}
 	}
 }

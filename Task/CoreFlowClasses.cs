@@ -395,6 +395,42 @@ namespace Aron_V3
 		public string DisplaySlotName { get; set; }
 		public string DisplayMode { get; set; }
 
+		// Script Step 可选择接收哪些前序模块作为参数对象。
+		// 多个 StepName 用英文分号分隔，例如：Inspection;Measure_01。
+		[XmlAttribute]
+		public string ScriptInputStepKeys { get; set; }
+
+		[XmlIgnore]
+		public List<string> ScriptInputStepKeyList
+		{
+			get
+			{
+				List<string> result = new List<string>();
+
+				if (string.IsNullOrWhiteSpace(ScriptInputStepKeys))
+				{
+					return result;
+				}
+
+				string[] parts = ScriptInputStepKeys.Split(new char[] { ';', ',', '|', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+				foreach (string part in parts)
+				{
+					string item = (part ?? string.Empty).Trim();
+					if (string.IsNullOrWhiteSpace(item))
+					{
+						continue;
+					}
+
+					if (!result.Any(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(item);
+					}
+				}
+
+				return result;
+			}
+		}
+
 		public StepConfig()
 		{
 			StepName = string.Empty;
@@ -417,6 +453,7 @@ namespace Aron_V3
 			DisplayOutputKey = "Not Use";
 			DisplaySlotName = "Not Show";
 			DisplayMode = "Fit";
+			ScriptInputStepKeys = string.Empty;
 		}
 	}
 
@@ -443,6 +480,42 @@ namespace Aron_V3
 		public string DisplaySlotName { get; set; }
 		public string DisplayMode { get; set; }
 
+		// Script Step 可选择接收哪些前序模块作为参数对象。
+		// 多个 StepName 用英文分号分隔，例如：Inspection;Measure_01。
+		[XmlAttribute]
+		public string ScriptInputStepKeys { get; set; }
+
+		[XmlIgnore]
+		public List<string> ScriptInputStepKeyList
+		{
+			get
+			{
+				List<string> result = new List<string>();
+
+				if (string.IsNullOrWhiteSpace(ScriptInputStepKeys))
+				{
+					return result;
+				}
+
+				string[] parts = ScriptInputStepKeys.Split(new char[] { ';', ',', '|', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+				foreach (string part in parts)
+				{
+					string item = (part ?? string.Empty).Trim();
+					if (string.IsNullOrWhiteSpace(item))
+					{
+						continue;
+					}
+
+					if (!result.Any(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(item);
+					}
+				}
+
+				return result;
+			}
+		}
+
 		public StepFlowItem()
 		{
 			StepName = "";
@@ -454,6 +527,7 @@ namespace Aron_V3
 			DisplayOutputKey = "Not Use";
 			DisplaySlotName = "Not Show";
 			DisplayMode = "Fit";
+			ScriptInputStepKeys = string.Empty;
 		}
 	}
 
@@ -1308,6 +1382,11 @@ namespace Aron_V3
 				runStepConfig.InputImageKey = flowItem.InputImageKey;
 			}
 
+			if (!string.IsNullOrEmpty(flowItem.ScriptInputStepKeys))
+			{
+				runStepConfig.ScriptInputStepKeys = flowItem.ScriptInputStepKeys;
+			}
+
 			executeResult.StepConfig = runStepConfig;
 
 			try
@@ -1338,6 +1417,10 @@ namespace Aron_V3
 			target.Remark = source.Remark;
 			target.SourceFilePath = source.SourceFilePath;
 			target.ProjectFilePath = source.ProjectFilePath;
+			target.DisplayOutputKey = source.DisplayOutputKey;
+			target.DisplaySlotName = source.DisplaySlotName;
+			target.DisplayMode = source.DisplayMode;
+			target.ScriptInputStepKeys = source.ScriptInputStepKeys;
 
 			foreach (string file in source.VppFiles)
 			{

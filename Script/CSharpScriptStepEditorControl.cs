@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text;
 using System.Windows.Forms;
 
 namespace Aron_V3
@@ -44,19 +46,24 @@ namespace Aron_V3
 		private int _completionStartIndex;
 		private List<CompletionItem> _completionItems;
 
+		// 行号刷新优化：不要每敲一个字符就重绘，避免 RichTextBox 左侧行号闪烁/跳动。
+		private Timer _lineNumberRefreshTimer;
+		private int _lastKnownCodeLineCount = -1;
+		private bool _forceLineNumberRefresh;
+		private bool _loadingCodeText;
+
 		public CSharpScriptStepEditorControl()
 		{
 			InitializeComponent();
-
-			CSharpScriptReferenceManager.EnsureReferenceFolder();
-			CSharpScriptReferenceManager.PreloadAllReferenceDlls();
+			EnableSmoothUi();
 
 			_config = CSharpScriptStepStore.CreateDefaultConfig();
 
 			InitTheme();
+			RebuildTopBarLayout();   // 新增：修复顶部按钮、状态、当前脚本显示
 			InitGrids();
+			RebuildPinSectionLayouts();   // 新增：恢复 Inputs / Outputs 的 + / - 按钮显示
 			BindEvents();
-			InitCodeCompletion();
 
 			LoadConfigToUi();
 		}
@@ -65,12 +72,13 @@ namespace Aron_V3
 		{
 			_isEnglish = isEnglish;
 
-			btnReferenceDll.Text = isEnglish ? "Import DLL" : "导入DLL";
+
+			lblStepName.Text = isEnglish ? "Current Script" : "当前脚本";
+			lblStatusTitle.Text = isEnglish ? "Status" : "状态";
+			btnReferenceDll.Text = isEnglish ? "References" : "引用信息";
 			btnSave.Text = isEnglish ? "Save" : "保存";
 			btnCompile.Text = isEnglish ? "Compile" : "编译";
 			btnRun.Text = isEnglish ? "Debug Run" : "调试运行";
-			lblStepName.Text = isEnglish ? "Current Script" : "当前脚本";
-			lblScriptFile.Text = string.Empty;
 			lblStatusTitle.Text = isEnglish ? "Status" : "状态";
 			lblInputTitle.Text = isEnglish ? "Inputs    Edit Current/Default value for debug" : "输入定义 Inputs    调试时直接修改“当前值/默认值”列";
 			lblOutputTitle.Text = isEnglish ? "Outputs" : "输出定义 Outputs";
@@ -78,6 +86,8 @@ namespace Aron_V3
 			lblLogTitle.Text = isEnglish ? "Compile / Run Log" : "编译 / 运行日志";
 
 			SetGridHeaders();
+			UpdatePinToolbarText();
+			RebuildTopBarLayout();
 		}
 
 		public void LoadScriptStep(string jobName, string taskName, string stepName)
@@ -85,13 +95,31 @@ namespace Aron_V3
 			_jobName = string.IsNullOrWhiteSpace(jobName) ? "Job_001" : jobName;
 			_taskName = string.IsNullOrWhiteSpace(taskName) ? "Task_New_01" : taskName;
 
-			string safeStep = string.IsNullOrWhiteSpace(stepName) ? "CS_Script" : stepName.Trim();
+			string rawSelection = string.IsNullOrWhiteSpace(stepName) ? "CS_Script" : stepName.Trim();
+			string safeStep = NormalizeScriptSelectionName(rawSelection);
 
-			StepConfig flowStep = FindScriptStepConfig(_jobName, _taskName, safeStep);
-			_scriptPath = ResolveScriptPath(_jobName, _taskName, safeStep, flowStep);
+			// 切换脚本时先清空旧日志，避免看起来还停留在上一个脚本。
+			ClearLogs();
+
+			StepConfig flowStep = FindScriptStepConfig(_jobName, _taskName, rawSelection);
+			_scriptPath = ResolveScriptPath(_jobName, _taskName, rawSelection, flowStep);
+
+			// 兼容外部传入不带扩展名的 StepName。
+			if ((string.IsNullOrWhiteSpace(_scriptPath) || !File.Exists(_scriptPath)) &&
+				!string.Equals(rawSelection, safeStep, StringComparison.OrdinalIgnoreCase))
+			{
+				flowStep = FindScriptStepConfig(_jobName, _taskName, safeStep);
+				_scriptPath = ResolveScriptPath(_jobName, _taskName, safeStep, flowStep);
+			}
+
 			_configPath = ResolveScriptConfigPath(_jobName, _taskName, safeStep, _scriptPath);
 
 			_config = CSharpScriptStepStore.Load(_configPath);
+			if (_config == null)
+			{
+				_config = CSharpScriptStepStore.CreateDefaultConfig();
+			}
+
 			_config.StepName = GetScriptDisplayName(safeStep, _scriptPath);
 			_config.Enable = true;
 			_config.ScriptFilePath = _scriptPath;
@@ -103,17 +131,26 @@ namespace Aron_V3
 
 			if (!string.IsNullOrWhiteSpace(_scriptPath) && File.Exists(_scriptPath))
 			{
-				txtCode.Text = File.ReadAllText(_scriptPath, System.Text.Encoding.UTF8);
-				RefreshCodeLineNumbers();
-				LogInfo("Script step loaded: " + _config.StepName);
+				SetCodeTextSafely(File.ReadAllText(_scriptPath, System.Text.Encoding.UTF8));
+				RefreshCodeLineNumbersNow();
+				SetStatusReady();
+				LogInfo("Script step loaded: " + Path.GetFileNameWithoutExtension(_scriptPath));
 			}
 			else
 			{
-				txtCode.Text = string.Empty;
-				RefreshCodeLineNumbers();
-				LogError("Script file was not found. Please check Step config. Step: " + safeStep);
+				SetCodeTextSafely(string.Empty);
+				RefreshCodeLineNumbersNow();
+				LogError("Script file was not found. Selected: " + rawSelection);
 				SetStatusError("Script file not found");
 			}
+		}
+
+		/// <summary>
+		/// 给 AlgorithmModuleControl 使用：如果左侧 Script 列表拿到的是文件名或完整路径，直接调用这个方法。
+		/// </summary>
+		public void LoadScriptFile(string jobName, string taskName, string scriptFilePathOrName)
+		{
+			LoadScriptStep(jobName, taskName, scriptFilePathOrName);
 		}
 
 		private StepConfig FindScriptStepConfig(string jobName, string taskName, string stepName)
@@ -127,15 +164,19 @@ namespace Aron_V3
 				TaskConfig task = job.Tasks.FirstOrDefault(t => string.Equals(t.TaskName, taskName, StringComparison.OrdinalIgnoreCase));
 				if (task == null || task.Steps == null) return null;
 
+				string raw = string.IsNullOrWhiteSpace(stepName) ? string.Empty : stepName.Trim();
+				string normalized = NormalizeScriptSelectionName(raw);
+
 				StepConfig byName = task.Steps.FirstOrDefault(s =>
 					s.StepType == StepType.Script &&
-					string.Equals(s.StepName, stepName, StringComparison.OrdinalIgnoreCase));
+					(string.Equals(s.StepName, raw, StringComparison.OrdinalIgnoreCase) ||
+					 string.Equals(s.StepName, normalized, StringComparison.OrdinalIgnoreCase)));
 
 				if (byName != null) return byName;
 
 				return task.Steps.FirstOrDefault(s =>
 					s.StepType == StepType.Script &&
-					IsScriptStepFileNameMatch(s, stepName));
+					IsScriptStepFileNameMatch(s, raw));
 			}
 			catch
 			{
@@ -146,65 +187,130 @@ namespace Aron_V3
 		private bool IsScriptStepFileNameMatch(StepConfig step, string name)
 		{
 			if (step == null || string.IsNullOrWhiteSpace(name)) return false;
-			string n = Path.GetFileNameWithoutExtension(name);
 
-			if (!string.IsNullOrWhiteSpace(step.ProjectFilePath) &&
-				string.Equals(Path.GetFileNameWithoutExtension(step.ProjectFilePath), n, StringComparison.OrdinalIgnoreCase)) return true;
+			string n = NormalizeScriptSelectionName(name);
 
-			if (!string.IsNullOrWhiteSpace(step.SourceFilePath) &&
-				string.Equals(Path.GetFileNameWithoutExtension(step.SourceFilePath), n, StringComparison.OrdinalIgnoreCase)) return true;
+			if (!string.IsNullOrWhiteSpace(step.ProjectFilePath) && IsSameScriptName(step.ProjectFilePath, n)) return true;
+			if (!string.IsNullOrWhiteSpace(step.SourceFilePath) && IsSameScriptName(step.SourceFilePath, n)) return true;
 
 			if (step.ScriptFiles != null)
 			{
 				foreach (string f in step.ScriptFiles)
 				{
-					if (string.Equals(Path.GetFileNameWithoutExtension(f), n, StringComparison.OrdinalIgnoreCase)) return true;
+					if (IsSameScriptName(f, n)) return true;
 				}
 			}
 
 			return false;
 		}
 
+		private bool IsSameScriptName(string pathOrName, string normalizedName)
+		{
+			if (string.IsNullOrWhiteSpace(pathOrName) || string.IsNullOrWhiteSpace(normalizedName)) return false;
+			string name = NormalizeScriptSelectionName(pathOrName);
+			return string.Equals(name, normalizedName, StringComparison.OrdinalIgnoreCase);
+		}
+
 		private string ResolveScriptPath(string jobName, string taskName, string stepName, StepConfig step)
 		{
 			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName);
+			string scriptsFolder = Path.Combine(taskFolder, "Scripts");
 
+			// 1. 如果外部直接传入完整文件路径，优先使用。
+			if (!string.IsNullOrWhiteSpace(stepName) && Path.IsPathRooted(stepName) && IsScriptCodeFile(stepName) && File.Exists(stepName))
+			{
+				return stepName;
+			}
+
+			// 2. 优先用 StepConfig 里的 ProjectFilePath / ScriptFiles / SourceFilePath。
 			if (step != null)
 			{
 				string candidate = ResolveStepFilePath(taskFolder, step.ProjectFilePath);
-				if (File.Exists(candidate)) return candidate;
+				if (IsScriptCodeFile(candidate) && File.Exists(candidate)) return candidate;
 
 				if (step.ScriptFiles != null && step.ScriptFiles.Count > 0)
 				{
 					foreach (string relative in step.ScriptFiles)
 					{
 						candidate = ResolveStepFilePath(taskFolder, relative);
-						if (File.Exists(candidate)) return candidate;
+						if (IsScriptCodeFile(candidate) && File.Exists(candidate)) return candidate;
 					}
 				}
 
-				if (!string.IsNullOrWhiteSpace(step.SourceFilePath) && File.Exists(step.SourceFilePath))
+				if (!string.IsNullOrWhiteSpace(step.SourceFilePath) && IsScriptCodeFile(step.SourceFilePath) && File.Exists(step.SourceFilePath))
 				{
 					return step.SourceFilePath;
 				}
 			}
 
-			string byName = Path.Combine(taskFolder, "Scripts", MakeSafeFileName(stepName) + ".csx");
-			if (File.Exists(byName)) return byName;
+			// 3. 再按左侧列表传进来的文件名查找。
+			string file = FindScriptFileInTaskFolder(scriptsFolder, stepName);
+			if (!string.IsNullOrWhiteSpace(file)) return file;
 
-			string[] files = Directory.Exists(Path.Combine(taskFolder, "Scripts"))
-				? Directory.GetFiles(Path.Combine(taskFolder, "Scripts"), "*.cs*", SearchOption.TopDirectoryOnly)
-				: new string[0];
+			// 4. 最后按去扩展名后的 StepName 兜底。
+			string normalized = NormalizeScriptSelectionName(stepName);
+			file = FindScriptFileInTaskFolder(scriptsFolder, normalized);
+			if (!string.IsNullOrWhiteSpace(file)) return file;
 
-			foreach (string file in files)
+			return Path.Combine(scriptsFolder, MakeSafeFileName(normalized) + ".csx");
+		}
+
+		private string FindScriptFileInTaskFolder(string scriptsFolder, string scriptNameOrFileName)
+		{
+			if (string.IsNullOrWhiteSpace(scriptsFolder) || !Directory.Exists(scriptsFolder))
 			{
-				if (string.Equals(Path.GetFileNameWithoutExtension(file), stepName, StringComparison.OrdinalIgnoreCase))
-				{
-					return file;
-				}
+				return string.Empty;
 			}
 
-			return byName;
+			if (string.IsNullOrWhiteSpace(scriptNameOrFileName))
+			{
+				return string.Empty;
+			}
+
+			string fileName = Path.GetFileName(scriptNameOrFileName.Trim());
+			string normalized = NormalizeScriptSelectionName(fileName);
+
+			// 先精确匹配完整文件名，例如 Step_New_02.csx。
+			foreach (string file in Directory.GetFiles(scriptsFolder, "*.*", SearchOption.TopDirectoryOnly))
+			{
+				if (!IsScriptCodeFile(file)) continue;
+				if (string.Equals(Path.GetFileName(file), fileName, StringComparison.OrdinalIgnoreCase)) return file;
+			}
+
+			// 再匹配不带扩展名，例如 Step_New_02。
+			foreach (string file in Directory.GetFiles(scriptsFolder, "*.*", SearchOption.TopDirectoryOnly))
+			{
+				if (!IsScriptCodeFile(file)) continue;
+				if (string.Equals(Path.GetFileNameWithoutExtension(file), normalized, StringComparison.OrdinalIgnoreCase)) return file;
+			}
+
+			return string.Empty;
+		}
+
+		private bool IsScriptCodeFile(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path)) return false;
+			string ext = Path.GetExtension(path);
+			return ext.Equals(".csx", StringComparison.OrdinalIgnoreCase) ||
+				   ext.Equals(".cs", StringComparison.OrdinalIgnoreCase) ||
+				   ext.Equals(".txt", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private string NormalizeScriptSelectionName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name)) return "CS_Script";
+
+			string fileName = Path.GetFileName(name.Trim());
+			string ext = Path.GetExtension(fileName);
+
+			if (ext.Equals(".csx", StringComparison.OrdinalIgnoreCase) ||
+				ext.Equals(".cs", StringComparison.OrdinalIgnoreCase) ||
+				ext.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+			{
+				fileName = Path.GetFileNameWithoutExtension(fileName);
+			}
+
+			return MakeSafeFileName(fileName);
 		}
 
 		private string ResolveStepFilePath(string taskFolder, string relativeOrAbsolute)
@@ -294,6 +400,379 @@ namespace Aron_V3
 			NormalizeHeaderUi();
 		}
 
+		private void RebuildTopBarLayout()
+		{
+			if (topPanel == null)
+			{
+				return;
+			}
+
+			topPanel.SuspendLayout();
+
+			try
+			{
+				// 顶部只保留一行：当前脚本 + 脚本名 + 状态 + DLL目录 + 保存 + 编译 + 调试运行。
+				// 不再依赖 Designer 里的 topLayout 两行布局，避免按钮被 TableLayoutPanel 挤到不可见区域。
+				if (rootLayout != null && rootLayout.RowStyles.Count > 0)
+				{
+					rootLayout.RowStyles[0].SizeType = SizeType.Absolute;
+					rootLayout.RowStyles[0].Height = 68F;
+				}
+
+				topPanel.Margin = new Padding(0, 0, 0, 8);
+				topPanel.Padding = new Padding(8, 6, 8, 6);
+				topPanel.BackColor = _back;
+
+				// 先从旧 topLayout/statusPanel 中移除，改为直接放到 topPanel 上做绝对布局。
+				// WinForms 控件只能有一个 Parent，Controls.Add 会自动从旧 Parent 移出。
+				topPanel.Controls.Clear();
+
+				if (topLayout != null)
+				{
+					topLayout.Visible = false;
+				}
+
+				if (chkEnable != null) chkEnable.Visible = false;
+				if (lblScriptFile != null) lblScriptFile.Visible = false;
+				if (txtScriptPath != null) txtScriptPath.Visible = false;
+				if (btnBrowseScript != null) btnBrowseScript.Visible = false;
+
+				PrepareHeaderLabel(lblStepName, _isEnglish ? "Current Script" : "当前脚本", true);
+				PrepareHeaderScriptNameBox(txtStepName);
+				PrepareHeaderLabel(lblStatusTitle, _isEnglish ? "Status" : "状态", true);
+				PrepareHeaderStatusPanel();
+				PrepareHeaderButton(btnReferenceDll, _isEnglish ? "References" : "引用信息");
+				PrepareHeaderButton(btnSave, _isEnglish ? "Save" : "保存");
+				PrepareHeaderButton(btnCompile, _isEnglish ? "Compile" : "编译");
+				PrepareHeaderButton(btnRun, _isEnglish ? "Debug Run" : "调试运行");
+
+				topPanel.Controls.Add(lblStepName);
+				topPanel.Controls.Add(txtStepName);
+				topPanel.Controls.Add(lblStatusTitle);
+				topPanel.Controls.Add(statusPanel);
+				topPanel.Controls.Add(btnReferenceDll);
+				topPanel.Controls.Add(btnSave);
+				topPanel.Controls.Add(btnCompile);
+				topPanel.Controls.Add(btnRun);
+
+				btnReferenceDll.BringToFront();
+				btnSave.BringToFront();
+				btnCompile.BringToFront();
+				btnRun.BringToFront();
+
+				topPanel.Resize -= TopPanel_Resize;
+				topPanel.Resize += TopPanel_Resize;
+
+				LayoutTopBarControls();
+			}
+			finally
+			{
+				topPanel.ResumeLayout(true);
+			}
+		}
+
+		private void TopPanel_Resize(object sender, EventArgs e)
+		{
+			LayoutTopBarControls();
+		}
+
+		private void PrepareHeaderLabel(Label label, string text, bool bold)
+		{
+			if (label == null)
+			{
+				return;
+			}
+
+			label.Visible = true;
+			label.AutoSize = false;
+			label.Dock = DockStyle.None;
+			label.Margin = new Padding(0);
+			label.Padding = new Padding(0);
+			label.Text = text;
+			label.TextAlign = ContentAlignment.MiddleLeft;
+			label.BackColor = _back;
+			label.ForeColor = _text;
+			label.Font = new Font("Microsoft YaHei UI", 9F, bold ? FontStyle.Bold : FontStyle.Regular);
+		}
+
+		private void PrepareHeaderScriptNameBox(TextBox textBox)
+		{
+			if (textBox == null)
+			{
+				return;
+			}
+
+			textBox.Visible = true;
+			textBox.Dock = DockStyle.None;
+			textBox.Margin = new Padding(0);
+			textBox.BorderStyle = BorderStyle.None;
+			textBox.ReadOnly = true;
+			textBox.TabStop = false;
+			textBox.BackColor = _back;
+			textBox.ForeColor = Color.White;
+			textBox.Font = new Font("Consolas", 10F, FontStyle.Bold);
+			textBox.TextAlign = HorizontalAlignment.Left;
+		}
+
+		private void PrepareHeaderStatusPanel()
+		{
+			if (statusPanel == null)
+			{
+				return;
+			}
+
+			statusPanel.Visible = true;
+			statusPanel.Dock = DockStyle.None;
+			statusPanel.Margin = new Padding(0);
+			statusPanel.Padding = new Padding(0);
+			statusPanel.BackColor = _back;
+			statusPanel.Controls.Clear();
+
+			lblStatusText.Visible = true;
+			lblStatusText.Dock = DockStyle.Fill;
+			lblStatusText.Margin = new Padding(0);
+			lblStatusText.Padding = new Padding(28, 0, 0, 0);
+			lblStatusText.TextAlign = ContentAlignment.MiddleLeft;
+			lblStatusText.BackColor = _back;
+			lblStatusText.ForeColor = _muted;
+			lblStatusText.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			if (string.IsNullOrWhiteSpace(lblStatusText.Text))
+			{
+				lblStatusText.Text = "Ready";
+			}
+
+			lblStatusLight.Visible = true;
+			lblStatusLight.AutoSize = false;
+			lblStatusLight.BackColor = lblStatusLight.BackColor == Color.Empty ? Color.FromArgb(120, 120, 120) : lblStatusLight.BackColor;
+			lblStatusLight.Width = 14;
+			lblStatusLight.Height = 14;
+
+			statusPanel.Controls.Add(lblStatusText);
+			statusPanel.Controls.Add(lblStatusLight);
+			lblStatusLight.BringToFront();
+		}
+
+		private void PrepareHeaderButton(Button button, string text)
+		{
+			if (button == null)
+			{
+				return;
+			}
+
+			button.Visible = true;
+			button.Enabled = true;
+			button.Dock = DockStyle.None;
+			button.Margin = new Padding(0);
+			button.Text = text;
+			button.FlatStyle = FlatStyle.Flat;
+			button.FlatAppearance.BorderColor = _accent;
+			button.FlatAppearance.BorderSize = 1;
+			button.FlatAppearance.MouseDownBackColor = Color.FromArgb(20, 70, 135);
+			button.FlatAppearance.MouseOverBackColor = Color.FromArgb(15, 45, 78);
+			button.BackColor = button == btnRun ? Color.FromArgb(20, 125, 40) : Color.FromArgb(0, 95, 190);
+			button.ForeColor = Color.White;
+			button.Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold);
+			button.UseVisualStyleBackColor = false;
+		}
+
+		private void LayoutTopBarControls()
+		{
+			if (topPanel == null || topPanel.IsDisposed)
+			{
+				return;
+			}
+
+			int clientW = topPanel.ClientSize.Width;
+			int clientH = topPanel.ClientSize.Height;
+
+			if (clientW <= 0 || clientH <= 0)
+			{
+				return;
+			}
+
+			int pad = 10;
+			int gap = 8;
+			int h = Math.Max(28, clientH - pad * 2);
+			if (h > 38) h = 38;
+			int y = Math.Max(4, (clientH - h) / 2);
+
+			int dllW = 110;
+			int saveW = 90;
+			int compileW = 90;
+			int runW = 120;
+			int statusTitleW = _isEnglish ? 58 : 44;
+			int statusW = 145;
+			int scriptTitleW = _isEnglish ? 108 : 76;
+
+			// 从右往左摆按钮，保证按钮永远优先显示。
+			int right = clientW - pad;
+
+			SetControlBounds(btnRun, right - runW, y, runW, h);
+			right -= runW + gap;
+
+			SetControlBounds(btnCompile, right - compileW, y, compileW, h);
+			right -= compileW + gap;
+
+			SetControlBounds(btnSave, right - saveW, y, saveW, h);
+			right -= saveW + gap;
+
+			SetControlBounds(btnReferenceDll, right - dllW, y, dllW, h);
+			right -= dllW + gap;
+
+			SetControlBounds(statusPanel, right - statusW, y, statusW, h);
+			right -= statusW + gap;
+
+			SetControlBounds(lblStatusTitle, right - statusTitleW, y, statusTitleW, h);
+			right -= statusTitleW + gap;
+
+			int left = pad;
+			SetControlBounds(lblStepName, left, y, scriptTitleW, h);
+			left += scriptTitleW + gap;
+
+			int nameW = right - left;
+			if (nameW < 40)
+			{
+				nameW = 40;
+			}
+
+			SetControlBounds(txtStepName, left, y + 8, nameW, Math.Max(20, h - 12));
+
+			if (lblStatusLight != null && statusPanel != null)
+			{
+				lblStatusLight.SetBounds(6, Math.Max(2, (statusPanel.Height - 14) / 2), 14, 14);
+			}
+		}
+
+		private void SetControlBounds(Control control, int x, int y, int width, int height)
+		{
+			if (control == null)
+			{
+				return;
+			}
+
+			control.Visible = true;
+			control.Dock = DockStyle.None;
+			control.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+			control.SetBounds(x, y, Math.Max(1, width), Math.Max(1, height));
+		}
+
+
+		private void EnableSmoothUi()
+		{
+			try
+			{
+				SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+				UpdateStyles();
+			}
+			catch
+			{
+			}
+
+			EnableDoubleBuffer(rootLayout);
+			EnableDoubleBuffer(topPanel);
+			EnableDoubleBuffer(topLayout);
+			EnableDoubleBuffer(mainSplit);
+			EnableDoubleBuffer(leftSplit);
+			EnableDoubleBuffer(inputPanel);
+			EnableDoubleBuffer(outputPanel);
+			EnableDoubleBuffer(codePanel);
+			EnableDoubleBuffer(codeEditorHost);
+			EnableDoubleBuffer(logPanel);
+			EnableDoubleBuffer(panelLineNumbers);
+
+			EnableDataGridViewDoubleBuffer(gridInputs);
+			EnableDataGridViewDoubleBuffer(gridOutputs);
+			EnableDataGridViewDoubleBuffer(gridLogs);
+
+			if (gridInputs != null) gridInputs.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+			if (gridOutputs != null) gridOutputs.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+			if (gridLogs != null) gridLogs.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+		}
+
+		private void EnableDoubleBuffer(Control control)
+		{
+			if (control == null)
+			{
+				return;
+			}
+
+			try
+			{
+				PropertyInfo property = typeof(Control).GetProperty(
+					"DoubleBuffered",
+					BindingFlags.Instance | BindingFlags.NonPublic);
+
+				if (property != null)
+				{
+					property.SetValue(control, true, null);
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private void EnableDataGridViewDoubleBuffer(DataGridView grid)
+		{
+			if (grid == null)
+			{
+				return;
+			}
+
+			try
+			{
+				PropertyInfo property = typeof(DataGridView).GetProperty(
+					"DoubleBuffered",
+					BindingFlags.Instance | BindingFlags.NonPublic);
+
+				if (property != null)
+				{
+					property.SetValue(grid, true, null);
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private const int WM_SETREDRAW = 0x000B;
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+		private void SuspendControlRedraw(Control control)
+		{
+			if (control == null || !control.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+			}
+			catch
+			{
+			}
+		}
+
+		private void ResumeControlRedraw(Control control)
+		{
+			if (control == null || !control.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+				control.Invalidate(true);
+			}
+			catch
+			{
+			}
+		}
+
 		private void ApplyPanelTheme(Control parent)
 		{
 			if (parent == null)
@@ -370,49 +849,19 @@ namespace Aron_V3
 
 		private void NormalizeHeaderUi()
 		{
-			try
+			// 顶部布局统一由 RebuildTopBarLayout + LayoutTopBarControls 控制。
+			// 这里不再操作 topLayout 的行列，避免 Designer 原来的两行布局再次把按钮挤掉。
+			if (chkEnable != null)
 			{
-				if (chkEnable != null)
-				{
-					chkEnable.Checked = true;
-					chkEnable.Visible = false;
-				}
-
-				if (lblScriptFile != null) lblScriptFile.Visible = false;
-				if (txtScriptPath != null) txtScriptPath.Visible = false;
-				if (btnBrowseScript != null) btnBrowseScript.Visible = false;
-
-				if (topLayout != null)
-				{
-					if (topLayout.RowStyles.Count > 1)
-					{
-						topLayout.RowStyles[0].SizeType = SizeType.Percent;
-						topLayout.RowStyles[0].Height = 100F;
-						topLayout.RowStyles[1].SizeType = SizeType.Absolute;
-						topLayout.RowStyles[1].Height = 0F;
-					}
-
-					if (rootLayout != null && rootLayout.RowStyles.Count > 0)
-					{
-						rootLayout.RowStyles[0].SizeType = SizeType.Absolute;
-						rootLayout.RowStyles[0].Height = 72F;
-					}
-
-					topLayout.SetColumnSpan(txtStepName, 4);
-					topLayout.SetColumn(btnReferenceDll, 6);
-					topLayout.SetRow(btnReferenceDll, 0);
-					topLayout.SetColumn(btnSave, 7);
-					topLayout.SetRow(btnSave, 0);
-					topLayout.SetColumn(btnCompile, 8);
-					topLayout.SetRow(btnCompile, 0);
-					topLayout.SetColumn(btnRun, 9);
-					topLayout.SetRow(btnRun, 0);
-				}
+				chkEnable.Checked = true;
+				chkEnable.Visible = false;
 			}
-			catch
-			{
-			}
+
+			if (lblScriptFile != null) lblScriptFile.Visible = false;
+			if (txtScriptPath != null) txtScriptPath.Visible = false;
+			if (btnBrowseScript != null) btnBrowseScript.Visible = false;
 		}
+
 
 		private void StyleCodeBox(RichTextBox txt)
 		{
@@ -510,7 +959,7 @@ namespace Aron_V3
 			grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
 			grid.MultiSelect = false;
 			grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-			grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+			grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
 			grid.ScrollBars = ScrollBars.Both;
 
 			grid.ColumnHeadersDefaultCellStyle.BackColor = _panel2;
@@ -522,7 +971,7 @@ namespace Aron_V3
 			grid.DefaultCellStyle.ForeColor = _text;
 			grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 125, 200);
 			grid.DefaultCellStyle.SelectionForeColor = Color.White;
-			grid.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+			grid.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
 			grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
 
 			grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(4, 16, 30);
@@ -556,6 +1005,103 @@ namespace Aron_V3
 			col.Items.Add(ScriptPinDataType.Decimal);
 			col.Items.Add(ScriptPinDataType.Object);
 			return col;
+		}
+
+
+		private void RebuildPinSectionLayouts()
+		{
+			RebuildSinglePinSection(
+				inputPanel,
+				lblInputTitle,
+				btnInputAdd,
+				btnInputDelete,
+				gridInputs,
+				true);
+
+			RebuildSinglePinSection(
+				outputPanel,
+				lblOutputTitle,
+				btnOutputAdd,
+				btnOutputDelete,
+				gridOutputs,
+				false);
+		}
+
+		private void RebuildSinglePinSection(
+			Panel panel,
+			Label title,
+			Button addButton,
+			Button deleteButton,
+			DataGridView grid,
+			bool isInput)
+		{
+			if (panel == null || title == null || addButton == null || deleteButton == null || grid == null)
+			{
+				return;
+			}
+
+			panel.SuspendLayout();
+
+			try
+			{
+				panel.Controls.Clear();
+				panel.Padding = new Padding(8);
+				panel.BackColor = _back;
+
+				Panel header = new Panel();
+				header.Name = isInput ? "inputHeaderPanel" : "outputHeaderPanel";
+				header.Dock = DockStyle.Top;
+				header.Height = 40;
+				header.Padding = new Padding(0, 0, 0, 4);
+				header.BackColor = _back;
+
+				deleteButton.Visible = true;
+				deleteButton.Enabled = true;
+				deleteButton.Text = "-";
+				deleteButton.Width = 42;
+				deleteButton.Dock = DockStyle.Right;
+				deleteButton.Margin = new Padding(4, 2, 0, 2);
+				deleteButton.BringToFront();
+
+				addButton.Visible = true;
+				addButton.Enabled = true;
+				addButton.Text = "+";
+				addButton.Width = 42;
+				addButton.Dock = DockStyle.Right;
+				addButton.Margin = new Padding(4, 2, 4, 2);
+				addButton.BringToFront();
+
+				title.Dock = DockStyle.Fill;
+				title.Margin = new Padding(0);
+				title.TextAlign = ContentAlignment.MiddleLeft;
+				title.BackColor = Color.Transparent;
+				title.ForeColor = _text;
+
+				header.Controls.Add(title);
+				header.Controls.Add(deleteButton);
+				header.Controls.Add(addButton);
+
+				grid.Dock = DockStyle.Fill;
+				grid.Margin = new Padding(0);
+
+				panel.Controls.Add(grid);
+				panel.Controls.Add(header);
+				header.BringToFront();
+				addButton.BringToFront();
+				deleteButton.BringToFront();
+			}
+			finally
+			{
+				panel.ResumeLayout(true);
+			}
+		}
+
+		private void UpdatePinToolbarText()
+		{
+			if (btnInputAdd != null) btnInputAdd.Text = "+";
+			if (btnInputDelete != null) btnInputDelete.Text = "-";
+			if (btnOutputAdd != null) btnOutputAdd.Text = "+";
+			if (btnOutputDelete != null) btnOutputDelete.Text = "-";
 		}
 
 		private void BindEvents()
@@ -698,7 +1244,7 @@ namespace Aron_V3
 
 			try
 			{
-				txtStepName.Text = _config == null ? "---" : _config.StepName;
+				txtStepName.Text = GetCurrentScriptDisplayName();
 				chkEnable.Checked = true;
 				txtScriptPath.Text = _config == null ? string.Empty : _config.ScriptFilePath;
 
@@ -721,6 +1267,26 @@ namespace Aron_V3
 			{
 				_loading = false;
 			}
+		}
+
+		private string GetCurrentScriptDisplayName()
+		{
+			if (!string.IsNullOrWhiteSpace(_scriptPath))
+			{
+				return Path.GetFileNameWithoutExtension(_scriptPath);
+			}
+
+			if (_config != null && !string.IsNullOrWhiteSpace(_config.ScriptFileName))
+			{
+				return Path.GetFileNameWithoutExtension(_config.ScriptFileName);
+			}
+
+			if (_config != null && !string.IsNullOrWhiteSpace(_config.StepName))
+			{
+				return _config.StepName;
+			}
+
+			return "None";
 		}
 
 		private void SaveUiToConfig()
@@ -836,13 +1402,344 @@ namespace Aron_V3
 
 				txtScriptPath.Text = dialog.FileName;
 				_scriptPath = dialog.FileName;
-				txtCode.Text = File.ReadAllText(dialog.FileName, System.Text.Encoding.UTF8);
-				RefreshCodeLineNumbers();
+				SetCodeTextSafely(File.ReadAllText(dialog.FileName, System.Text.Encoding.UTF8));
+				RefreshCodeLineNumbersNow();
 				LogInfo("Script file loaded: " + dialog.FileName);
 			}
 		}
 
 		private void btnReferenceDll_Click(object sender, EventArgs e)
+		{
+			try
+			{
+				CSharpScriptReferenceManager.EnsureReferenceFolder();
+
+				List<ScriptReferenceViewItem> references = BuildCurrentReferenceViewItems();
+				List<string> autoUsings = BuildCurrentAutoUsingNamespaces();
+
+				using (ScriptReferenceInfoForm form = new ScriptReferenceInfoForm(
+					references,
+					autoUsings,
+					CSharpScriptReferenceManager.ReferenceFolder,
+					CSharpScriptReferenceManager.UsingConfigFile))
+				{
+					DialogResult result = form.ShowDialog(this);
+
+					if (result == DialogResult.Retry)
+					{
+						ImportGlobalDlls();
+					}
+					else if (result == DialogResult.Yes)
+					{
+						OpenGlobalReferenceFolder();
+					}
+				}
+
+				LogCurrentReferenceInfo();
+				SetStatusReady();
+			}
+			catch (Exception ex)
+			{
+				LogError("Show reference info failed: " + ex.Message);
+				SetStatusError("Reference info failed");
+			}
+		}
+
+		private List<ScriptReferenceViewItem> BuildCurrentReferenceViewItems()
+		{
+			List<ScriptReferenceViewItem> result = new List<ScriptReferenceViewItem>();
+
+			// 这些项目要和 CSharpScriptStepRunner.AddDefaultReferences() 保持一致。
+			AddReferenceViewItem(result, "Default", "mscorlib", typeof(object).Assembly.Location);
+			AddReferenceViewItem(result, "Default", "System.dll", ResolveLoadedOrFrameworkAssembly("System.dll"));
+			AddReferenceViewItem(result, "Default", "System.Core.dll", ResolveLoadedOrFrameworkAssembly("System.Core.dll"));
+			AddReferenceViewItem(result, "Default", "System.Data.dll", ResolveLoadedOrFrameworkAssembly("System.Data.dll"));
+			AddReferenceViewItem(result, "Default", "System.Drawing.dll", ResolveLoadedOrFrameworkAssembly("System.Drawing.dll"));
+			AddReferenceViewItem(result, "Default", "System.Windows.Forms.dll", ResolveLoadedOrFrameworkAssembly("System.Windows.Forms.dll"));
+			AddReferenceViewItem(result, "Default", "System.Xml.dll", ResolveLoadedOrFrameworkAssembly("System.Xml.dll"));
+			AddReferenceViewItem(result, "Default", "System.Xml.Linq.dll", ResolveLoadedOrFrameworkAssembly("System.Xml.Linq.dll"));
+			AddReferenceViewItem(result, "Default", "Microsoft.CSharp.dll", ResolveLoadedOrFrameworkAssembly("Microsoft.CSharp.dll"));
+
+			AddReferenceViewItem(result, "Current Program", "IScriptMain / Aron_V3", typeof(IScriptMain).Assembly.Location);
+			AddReferenceViewItem(result, "Current Program", "IScriptContext / Aron_V3", typeof(IScriptContext).Assembly.Location);
+			AddReferenceViewItem(result, "Current Program", "CSharpScriptStepRunner", typeof(CSharpScriptStepRunner).Assembly.Location);
+
+			try
+			{
+				Assembly entry = Assembly.GetEntryAssembly();
+				if (entry != null && !string.IsNullOrWhiteSpace(entry.Location))
+				{
+					AddReferenceViewItem(result, "Entry Assembly", entry.GetName().Name, entry.Location);
+				}
+			}
+			catch
+			{
+			}
+
+			AddLoadedAssembliesByPrefixToView(result, "Loaded Aron_V3", "Aron_V3");
+			AddLoadedAssembliesByPrefixToView(result, "Loaded Cognex", "Cognex.");
+			AddLoadedAssembliesByPrefixToView(result, "Loaded MVTec", "MVTec.");
+			AddLoadedAssembliesByPrefixToView(result, "Loaded Halcon", "Halcon");
+
+			List<string> globalDlls = CSharpScriptReferenceManager.GetReferenceDllPaths();
+			foreach (string dll in globalDlls)
+			{
+				AddReferenceViewItem(result, "Global ScriptReferences", Path.GetFileNameWithoutExtension(dll), dll);
+			}
+
+			if (_config != null && _config.References != null)
+			{
+				foreach (ScriptReferenceConfig r in _config.References)
+				{
+					if (r == null)
+					{
+						continue;
+					}
+
+					string name = string.IsNullOrWhiteSpace(r.ReferenceName)
+						? Path.GetFileNameWithoutExtension(r.DllPath)
+						: r.ReferenceName;
+
+					AddReferenceViewItem(
+						result,
+						r.Enable ? "Script Private" : "Script Private Disabled",
+						name,
+						r.DllPath);
+				}
+			}
+
+			return result;
+		}
+
+		private List<string> BuildCurrentAutoUsingNamespaces()
+		{
+			List<string> result = new List<string>();
+
+			AddUsingNamespace(result, "System");
+			AddUsingNamespace(result, "System.IO");
+			AddUsingNamespace(result, "System.Text");
+			AddUsingNamespace(result, "System.Linq");
+			AddUsingNamespace(result, "System.Data");
+			AddUsingNamespace(result, "System.Drawing");
+			AddUsingNamespace(result, "System.Collections");
+			AddUsingNamespace(result, "System.Collections.Generic");
+			AddUsingNamespace(result, "System.Text.RegularExpressions");
+			AddUsingNamespace(result, "System.Windows.Forms");
+			AddUsingNamespace(result, "Aron_V3");
+
+			foreach (string ns in CSharpScriptReferenceManager.GetAutoUsingNamespaces())
+			{
+				AddUsingNamespace(result, ns);
+			}
+
+			if (IsAssemblyLoadedForReferenceView("Cognex.VisionPro"))
+			{
+				AddUsingNamespace(result, "Cognex.VisionPro");
+				AddUsingNamespace(result, "Cognex.VisionPro.ToolBlock");
+				AddUsingNamespace(result, "Cognex.VisionPro.PMAlign");
+				AddUsingNamespace(result, "Cognex.VisionPro.ImageProcessing");
+			}
+
+			return result;
+		}
+
+		private void AddUsingNamespace(List<string> list, string ns)
+		{
+			if (list == null || string.IsNullOrWhiteSpace(ns))
+			{
+				return;
+			}
+
+			string text = ns.Trim();
+			if (text.StartsWith("using ", StringComparison.OrdinalIgnoreCase))
+			{
+				text = text.Substring(6).Trim();
+			}
+
+			if (text.EndsWith(";"))
+			{
+				text = text.Substring(0, text.Length - 1).Trim();
+			}
+
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return;
+			}
+
+			foreach (string item in list)
+			{
+				if (string.Equals(item, text, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+			}
+
+			list.Add(text);
+		}
+
+		private void AddReferenceViewItem(List<ScriptReferenceViewItem> list, string source, string name, string path)
+		{
+			if (list == null)
+			{
+				return;
+			}
+
+			string finalSource = source ?? string.Empty;
+			string finalName = name ?? string.Empty;
+			string finalPath = path ?? string.Empty;
+
+			foreach (ScriptReferenceViewItem item in list)
+			{
+				if (string.Equals(item.Path, finalPath, StringComparison.OrdinalIgnoreCase) &&
+					string.Equals(item.Name, finalName, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+			}
+
+			ScriptReferenceViewItem row = new ScriptReferenceViewItem();
+			row.Source = finalSource;
+			row.Name = finalName;
+			row.Path = finalPath;
+			row.Exists = !string.IsNullOrWhiteSpace(finalPath) && File.Exists(finalPath);
+			list.Add(row);
+		}
+
+		private void AddLoadedAssembliesByPrefixToView(List<ScriptReferenceViewItem> list, string source, string prefix)
+		{
+			if (string.IsNullOrWhiteSpace(prefix))
+			{
+				return;
+			}
+
+			Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+			foreach (Assembly asm in assemblies)
+			{
+				try
+				{
+					if (asm == null || asm.IsDynamic)
+					{
+						continue;
+					}
+
+					string asmName = asm.GetName().Name;
+					if (string.IsNullOrWhiteSpace(asmName))
+					{
+						continue;
+					}
+
+					if (!asmName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+
+					string location = asm.Location;
+					if (string.IsNullOrWhiteSpace(location))
+					{
+						continue;
+					}
+
+					AddReferenceViewItem(list, source, asmName, location);
+				}
+				catch
+				{
+				}
+			}
+		}
+
+		private string ResolveLoadedOrFrameworkAssembly(string dllName)
+		{
+			if (string.IsNullOrWhiteSpace(dllName))
+			{
+				return string.Empty;
+			}
+
+			Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+			foreach (Assembly asm in assemblies)
+			{
+				try
+				{
+					if (asm == null || asm.IsDynamic)
+					{
+						continue;
+					}
+
+					string location = asm.Location;
+					if (string.IsNullOrWhiteSpace(location))
+					{
+						continue;
+					}
+
+					if (string.Equals(Path.GetFileName(location), dllName, StringComparison.OrdinalIgnoreCase))
+					{
+						return location;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			try
+			{
+				string mscorlibDir = Path.GetDirectoryName(typeof(object).Assembly.Location);
+				if (!string.IsNullOrWhiteSpace(mscorlibDir))
+				{
+					string path = Path.Combine(mscorlibDir, dllName);
+					if (File.Exists(path))
+					{
+						return path;
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return dllName;
+		}
+
+		private bool IsAssemblyLoadedForReferenceView(string assemblyName)
+		{
+			if (string.IsNullOrWhiteSpace(assemblyName))
+			{
+				return false;
+			}
+
+			Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+			foreach (Assembly asm in assemblies)
+			{
+				try
+				{
+					if (asm != null &&
+						string.Equals(asm.GetName().Name, assemblyName, StringComparison.OrdinalIgnoreCase))
+					{
+						return true;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			return false;
+		}
+
+		private void OpenGlobalReferenceFolder()
+		{
+			try
+			{
+				CSharpScriptReferenceManager.EnsureReferenceFolder();
+				Process.Start("explorer.exe", CSharpScriptReferenceManager.ReferenceFolder);
+				LogInfo("Global reference folder opened: " + CSharpScriptReferenceManager.ReferenceFolder);
+			}
+			catch (Exception ex)
+			{
+				LogError("Open reference folder failed: " + ex.Message);
+			}
+		}
+
+		private void ImportGlobalDlls()
 		{
 			try
 			{
@@ -854,31 +1751,75 @@ namespace Aron_V3
 					dialog.Filter = "DLL files (*.dll)|*.dll|All files (*.*)|*.*";
 					dialog.Multiselect = true;
 
-					if (dialog.ShowDialog(this) == DialogResult.OK)
+					if (dialog.ShowDialog(this) != DialogResult.OK)
 					{
-						foreach (string file in dialog.FileNames)
+						return;
+					}
+
+					foreach (string file in dialog.FileNames)
+					{
+						if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
 						{
-							string target = Path.Combine(CSharpScriptReferenceManager.ReferenceFolder, Path.GetFileName(file));
-							File.Copy(file, target, true);
-							LogInfo("Global reference DLL imported: " + target);
+							continue;
 						}
-						CSharpScriptReferenceManager.PreloadAllReferenceDlls();
-						LogInfo("Global reference folder: " + CSharpScriptReferenceManager.ReferenceFolder);
+
+						string target = Path.Combine(
+							CSharpScriptReferenceManager.ReferenceFolder,
+							Path.GetFileName(file));
+
+						File.Copy(file, target, true);
+						LogInfo("Imported global DLL: " + target);
 					}
 				}
 
-				try
-				{
-					Process.Start("explorer.exe", CSharpScriptReferenceManager.ReferenceFolder);
-				}
-				catch
-				{
-				}
+				CSharpScriptReferenceManager.PreloadAllReferenceDlls();
+				LogCurrentReferenceInfo();
+				SetStatusOK("DLL imported");
 			}
 			catch (Exception ex)
 			{
 				LogError("Import DLL failed: " + ex.Message);
 				SetStatusError("Import DLL failed");
+			}
+		}
+
+		private void LogCurrentReferenceInfo()
+		{
+			try
+			{
+				List<ScriptReferenceViewItem> references = BuildCurrentReferenceViewItems();
+				List<string> autoUsings = BuildCurrentAutoUsingNamespaces();
+
+				LogInfo("========== Script Reference Info ==========");
+				LogInfo("Current Script: " + (_config == null ? string.Empty : _config.StepName));
+				LogInfo("Reference Folder: " + CSharpScriptReferenceManager.ReferenceFolder);
+				LogInfo("Using Config File: " + CSharpScriptReferenceManager.UsingConfigFile);
+
+				foreach (ScriptReferenceViewItem item in references)
+				{
+					if (item == null)
+					{
+						continue;
+					}
+
+					LogInfo(
+						"[" + item.Source + "] " +
+						item.Name +
+						" | Exists=" + item.Exists.ToString() +
+						" | " + item.Path);
+				}
+
+				LogInfo("---------- Auto Using ----------");
+				foreach (string ns in autoUsings)
+				{
+					LogInfo("using " + ns + ";");
+				}
+
+				LogInfo("===========================================");
+			}
+			catch (Exception ex)
+			{
+				LogError("Show reference info failed: " + ex.Message);
 			}
 		}
 
@@ -1590,32 +2531,144 @@ namespace Aron_V3
 
 		private void txtCode_TextChanged(object sender, EventArgs e)
 		{
-			RefreshCodeLineNumbers();
+			// 关键优化：输入普通字符时行号数量没有变化，不需要重绘行号栏。
+			// 原来的写法是每次 TextChanged 都 Invalidate，写代码时会导致左侧行号跳动和闪烁。
+			if (_loadingCodeText)
+			{
+				return;
+			}
+
+			int lineCount = GetCodeLineCountFast();
+			if (lineCount != _lastKnownCodeLineCount)
+			{
+				_lastKnownCodeLineCount = lineCount;
+				RequestLineNumberRefresh(false);
+			}
 		}
 
 		private void txtCode_VScroll(object sender, EventArgs e)
 		{
-			RefreshCodeLineNumbers();
+			// 滚动时必须刷新，但仍通过短延时合并多次滚动消息。
+			RequestLineNumberRefresh(false);
 		}
 
 		private void txtCode_Resize(object sender, EventArgs e)
 		{
-			RefreshCodeLineNumbers();
+			RequestLineNumberRefresh(true);
 		}
 
 		private void txtCode_FontChanged(object sender, EventArgs e)
 		{
-			RefreshCodeLineNumbers();
+			RequestLineNumberRefresh(true);
 		}
 
 		private void RefreshCodeLineNumbers()
+		{
+			RequestLineNumberRefresh(false);
+		}
+
+		private void RefreshCodeLineNumbersNow()
 		{
 			if (panelLineNumbers == null || panelLineNumbers.IsDisposed)
 			{
 				return;
 			}
 
+			_lastKnownCodeLineCount = GetCodeLineCountFast();
+
+			if (_lineNumberRefreshTimer != null)
+			{
+				_lineNumberRefreshTimer.Stop();
+			}
+
 			panelLineNumbers.Invalidate();
+		}
+
+		private void RequestLineNumberRefresh(bool immediate)
+		{
+			if (panelLineNumbers == null || panelLineNumbers.IsDisposed)
+			{
+				return;
+			}
+
+			if (immediate || !panelLineNumbers.IsHandleCreated)
+			{
+				RefreshCodeLineNumbersNow();
+				return;
+			}
+
+			_forceLineNumberRefresh = true;
+
+			if (_lineNumberRefreshTimer == null)
+			{
+				_lineNumberRefreshTimer = new Timer();
+				_lineNumberRefreshTimer.Interval = 80;
+				_lineNumberRefreshTimer.Tick += delegate
+				{
+					_lineNumberRefreshTimer.Stop();
+
+					if (!_forceLineNumberRefresh)
+					{
+						return;
+					}
+
+					_forceLineNumberRefresh = false;
+
+					if (panelLineNumbers != null && !panelLineNumbers.IsDisposed)
+					{
+						panelLineNumbers.Invalidate();
+					}
+				};
+			}
+
+			_lineNumberRefreshTimer.Stop();
+			_lineNumberRefreshTimer.Start();
+		}
+
+		private int GetCodeLineCountFast()
+		{
+			if (txtCode == null)
+			{
+				return 1;
+			}
+
+			try
+			{
+				int length = txtCode.TextLength;
+				if (length <= 0)
+				{
+					return 1;
+				}
+
+				return txtCode.GetLineFromCharIndex(length - 1) + 1;
+			}
+			catch
+			{
+				return 1;
+			}
+		}
+
+		private void SetCodeTextSafely(string code)
+		{
+			if (txtCode == null)
+			{
+				return;
+			}
+
+			_loadingCodeText = true;
+			SuspendControlRedraw(txtCode);
+
+			try
+			{
+				txtCode.Text = code ?? string.Empty;
+				txtCode.SelectionStart = 0;
+				_lastKnownCodeLineCount = GetCodeLineCountFast();
+			}
+			finally
+			{
+				ResumeControlRedraw(txtCode);
+				_loadingCodeText = false;
+			}
 		}
 
 		private void panelLineNumbers_Paint(object sender, PaintEventArgs e)
@@ -1637,6 +2690,11 @@ namespace Aron_V3
 					panelLineNumbers.Width - 1,
 					panelLineNumbers.Height);
 
+				if (txtCode.ClientSize.Height <= 0)
+				{
+					return;
+				}
+
 				int firstCharIndex = txtCode.GetCharIndexFromPosition(new Point(0, 0));
 				int firstLine = txtCode.GetLineFromCharIndex(firstCharIndex);
 
@@ -1648,7 +2706,7 @@ namespace Aron_V3
 					lastLine = firstLine;
 				}
 
-				int totalLines = txtCode.Lines == null ? 1 : Math.Max(1, txtCode.Lines.Length);
+				int totalLines = GetCodeLineCountFast();
 				lastLine = Math.Min(lastLine + 1, totalLines - 1);
 
 				for (int line = firstLine; line <= lastLine; line++)
@@ -1672,6 +2730,18 @@ namespace Aron_V3
 			}
 		}
 
+		protected override void OnHandleDestroyed(EventArgs e)
+		{
+			if (_lineNumberRefreshTimer != null)
+			{
+				_lineNumberRefreshTimer.Stop();
+				_lineNumberRefreshTimer.Dispose();
+				_lineNumberRefreshTimer = null;
+			}
+
+			base.OnHandleDestroyed(e);
+		}
+
 		private class CompilerResultProxy
 		{
 			public bool HasError { get; set; }
@@ -1684,4 +2754,241 @@ namespace Aron_V3
 			}
 		}
 	}
+
+	public class ScriptReferenceViewItem
+	{
+		public string Source { get; set; }
+		public string Name { get; set; }
+		public string Path { get; set; }
+		public bool Exists { get; set; }
+
+		public ScriptReferenceViewItem()
+		{
+			Source = string.Empty;
+			Name = string.Empty;
+			Path = string.Empty;
+			Exists = false;
+		}
+	}
+
+	public class ScriptReferenceInfoForm : Form
+	{
+		private DataGridView grid;
+		private TextBox txtUsings;
+		private TextBox txtFolder;
+		private Button btnOpenFolder;
+		private Button btnImportDll;
+		private Button btnClose;
+		private string _folder;
+		private string _usingFile;
+
+		public ScriptReferenceInfoForm(
+			List<ScriptReferenceViewItem> references,
+			List<string> usings,
+			string folder,
+			string usingFile)
+		{
+			_folder = folder ?? string.Empty;
+			_usingFile = usingFile ?? string.Empty;
+
+			InitializeUi();
+			LoadReferences(references);
+			LoadUsings(usings);
+		}
+
+		private void InitializeUi()
+		{
+			Text = "Script Reference Info";
+			StartPosition = FormStartPosition.CenterParent;
+			Size = new Size(1080, 680);
+			MinimumSize = new Size(920, 560);
+			BackColor = Color.FromArgb(2, 10, 20);
+			ForeColor = Color.White;
+
+			TableLayoutPanel root = new TableLayoutPanel();
+			root.Dock = DockStyle.Fill;
+			root.ColumnCount = 1;
+			root.RowCount = 5;
+			root.Padding = new Padding(10);
+			root.BackColor = BackColor;
+			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+			root.RowStyles.Add(new RowStyle(SizeType.Percent, 70F));
+			root.RowStyles.Add(new RowStyle(SizeType.Percent, 30F));
+			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
+
+			Label lblTitle = new Label();
+			lblTitle.Dock = DockStyle.Fill;
+			lblTitle.TextAlign = ContentAlignment.MiddleLeft;
+			lblTitle.ForeColor = Color.White;
+			lblTitle.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+			lblTitle.Text = "当前脚本编译引用 DLL / Current script compile references";
+
+			txtFolder = new TextBox();
+			txtFolder.Dock = DockStyle.Fill;
+			txtFolder.ReadOnly = true;
+			txtFolder.BorderStyle = BorderStyle.FixedSingle;
+			txtFolder.BackColor = Color.FromArgb(1, 8, 16);
+			txtFolder.ForeColor = Color.FromArgb(210, 230, 245);
+			txtFolder.Font = new Font("Consolas", 9F);
+			txtFolder.Text = "DLL Folder: " + _folder;
+
+			grid = new DataGridView();
+			grid.Dock = DockStyle.Fill;
+			grid.AllowUserToAddRows = false;
+			grid.AllowUserToDeleteRows = false;
+			grid.ReadOnly = true;
+			grid.RowHeadersVisible = false;
+			grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+			grid.MultiSelect = false;
+			grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+			grid.BackgroundColor = Color.FromArgb(1, 8, 16);
+			grid.GridColor = Color.FromArgb(45, 70, 95);
+			grid.BorderStyle = BorderStyle.FixedSingle;
+			grid.EnableHeadersVisualStyles = false;
+
+			grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
+			grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+			grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+
+			grid.DefaultCellStyle.BackColor = Color.FromArgb(1, 8, 16);
+			grid.DefaultCellStyle.ForeColor = Color.White;
+			grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
+			grid.DefaultCellStyle.SelectionForeColor = Color.White;
+			grid.RowTemplate.Height = 24;
+
+			grid.Columns.Add("Source", "来源");
+			grid.Columns.Add("Name", "名称");
+			grid.Columns.Add("Exists", "存在");
+			grid.Columns.Add("Path", "路径");
+
+			grid.Columns["Source"].FillWeight = 135;
+			grid.Columns["Name"].FillWeight = 170;
+			grid.Columns["Exists"].FillWeight = 55;
+			grid.Columns["Path"].FillWeight = 540;
+
+			txtUsings = new TextBox();
+			txtUsings.Dock = DockStyle.Fill;
+			txtUsings.Multiline = true;
+			txtUsings.ReadOnly = true;
+			txtUsings.ScrollBars = ScrollBars.Both;
+			txtUsings.WordWrap = false;
+			txtUsings.BackColor = Color.FromArgb(1, 8, 16);
+			txtUsings.ForeColor = Color.FromArgb(210, 230, 245);
+			txtUsings.Font = new Font("Consolas", 10F);
+
+			Panel buttonPanel = new Panel();
+			buttonPanel.Dock = DockStyle.Fill;
+			buttonPanel.BackColor = BackColor;
+
+			btnOpenFolder = CreateButton("打开DLL目录", 10, 8, 130);
+			btnImportDll = CreateButton("导入DLL", 150, 8, 120);
+			btnClose = CreateButton("关闭", 930, 8, 100);
+			btnClose.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+
+			btnOpenFolder.Click += btnOpenFolder_Click;
+			btnImportDll.Click += btnImportDll_Click;
+			btnClose.Click += btnClose_Click;
+
+			buttonPanel.Controls.Add(btnOpenFolder);
+			buttonPanel.Controls.Add(btnImportDll);
+			buttonPanel.Controls.Add(btnClose);
+
+			root.Controls.Add(lblTitle, 0, 0);
+			root.Controls.Add(txtFolder, 0, 1);
+			root.Controls.Add(grid, 0, 2);
+			root.Controls.Add(txtUsings, 0, 3);
+			root.Controls.Add(buttonPanel, 0, 4);
+
+			Controls.Add(root);
+		}
+
+		private Button CreateButton(string text, int x, int y, int width)
+		{
+			Button btn = new Button();
+			btn.Text = text;
+			btn.Location = new Point(x, y);
+			btn.Size = new Size(width, 30);
+			btn.FlatStyle = FlatStyle.Flat;
+			btn.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			btn.FlatAppearance.BorderSize = 1;
+			btn.BackColor = Color.FromArgb(0, 95, 190);
+			btn.ForeColor = Color.White;
+			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			btn.UseVisualStyleBackColor = false;
+			return btn;
+		}
+
+		private void LoadReferences(List<ScriptReferenceViewItem> references)
+		{
+			grid.Rows.Clear();
+			if (references == null)
+			{
+				return;
+			}
+
+			foreach (ScriptReferenceViewItem item in references)
+			{
+				if (item == null)
+				{
+					continue;
+				}
+
+				int row = grid.Rows.Add(
+					item.Source,
+					item.Name,
+					item.Exists ? "Yes" : "No",
+					item.Path);
+
+				if (!item.Exists)
+				{
+					grid.Rows[row].DefaultCellStyle.ForeColor = Color.FromArgb(255, 120, 120);
+				}
+			}
+		}
+
+		private void LoadUsings(List<string> usings)
+		{
+			StringBuilder sb = new StringBuilder();
+			sb.AppendLine("Auto using namespaces used during compilation:");
+
+			if (usings != null)
+			{
+				foreach (string ns in usings)
+				{
+					if (!string.IsNullOrWhiteSpace(ns))
+					{
+						sb.AppendLine("using " + ns + ";");
+					}
+				}
+			}
+
+			sb.AppendLine();
+			sb.AppendLine("Using config file:");
+			sb.AppendLine(_usingFile);
+			sb.AppendLine();
+			sb.AppendLine("说明：如果 DLL 的真实 namespace 和文件名不同，请手动编辑 ScriptUsings.txt，每行写一个 namespace。");
+			txtUsings.Text = sb.ToString();
+		}
+
+		private void btnOpenFolder_Click(object sender, EventArgs e)
+		{
+			DialogResult = DialogResult.Yes;
+			Close();
+		}
+
+		private void btnImportDll_Click(object sender, EventArgs e)
+		{
+			DialogResult = DialogResult.Retry;
+			Close();
+		}
+
+		private void btnClose_Click(object sender, EventArgs e)
+		{
+			DialogResult = DialogResult.Cancel;
+			Close();
+		}
+	}
+
 }
