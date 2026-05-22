@@ -41,6 +41,7 @@ namespace Aron_V3
 			VM
 		}
 
+
 		private AlgorithmLibraryType _currentLibrary = AlgorithmLibraryType.Vpp;
 		private bool _isEnglish = false;
 
@@ -98,12 +99,16 @@ namespace Aron_V3
 		private string _currentProjectSavePath = string.Empty;
 		private AlgorithmFileItem _currentAlgorithmItem;
 
+		private CSharpScriptStepEditorControl _scriptEditor;
+		private Control vppPinContent;
+		private bool _showingScriptEditor = false;
+
 		public AlgorithmModuleControl()
 		{
 			_uiContext = SynchronizationContext.Current;
 			_moduleConfig = AlgorithmModuleConfigStore.LoadOrCreateDefault();
 
-			InitializeUi();
+			InitializeComponent();
 			EnableDoubleBuffer(this);
 			LoadJobs();
 
@@ -130,191 +135,9 @@ namespace Aron_V3
 			}
 		}
 
-		private void InitializeUi()
-		{
-			this.BackColor = Color.FromArgb(2, 10, 20);
-			this.Font = new Font("Microsoft YaHei UI", 9F);
-			this.Dock = DockStyle.Fill;
 
-			rootLayout = new TableLayoutPanel();
-			rootLayout.Dock = DockStyle.Fill;
-			rootLayout.BackColor = Color.FromArgb(2, 10, 20);
-			rootLayout.Padding = new Padding(8, 10, 10, 10);
-			rootLayout.Margin = new Padding(0);
-			rootLayout.ColumnCount = 7;
-			rootLayout.RowCount = 1;
+		// UI layout moved to AlgorithmModuleControl.Designer.cs for easier visual/layout editing.
 
-			// 区域1：算法库。缩窄左侧区域，给 VPP 编辑区更多空间。
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190F));
-			// 间隔
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10F));
-			// 区域2、3：Job / Task。原来偏宽，这里缩窄。
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 225F));
-			// 间隔
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10F));
-			// 区域4：VPP 列表。缩窄。
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210F));
-			// 间隔
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10F));
-			// 区域5、6
-			rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-			rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-
-			panelLibrary = CreatePanel();
-			panelLibrary.Padding = new Padding(10, 14, 10, 10);
-
-			btnVM = CreateLibraryButton("VM");
-			btnHdev = CreateLibraryButton("Hdev");
-			btnScript = CreateLibraryButton("Script");
-			btnVpp = CreateLibraryButton("Vpp");
-
-			chkEnableVpp = CreateEnableCheckBox(_moduleConfig.EnableVpp);
-			chkEnableScript = CreateEnableCheckBox(_moduleConfig.EnableScript);
-			chkEnableHdev = CreateEnableCheckBox(_moduleConfig.EnableHdev);
-			chkEnableVM = CreateEnableCheckBox(_moduleConfig.EnableVM);
-
-			Panel cardVpp = CreateLibraryCard(btnVpp, chkEnableVpp);
-			Panel cardScript = CreateLibraryCard(btnScript, chkEnableScript);
-			Panel cardHdev = CreateLibraryCard(btnHdev, chkEnableHdev);
-			Panel cardVM = CreateLibraryCard(btnVM, chkEnableVM);
-
-			// Dock=Top 显示顺序和 Add 顺序有关，这里倒序 Add。
-			panelLibrary.Controls.Add(cardVM);
-			panelLibrary.Controls.Add(CreateGapPanel(12));
-			panelLibrary.Controls.Add(cardHdev);
-			panelLibrary.Controls.Add(CreateGapPanel(12));
-			panelLibrary.Controls.Add(cardScript);
-			panelLibrary.Controls.Add(CreateGapPanel(12));
-			panelLibrary.Controls.Add(cardVpp);
-
-			btnVpp.Click += delegate { SelectLibrary(AlgorithmLibraryType.Vpp); };
-			btnScript.Click += delegate { SelectLibrary(AlgorithmLibraryType.Script); };
-			btnHdev.Click += delegate { SelectLibrary(AlgorithmLibraryType.Hdev); };
-			btnVM.Click += delegate { SelectLibrary(AlgorithmLibraryType.VM); };
-
-			chkEnableVpp.CheckedChanged += chkEnable_CheckedChanged;
-			chkEnableScript.CheckedChanged += chkEnable_CheckedChanged;
-			chkEnableHdev.CheckedChanged += chkEnable_CheckedChanged;
-			chkEnableVM.CheckedChanged += chkEnable_CheckedChanged;
-
-			TableLayoutPanel jobTaskLayout = new TableLayoutPanel();
-			jobTaskLayout.Dock = DockStyle.Fill;
-			jobTaskLayout.BackColor = Color.FromArgb(2, 10, 20);
-			jobTaskLayout.ColumnCount = 1;
-			jobTaskLayout.RowCount = 3;
-			jobTaskLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-			jobTaskLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 16F));
-			jobTaskLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-
-			grpJobs = CreateGroupBox("所有 JobID");
-			listJobs = CreateListBox();
-			listJobs.DoubleClick += listJobs_DoubleClick;
-			grpJobs.Controls.Add(listJobs);
-
-			grpTasks = CreateGroupBox("所有 Task");
-			listTasks = CreateListBox();
-			listTasks.DoubleClick += listTasks_DoubleClick;
-			grpTasks.Controls.Add(listTasks);
-
-			jobTaskLayout.Controls.Add(grpJobs, 0, 0);
-			jobTaskLayout.Controls.Add(CreatePlainGapPanel(), 0, 1);
-			jobTaskLayout.Controls.Add(grpTasks, 0, 2);
-
-			grpFiles = CreateGroupBox("所有 VPP");
-			listAlgorithmFiles = CreateListBox();
-			listAlgorithmFiles.DoubleClick += listAlgorithmFiles_DoubleClick;
-			grpFiles.Controls.Add(listAlgorithmFiles);
-
-			splitRight = new SplitContainer();
-			splitRight.Dock = DockStyle.Fill;
-			splitRight.Orientation = Orientation.Horizontal;
-			splitRight.SplitterWidth = 1;
-			splitRight.BackColor = Color.FromArgb(2, 10, 20);
-			splitRight.Panel1.BackColor = Color.FromArgb(2, 10, 20);
-			splitRight.Panel2.BackColor = Color.FromArgb(2, 10, 20);
-			splitRight.IsSplitterFixed = true;
-			// CogToolBlockEditV2 已经改为独立弹窗显示，主界面不再显示底部 VPP 编辑器区域。
-			splitRight.Panel2Collapsed = true;
-
-			grpPins = CreateGroupBox("输入/输出引脚");
-
-			TableLayoutPanel pinLayout = new TableLayoutPanel();
-			pinLayout.Dock = DockStyle.Fill;
-			pinLayout.Margin = new Padding(0);
-			pinLayout.Padding = new Padding(0);
-			pinLayout.BackColor = Color.FromArgb(3, 14, 27);
-			pinLayout.ColumnCount = 1;
-			pinLayout.RowCount = 2;
-			pinLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-			pinLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
-
-			dgvPins = CreatePinsGrid();
-
-			panelPinButtons = new Panel();
-			panelPinButtons.Dock = DockStyle.Fill;
-			panelPinButtons.BackColor = Color.FromArgb(3, 14, 27);
-
-			btnApplyInputs = CreateSmallActionButton("应用输入", 0, 6, 95);
-			btnRunReplay = CreateSmallActionButton("回放运行", 105, 6, 95);
-			btnSaveVpp = CreateSmallActionButton("保存 VPP", 210, 6, 95);
-			btnSaveVpp.BackColor = Color.FromArgb(0, 95, 220);
-
-			btnApplyInputs.Click += btnApplyInputs_Click;
-			btnRunReplay.Click += btnRunReplay_Click;
-			btnSaveVpp.Click += btnSaveVpp_Click;
-
-			panelPinButtons.Controls.Add(btnApplyInputs);
-			panelPinButtons.Controls.Add(btnRunReplay);
-			panelPinButtons.Controls.Add(btnSaveVpp);
-
-			pinLayout.Controls.Add(dgvPins, 0, 0);
-			pinLayout.Controls.Add(panelPinButtons, 0, 1);
-			grpPins.Controls.Add(pinLayout);
-
-			grpEditor = CreateGroupBox("VPP 编辑器");
-			panelEditorHost = new Panel();
-			panelEditorHost.Dock = DockStyle.Fill;
-			panelEditorHost.BackColor = Color.FromArgb(1, 8, 16);
-			panelEditorHost.Padding = new Padding(8);
-
-			lblEditorInfo = new Label();
-			lblEditorInfo.Dock = DockStyle.Fill;
-			lblEditorInfo.TextAlign = ContentAlignment.MiddleCenter;
-			lblEditorInfo.ForeColor = Color.FromArgb(140, 165, 190);
-			lblEditorInfo.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
-			lblEditorInfo.Text = "请选择 Job、Task 和 VPP。";
-
-			panelEditorHost.Controls.Add(lblEditorInfo);
-			grpEditor.Controls.Add(panelEditorHost);
-
-			splitRight.Panel1.Controls.Add(grpPins);
-			// 主界面不再嵌入 VPP 编辑器，保留对象但不显示。
-			splitRight.Panel2.Controls.Add(grpEditor);
-			splitRight.Panel2Collapsed = true;
-
-			rootLayout.Controls.Add(panelLibrary, 0, 0);
-			rootLayout.Controls.Add(CreatePlainGapPanel(), 1, 0);
-			rootLayout.Controls.Add(jobTaskLayout, 2, 0);
-			rootLayout.Controls.Add(CreatePlainGapPanel(), 3, 0);
-			rootLayout.Controls.Add(grpFiles, 4, 0);
-			rootLayout.Controls.Add(CreatePlainGapPanel(), 5, 0);
-			rootLayout.Controls.Add(splitRight, 6, 0);
-
-			this.Controls.Add(rootLayout);
-
-			ApplyLibraryEnabledState();
-
-			AlgorithmLibraryType? firstEnabled = GetFirstEnabledLibrary();
-
-			if (firstEnabled.HasValue)
-			{
-				SelectLibrary(firstEnabled.Value);
-			}
-			else
-			{
-				ShowNoEnabledModuleMessage();
-			}
-		}
 
 		private Panel CreatePanel()
 		{
@@ -728,13 +551,19 @@ namespace Aron_V3
 				grpPins.Text = "VPP 输入/输出引脚";
 				grpEditor.Text = "VPP 编辑器";
 				lblEditorInfo.Text = "请选择 Job、Task 和 VPP。";
+
+				RestoreVppPinPanel();
 			}
 			else if (library == AlgorithmLibraryType.Script)
 			{
 				grpFiles.Text = "所有 Script";
-				grpPins.Text = "Script 参数";
+				grpPins.Text = "C# Script 编辑器";
 				grpEditor.Text = "Script 编辑器";
-				lblEditorInfo.Text = "Script 模式后续扩展。";
+				lblEditorInfo.Text = "请选择 Job、Task 和 Script。";
+
+				ShowScriptEditorForCurrentSelection();
+				LoadAlgorithmFilesForCurrentTask();
+				return;
 			}
 			else if (library == AlgorithmLibraryType.Hdev)
 			{
@@ -742,6 +571,8 @@ namespace Aron_V3
 				grpPins.Text = "Hdev 参数";
 				grpEditor.Text = "HDevelop 编辑器";
 				lblEditorInfo.Text = "Hdev 模式后续扩展。";
+
+				RestoreVppPinPanel();
 			}
 			else
 			{
@@ -749,11 +580,19 @@ namespace Aron_V3
 				grpPins.Text = "VM 参数";
 				grpEditor.Text = "VisionMaster 编辑器";
 				lblEditorInfo.Text = "VM 模式后续扩展。";
+
+				RestoreVppPinPanel();
 			}
 
 			ClearVppEditor();
-			dgvPins.Rows.Clear();
+
+			if (dgvPins != null)
+			{
+				dgvPins.Rows.Clear();
+			}
+
 			LoadAlgorithmFilesForCurrentTask();
+
 		}
 
 		private void ApplyLibraryButtonStyle(Button btn, bool selected)
@@ -891,7 +730,12 @@ namespace Aron_V3
 		private void LoadAlgorithmFilesForCurrentTask()
 		{
 			listAlgorithmFiles.Items.Clear();
-			dgvPins.Rows.Clear();
+
+			if (dgvPins != null)
+			{
+				dgvPins.Rows.Clear();
+			}
+
 			ClearVppEditor();
 
 			if (string.IsNullOrEmpty(_currentJobName) || string.IsNullOrEmpty(_currentTaskName))
@@ -899,15 +743,23 @@ namespace Aron_V3
 				return;
 			}
 
-			if (_currentLibrary != AlgorithmLibraryType.Vpp)
-			{
-				lblEditorInfo.Text = "当前库模式后续扩展。";
-				return;
-			}
-
 			try
 			{
-				List<AlgorithmFileItem> items = LoadVppFilesFromFlowConfig(_currentJobName, _currentTaskName);
+				List<AlgorithmFileItem> items = new List<AlgorithmFileItem>();
+
+				if (_currentLibrary == AlgorithmLibraryType.Vpp)
+				{
+					items = LoadVppFilesFromFlowConfig(_currentJobName, _currentTaskName);
+				}
+				else if (_currentLibrary == AlgorithmLibraryType.Script)
+				{
+					items = LoadScriptFilesFromFlowConfig(_currentJobName, _currentTaskName);
+				}
+				else
+				{
+					lblEditorInfo.Text = "当前库模式后续扩展。";
+					return;
+				}
 
 				foreach (AlgorithmFileItem item in items)
 				{
@@ -916,14 +768,23 @@ namespace Aron_V3
 
 				if (items.Count == 0)
 				{
-					lblEditorInfo.Text = "当前 Task 下没有 VPP。";
+					if (_currentLibrary == AlgorithmLibraryType.Vpp)
+					{
+						lblEditorInfo.Text = "当前 Task 下没有 VPP。";
+					}
+					else if (_currentLibrary == AlgorithmLibraryType.Script)
+					{
+						lblEditorInfo.Text = "当前 Task 下没有 Script。";
+						ShowScriptEditorForCurrentSelection();
+					}
 				}
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show("Load VPP failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show("Load algorithm files failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			}
 		}
+
 
 		private List<AlgorithmFileItem> LoadVppFilesFromFlowConfig(string jobName, string taskName)
 		{
@@ -968,6 +829,199 @@ namespace Aron_V3
 
 			return result;
 		}
+
+		private List<AlgorithmFileItem> LoadScriptFilesFromFlowConfig(string jobName, string taskName)
+		{
+			List<AlgorithmFileItem> result = new List<AlgorithmFileItem>();
+
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+			JobConfig job = config.Jobs.FirstOrDefault(j =>
+				string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+
+			if (job == null || job.Tasks == null)
+			{
+				return result;
+			}
+
+			TaskConfig task = job.Tasks.FirstOrDefault(t =>
+				string.Equals(t.TaskName, taskName, StringComparison.OrdinalIgnoreCase));
+
+			if (task == null || task.Steps == null)
+			{
+				return result;
+			}
+
+			foreach (StepConfig step in task.Steps.OrderBy(s => s.RunOrder))
+			{
+				if (!IsScriptStep(step))
+				{
+					continue;
+				}
+
+				string name = GetStepScriptName(step);
+				string path = GetStepScriptPath(step, jobName, taskName);
+
+				result.Add(new AlgorithmFileItem
+				{
+					Name = name,
+					FilePath = path,
+					Step = step,
+					JobName = jobName,
+					TaskName = taskName
+				});
+			}
+
+			return result;
+		}
+
+		private bool IsScriptStep(StepConfig step)
+		{
+			if (step == null)
+			{
+				return false;
+			}
+
+			if (step.StepType == StepType.Script)
+			{
+				return true;
+			}
+
+			if (step.ScriptFiles != null && step.ScriptFiles.Count > 0)
+			{
+				return true;
+			}
+
+			string stepName = GetPropertyString(step, "StepName");
+			string sourceFile = GetPropertyString(step, "SourceFilePath");
+			string projectFile = GetPropertyString(step, "ProjectFilePath");
+
+			if (EndsWithScript(stepName) || EndsWithScript(sourceFile) || EndsWithScript(projectFile))
+			{
+				return true;
+			}
+
+			return false;
+		}
+
+		private bool EndsWithScript(string text)
+		{
+			if (string.IsNullOrEmpty(text))
+			{
+				return false;
+			}
+
+			return text.EndsWith(".csx", StringComparison.OrdinalIgnoreCase) ||
+				   text.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
+				   text.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) ||
+				   text.EndsWith(".script.xml", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private string GetStepScriptName(StepConfig step)
+		{
+			if (step == null)
+			{
+				return "CS_Script.csx";
+			}
+
+			if (step.ScriptFiles != null)
+			{
+				foreach (string file in step.ScriptFiles)
+				{
+					if (EndsWithScript(file) && !file.EndsWith(".script.xml", StringComparison.OrdinalIgnoreCase))
+					{
+						return Path.GetFileName(file);
+					}
+				}
+			}
+
+			string sourceFile = GetPropertyString(step, "SourceFilePath");
+
+			if (EndsWithScript(sourceFile) && !sourceFile.EndsWith(".script.xml", StringComparison.OrdinalIgnoreCase))
+			{
+				return Path.GetFileName(sourceFile);
+			}
+
+			string projectFile = GetPropertyString(step, "ProjectFilePath");
+
+			if (EndsWithScript(projectFile) && !projectFile.EndsWith(".script.xml", StringComparison.OrdinalIgnoreCase))
+			{
+				return Path.GetFileName(projectFile);
+			}
+
+			if (!string.IsNullOrWhiteSpace(step.StepName))
+			{
+				if (EndsWithScript(step.StepName))
+				{
+					return Path.GetFileName(step.StepName);
+				}
+
+				return step.StepName + ".csx";
+			}
+
+			return "CS_Script.csx";
+		}
+
+		private string GetStepScriptPath(StepConfig step, string jobName, string taskName)
+		{
+			string fileName = GetStepScriptName(step);
+
+			if (string.IsNullOrWhiteSpace(fileName))
+			{
+				fileName = "CS_Script.csx";
+			}
+
+			string taskFolder = Path.Combine(GetRuntimeProjectRoot(), "Job", jobName, "Task", taskName);
+			string scriptsFolder = Path.Combine(taskFolder, "Scripts");
+
+			string runtimePath = Path.Combine(scriptsFolder, Path.GetFileName(fileName));
+
+			if (File.Exists(runtimePath))
+			{
+				return runtimePath;
+			}
+
+			// 兼容旧的 Script 单数目录。
+			string oldScriptFolder = Path.Combine(taskFolder, "Script");
+			string oldPath = Path.Combine(oldScriptFolder, Path.GetFileName(fileName));
+
+			if (File.Exists(oldPath))
+			{
+				return oldPath;
+			}
+
+			if (step != null && step.ScriptFiles != null)
+			{
+				foreach (string file in step.ScriptFiles)
+				{
+					if (string.IsNullOrWhiteSpace(file))
+					{
+						continue;
+					}
+
+					if (Path.IsPathRooted(file) && File.Exists(file))
+					{
+						return file;
+					}
+
+					string p = Path.Combine(scriptsFolder, file);
+
+					if (File.Exists(p))
+					{
+						return p;
+					}
+				}
+			}
+
+			string sourceFile = GetPropertyString(step, "SourceFilePath");
+
+			if (File.Exists(sourceFile))
+			{
+				return sourceFile;
+			}
+
+			return runtimePath;
+		}
+
 
 		private bool IsVppStep(StepConfig step)
 		{
@@ -1160,9 +1214,16 @@ namespace Aron_V3
 				return null;
 			}
 
-			// 运行过程中流程配置新增 Step 后，当前算法页可能持有的是旧对象/旧路径。
-			// 双击 VPP 时重新从 ProjectFlowConfig.xml 读取一次，保证不用重启软件。
-			List<AlgorithmFileItem> latestItems = LoadVppFilesFromFlowConfig(_currentJobName, _currentTaskName);
+			List<AlgorithmFileItem> latestItems;
+
+			if (_currentLibrary == AlgorithmLibraryType.Script)
+			{
+				latestItems = LoadScriptFilesFromFlowConfig(_currentJobName, _currentTaskName);
+			}
+			else
+			{
+				latestItems = LoadVppFilesFromFlowConfig(_currentJobName, _currentTaskName);
+			}
 
 			foreach (AlgorithmFileItem item in latestItems)
 			{
@@ -1179,6 +1240,7 @@ namespace Aron_V3
 
 			return oldItem;
 		}
+
 
 		private async void listAlgorithmFiles_DoubleClick(object sender, EventArgs e)
 		{
@@ -1209,7 +1271,19 @@ namespace Aron_V3
 			_currentAlgorithmName = item.Name;
 			_currentAlgorithmPath = item.FilePath;
 			_currentAlgorithmItem = item;
+
+			if (_currentLibrary == AlgorithmLibraryType.Script)
+			{
+				ShowScriptEditorForCurrentSelection();
+				return;
+			}
+
 			_currentProjectSavePath = GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, item.Name);
+
+			if (_currentLibrary == AlgorithmLibraryType.Vpp)
+			{
+				RestoreVppPinPanel();
+			}
 
 			if (_currentLibrary == AlgorithmLibraryType.Vpp)
 			{
@@ -1221,6 +1295,117 @@ namespace Aron_V3
 				await LoadVppToEditorAsync(item);
 			}
 		}
+
+		private void RestoreVppPinPanel()
+		{
+			if (splitRight == null || grpPins == null || vppPinContent == null)
+			{
+				return;
+			}
+
+			splitRight.Panel1.SuspendLayout();
+			grpPins.SuspendLayout();
+
+			try
+			{
+				splitRight.Panel2Collapsed = true;
+
+				// ShowScriptEditorForCurrentSelection 会把 splitRight.Panel1 清空并放入 Script 控件。
+				// 切回 VPP 时必须先把 grpPins 放回 Panel1，否则 VPP 的输入/输出引脚界面不会显示。
+				if (grpPins.Parent != splitRight.Panel1)
+				{
+					if (grpPins.Parent != null)
+					{
+						grpPins.Parent.Controls.Remove(grpPins);
+					}
+
+					splitRight.Panel1.Controls.Clear();
+					splitRight.Panel1.Controls.Add(grpPins);
+					grpPins.Dock = DockStyle.Fill;
+				}
+
+				if (vppPinContent.Parent != grpPins)
+				{
+					if (vppPinContent.Parent != null)
+					{
+						vppPinContent.Parent.Controls.Remove(vppPinContent);
+					}
+
+					grpPins.Controls.Clear();
+					grpPins.Controls.Add(vppPinContent);
+				}
+
+				vppPinContent.Dock = DockStyle.Fill;
+				vppPinContent.Visible = true;
+				grpPins.Visible = true;
+				grpPins.BringToFront();
+			}
+			finally
+			{
+				grpPins.ResumeLayout(true);
+				splitRight.Panel1.ResumeLayout(true);
+			}
+
+			_showingScriptEditor = false;
+		}
+
+
+		private void ShowScriptEditorForCurrentSelection()
+		{
+			string jobName = _currentJobName;
+			string taskName = _currentTaskName;
+
+			if (string.IsNullOrWhiteSpace(jobName) && listJobs != null && listJobs.SelectedItem != null)
+			{
+				jobName = listJobs.SelectedItem.ToString();
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName) && listTasks != null && listTasks.SelectedItem != null)
+			{
+				taskName = listTasks.SelectedItem.ToString();
+			}
+
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				taskName = "Task_New_01";
+			}
+
+			string stepName = "CS_Script";
+
+			if (_scriptEditor == null || _scriptEditor.IsDisposed)
+			{
+				_scriptEditor = new CSharpScriptStepEditorControl();
+				_scriptEditor.Dock = DockStyle.Fill;
+			}
+
+			splitRight.Panel1.SuspendLayout();
+
+			try
+			{
+				splitRight.Panel2Collapsed = true;
+				splitRight.Panel1.Controls.Clear();
+
+				splitRight.Panel1.Controls.Add(_scriptEditor);
+				_scriptEditor.Dock = DockStyle.Fill;
+				_scriptEditor.BringToFront();
+
+				_showingScriptEditor = true;
+			}
+			finally
+			{
+				splitRight.Panel1.ResumeLayout(true);
+			}
+
+			// 注意：LoadScriptStep 放到 Add 控件之后
+			_scriptEditor.LoadScriptStep(jobName, taskName, stepName);
+		}
+
+
 
 		private bool TryShowPreloadedVpp(AlgorithmFileItem item)
 		{
@@ -2767,6 +2952,10 @@ namespace Aron_V3
 				if (btnApplyInputs != null) btnApplyInputs.Text = "应用输入";
 				if (btnRunReplay != null) btnRunReplay.Text = "回放运行";
 				if (btnSaveVpp != null) btnSaveVpp.Text = "保存 VPP";
+			}
+			if (_scriptEditor != null && !_scriptEditor.IsDisposed)
+			{
+				_scriptEditor.ApplyLanguage(isEnglish);
 			}
 
 			SelectLibrary(_currentLibrary);

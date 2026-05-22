@@ -8,7 +8,6 @@ namespace Aron_V3
 {
 	public partial class Form1 : Form
 	{
-		private readonly List<CameraViewControl> _cameraViews = new List<CameraViewControl>();
 		private bool _isEnglish = false;
 
 		private Control _runtimePage;
@@ -703,134 +702,7 @@ namespace Aron_V3
 
 		#region 中间相机区域：根据相机数量动态生成
 
-		private void BuildCameraLayout(int cameraCount)
-		{
-			tableLayoutPanelCameras.SuspendLayout();
-
-			tableLayoutPanelCameras.Controls.Clear();
-			tableLayoutPanelCameras.RowStyles.Clear();
-			tableLayoutPanelCameras.ColumnStyles.Clear();
-			_cameraViews.Clear();
-
-			int rows;
-			int cols;
-			GetCameraGridSize(cameraCount, out rows, out cols);
-
-			tableLayoutPanelCameras.RowCount = rows;
-			tableLayoutPanelCameras.ColumnCount = cols;
-
-			for (int r = 0; r < rows; r++)
-				tableLayoutPanelCameras.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / rows));
-
-			for (int c = 0; c < cols; c++)
-				tableLayoutPanelCameras.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / cols));
-
-			for (int i = 0; i < cameraCount; i++)
-			{
-				CameraViewControl camView = CreateCameraView(i + 1);
-				_cameraViews.Add(camView);
-
-				int row = i / cols;
-				int col = i % cols;
-
-				tableLayoutPanelCameras.Controls.Add(camView, col, row);
-			}
-
-			tableLayoutPanelCameras.ResumeLayout();
-		}
-
-		private void GetCameraGridSize(int cameraCount, out int rows, out int cols)
-		{
-			if (cameraCount <= 1) { rows = 1; cols = 1; }
-			else if (cameraCount == 2) { rows = 1; cols = 2; }
-			else if (cameraCount <= 4) { rows = 2; cols = 2; }
-			else if (cameraCount <= 6) { rows = 2; cols = 3; }
-			else if (cameraCount <= 9) { rows = 3; cols = 3; }
-			else if (cameraCount <= 12) { rows = 3; cols = 4; }
-			else { rows = 4; cols = 4; }
-		}
-
-		private CameraViewControl CreateCameraView(int index)
-		{
-			CameraViewControl view = new CameraViewControl();
-			view.Dock = DockStyle.Fill;
-			view.Margin = new Padding(0, 0, 8, 8);
-
-			switch (index)
-			{
-				case 1:
-					view.SetTitle("相机01 - 读码");
-					view.SetDisplayText("读码");
-					view.SetResult(true);
-					view.SetStatistics(32, 6);
-					view.SetInfo("Job1", "Pos1", "Cam1");
-					break;
-				case 2:
-					view.SetTitle("相机02 - 定位");
-					view.SetDisplayText("定位");
-					view.SetResult(true);
-					view.SetStatistics(22, 22);
-					view.SetInfo("Job1", "Pos2", "Cam1");
-					break;
-				case 3:
-					view.SetTitle("相机03 - 表面检测");
-					view.SetDisplayText("表面");
-					view.SetResult(false);
-					view.SetStatistics(25, 5);
-					view.SetInfo("Job1", "Pos1", "Cam2");
-					break;
-				case 4:
-					view.SetTitle("相机04 - 表面检测");
-					view.SetDisplayText("表面");
-					view.SetResult(false);
-					view.SetStatistics(40, 4);
-					view.SetInfo("Job1", "Pos1", "Cam2");
-					break;
-				case 5:
-					view.SetTitle("相机05 - 备用视图");
-					view.SetNoImage();
-					view.SetStatistics(0, 0);
-					view.SetInfo("Job--", "Pos--", "Cam--");
-					break;
-				case 6:
-					view.SetTitle("相机06 - 读码");
-					view.SetDisplayText("读码");
-					view.SetResult(true);
-					view.SetStatistics(35, 32);
-					view.SetInfo("Job1", "Pos2", "Cam2");
-					break;
-				case 7:
-					view.SetTitle("相机07 - 拔针检测");
-					view.SetDisplayText("拔针");
-					view.SetResult(true);
-					view.SetStatistics(30, 29);
-					view.SetInfo("Job1", "Pos1", "Cam1");
-					break;
-				case 8:
-					view.SetTitle("相机08 - 定位");
-					view.SetDisplayText("定位");
-					view.SetResult(true);
-					view.SetStatistics(28, 26);
-					view.SetInfo("Job1", "Pos2", "Cam1");
-					break;
-				case 9:
-					view.SetTitle("相机09 - 表面检测");
-					view.SetDisplayText("表面");
-					view.SetResult(true);
-					view.SetStatistics(40, 38);
-					view.SetInfo("Job1", "Pos1", "Cam2");
-					break;
-				default:
-					view.SetTitle("相机" + index.ToString("00"));
-					view.SetDisplayText("检测");
-					view.SetResult(true);
-					view.SetStatistics(0, 0);
-					view.SetInfo("Job1", "Pos1", "Cam" + index);
-					break;
-			}
-
-			return view;
-		}
+		
 
 		private void InitMainDisplayArea()
 		{

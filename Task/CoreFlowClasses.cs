@@ -208,6 +208,15 @@ namespace Aron_V3
 			return new StepResult { IsOK = true };
 		}
 
+		public static StepResult OK(string message)
+		{
+			return new StepResult
+			{
+				IsOK = true,
+				Message = message
+			};
+		}
+
 		public static StepResult NG(string message)
 		{
 			return new StepResult { IsOK = false, Message = message };
@@ -235,6 +244,23 @@ namespace Aron_V3
 			Images = new Dictionary<string, VisionImage>();
 			StepResults = new Dictionary<string, StepResult>();
 		}
+
+		public object GetData(string key)
+		{
+			if (string.IsNullOrWhiteSpace(key))
+			{
+				return null;
+			}
+
+			object value;
+			if (Data.TryGetValue(key, out value))
+			{
+				return value;
+			}
+
+			return null;
+		}
+
 
 		public void SetData(string key, object value)
 		{
@@ -754,7 +780,7 @@ namespace Aron_V3
 			step.RunOrder = runOrder;
 			step.Enabled = true;
 			step.StopWhenNG = true;
-			step.StepFolder = Path.Combine("Steps", jobName, taskName);
+			step.StepFolder = Path.Combine("Job", jobName, "Task", taskName);
 			step.Remark = string.Empty;
 
 			if (stepType == StepType.Vpp)
@@ -787,6 +813,11 @@ namespace Aron_V3
 					Description = string.Empty
 				});
 			}
+			else if (stepType == StepType.Halcon)
+			{
+				step.InputImageKey = string.Empty;
+				step.OutputImageKey = string.Empty;
+			}
 
 			return step;
 		}
@@ -797,6 +828,7 @@ namespace Aron_V3
 
 			if (ext == ".vpp") return StepType.Vpp;
 			if (ext == ".cs" || ext == ".csx" || ext == ".txt") return StepType.Script;
+			if (ext == ".hdev") return StepType.Halcon;
 
 			return StepType.Unknown;
 		}
@@ -1091,7 +1123,7 @@ namespace Aron_V3
 					return new VppStep(config);
 
 				case StepType.Script:
-					return new ScriptStep(config);
+					return new CSharpScriptRuntimeStepRunner(config);
 
 				default:
 					throw new NotSupportedException("Unsupported step type: " + config.StepType);

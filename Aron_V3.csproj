@@ -82,6 +82,16 @@
   <ItemGroup>
     <Compile Include="Communicate\TCPIP\CommunicationRuntimeContracts.cs" />
     <Compile Include="Communicate\TCPIP\CommunicationRuntimeManager.cs" />
+    <Compile Include="Script\CSharpScriptRuntimeStepRunner.cs" />
+    <Compile Include="Script\CSharpScriptStepEditorControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Script\CSharpScriptStepEditorControl.Designer.cs">
+      <DependentUpon>CSharpScriptStepEditorControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Script\CSharpScriptStepRunner.cs" />
+    <Compile Include="Script\CSharpScriptStepStore.cs" />
+    <Compile Include="Script\CSharpScriptStepModels.cs" />
     <Compile Include="Display\DisplayLayoutControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -189,6 +199,9 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <EmbeddedResource Include="Script\CSharpScriptStepEditorControl.resx">
+      <DependentUpon>CSharpScriptStepEditorControl.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Task\TaskSchedulerControl.resx">
       <DependentUpon>TaskSchedulerControl.cs</DependentUpon>
     </EmbeddedResource>
