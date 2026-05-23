@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Xml.Serialization;
 
@@ -13,12 +14,27 @@ namespace Aron_V3
 				return CreateDefaultConfig();
 			}
 
-			using (FileStream fs = new FileStream(configPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+			try
 			{
-				XmlSerializer xs = new XmlSerializer(typeof(CSharpScriptStepConfig));
-				object obj = xs.Deserialize(fs);
-				CSharpScriptStepConfig config = obj as CSharpScriptStepConfig;
-				return config ?? CreateDefaultConfig();
+				using (FileStream fs = new FileStream(configPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+				{
+					XmlSerializer xs = new XmlSerializer(typeof(CSharpScriptStepConfig));
+					object obj = xs.Deserialize(fs);
+
+					CSharpScriptStepConfig config = obj as CSharpScriptStepConfig;
+
+					if (config == null)
+					{
+						return CreateDefaultConfig();
+					}
+
+					EnsureConfigNotNull(config);
+					return config;
+				}
+			}
+			catch
+			{
+				return CreateDefaultConfig();
 			}
 		}
 
@@ -29,7 +45,15 @@ namespace Aron_V3
 				throw new ArgumentNullException("config");
 			}
 
+			if (string.IsNullOrWhiteSpace(configPath))
+			{
+				throw new ArgumentException("configPath is empty.", "configPath");
+			}
+
+			EnsureConfigNotNull(config);
+
 			string dir = Path.GetDirectoryName(configPath);
+
 			if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
 			{
 				Directory.CreateDirectory(dir);
@@ -60,6 +84,7 @@ namespace Aron_V3
 		{
 			string folder = GetScriptFolder(jobName, taskName);
 			string safeStep = NormalizeFileName(stepName, "CS_Script");
+
 			return Path.Combine(folder, safeStep + ".script.xml");
 		}
 
@@ -67,11 +92,17 @@ namespace Aron_V3
 		{
 			string folder = GetScriptFolder(jobName, taskName);
 			string safeStep = NormalizeFileName(stepName, "CS_Script");
+
 			return Path.Combine(folder, safeStep + ".csx");
 		}
 
 		public static void EnsureScriptFile(string scriptPath)
 		{
+			if (string.IsNullOrWhiteSpace(scriptPath))
+			{
+				return;
+			}
+
 			string dir = Path.GetDirectoryName(scriptPath);
 
 			if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
@@ -91,59 +122,18 @@ namespace Aron_V3
 		{
 			CSharpScriptStepConfig config = new CSharpScriptStepConfig();
 
-			config.Inputs.Add(new ScriptPinConfig
-			{
-				Name = "JobID",
-				DataType = ScriptPinDataType.Int,
-				BindingPath = "Comm.JobID",
-				DefaultValue = "0",
-				Description = "当前作业号"
-			});
+			config.StepName = "CS_Script";
+			config.Enable = true;
+			config.ScriptFileName = string.Empty;
+			config.ScriptFilePath = string.Empty;
+			config.LastCompileStatus = string.Empty;
+			config.LastErrorMessage = string.Empty;
 
-			config.Inputs.Add(new ScriptPinConfig
-			{
-				Name = "Measure1",
-				DataType = ScriptPinDataType.Double,
-				BindingPath = "Vpp_01.Result1",
-				DefaultValue = "0.0",
-				Description = "测量值"
-			});
-
-			config.Inputs.Add(new ScriptPinConfig
-			{
-				Name = "Barcode",
-				DataType = ScriptPinDataType.String,
-				BindingPath = "Halcon_01.Code",
-				DefaultValue = "",
-				Description = "条码字符串"
-			});
-
-			config.Outputs.Add(new ScriptPinConfig
-			{
-				Name = "ResultSum",
-				DataType = ScriptPinDataType.Double,
-				BindingPath = "ResultSum",
-				DefaultValue = "0",
-				Description = "计算汇总值"
-			});
-
-			config.Outputs.Add(new ScriptPinConfig
-			{
-				Name = "ResultOK",
-				DataType = ScriptPinDataType.Bool,
-				BindingPath = "ResultOK",
-				DefaultValue = "false",
-				Description = "最终结果"
-			});
-
-			config.Outputs.Add(new ScriptPinConfig
-			{
-				Name = "SendData",
-				DataType = ScriptPinDataType.String,
-				BindingPath = "Comm.SendData",
-				DefaultValue = "",
-				Description = "发送给通讯模块的报文"
-			});
+			// 默认不再创建 JobID / Measure1 / Barcode 示例输入。
+			// 输入由流程管理中 Script 绑定的前序模块自动生成。
+			config.References = new List<ScriptReferenceConfig>();
+			config.Inputs = new List<ScriptPinConfig>();
+			config.Outputs = new List<ScriptPinConfig>();
 
 			return config;
 		}
@@ -158,32 +148,103 @@ public class ScriptMain : IScriptMain
 {
 	public void Execute(IScriptContext context)
 	{
-		// 读取输入
-		int jobId = context.GetInputInt(""JobID"");
-		double measure1 = context.GetInputDouble(""Measure1"");
-		string barcode = context.GetInputString(""Barcode"");
+		// 输入示例：
+		// double value = context.GetInputDouble(""InputName"");
 
-		// 数据处理
-		double resultSum = measure1 + jobId;
-		bool resultOK = resultSum > 100.0;
-		string finalCode = string.IsNullOrEmpty(barcode)
-			? ""NO_CODE_"" + jobId.ToString()
-			: barcode;
+		// 输出示例：
+		// 编辑器会自动识别 context.SetOutput 的输出名，并显示到 Outputs 表格。
+		double result = 0;
 
-		// 汇总发送数据。后续可直接给 TCP/IP / Profinet / S7 输出模块使用。
-		string sendData =
-			""JOB:"" + jobId.ToString() +
-			"";SUM:"" + resultSum.ToString(""F2"") +
-			"";OK:"" + resultOK.ToString() +
-			"";CODE:"" + finalCode;
-
-		// 写输出
-		context.SetOutput(""ResultSum"", resultSum);
-		context.SetOutput(""ResultOK"", resultOK);
-		context.SetOutput(""FinalCode"", finalCode);
-		context.SetOutput(""SendData"", sendData);
+		context.SetOutput(""ResultSum"", result);
 	}
 }";
+		}
+
+		private static void EnsureConfigNotNull(CSharpScriptStepConfig config)
+		{
+			if (config == null)
+			{
+				return;
+			}
+
+			if (config.StepName == null)
+			{
+				config.StepName = "CS_Script";
+			}
+
+			if (config.ScriptFileName == null)
+			{
+				config.ScriptFileName = string.Empty;
+			}
+
+			if (config.ScriptFilePath == null)
+			{
+				config.ScriptFilePath = string.Empty;
+			}
+
+			if (config.LastCompileStatus == null)
+			{
+				config.LastCompileStatus = string.Empty;
+			}
+
+			if (config.LastErrorMessage == null)
+			{
+				config.LastErrorMessage = string.Empty;
+			}
+
+			if (config.References == null)
+			{
+				config.References = new List<ScriptReferenceConfig>();
+			}
+
+			if (config.Inputs == null)
+			{
+				config.Inputs = new List<ScriptPinConfig>();
+			}
+
+			if (config.Outputs == null)
+			{
+				config.Outputs = new List<ScriptPinConfig>();
+			}
+
+			NormalizePins(config.Inputs);
+			NormalizePins(config.Outputs);
+		}
+
+		private static void NormalizePins(List<ScriptPinConfig> pins)
+		{
+			if (pins == null)
+			{
+				return;
+			}
+
+			foreach (ScriptPinConfig pin in pins)
+			{
+				if (pin == null)
+				{
+					continue;
+				}
+
+				if (pin.Name == null)
+				{
+					pin.Name = string.Empty;
+				}
+
+				if (pin.BindingPath == null)
+				{
+					pin.BindingPath = string.Empty;
+				}
+
+				if (pin.DefaultValue == null)
+				{
+					pin.DefaultValue = string.Empty;
+				}
+
+				if (pin.Description == null)
+				{
+					pin.Description = string.Empty;
+				}
+			}
 		}
 
 		private static string NormalizeFileName(string value, string defaultValue)

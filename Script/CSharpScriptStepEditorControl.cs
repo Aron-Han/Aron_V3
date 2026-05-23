@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace Aron_V3
@@ -52,6 +53,13 @@ namespace Aron_V3
 		private bool _forceLineNumberRefresh;
 		private bool _loadingCodeText;
 
+		// Script 输入 BindingPath 下拉来源。
+		// 来源包括：任务调度中当前 Script 已选择的前序模块输出引脚、当前脚本已有绑定值；不再默认加入 Comm.* 示例项。
+		private List<string> _bindingSourceOptions = new List<string>();
+
+		// 左侧 Script Pin 区域当前显示 Inputs 还是 Outputs。
+		private bool _showInputPins = true;
+
 		public CSharpScriptStepEditorControl()
 		{
 			InitializeComponent();
@@ -60,10 +68,10 @@ namespace Aron_V3
 			_config = CSharpScriptStepStore.CreateDefaultConfig();
 
 			InitTheme();
-			RebuildTopBarLayout();   // 新增：修复顶部按钮、状态、当前脚本显示
 			InitGrids();
-			RebuildPinSectionLayouts();   // 新增：恢复 Inputs / Outputs 的 + / - 按钮显示
+			InitializePinToggleLayout();
 			BindEvents();
+			ShowPinPage(true);
 
 			LoadConfigToUi();
 		}
@@ -85,9 +93,11 @@ namespace Aron_V3
 			lblCodeTitle.Text = isEnglish ? "C# Script Code" : "C# Script Code";
 			lblLogTitle.Text = isEnglish ? "Compile / Run Log" : "编译 / 运行日志";
 
+			if (btnShowInputs != null) btnShowInputs.Text = isEnglish ? "Inputs" : "输入";
+			if (btnShowOutputs != null) btnShowOutputs.Text = isEnglish ? "Outputs" : "输出";
+
 			SetGridHeaders();
 			UpdatePinToolbarText();
-			RebuildTopBarLayout();
 		}
 
 		public void LoadScriptStep(string jobName, string taskName, string stepName)
@@ -374,6 +384,8 @@ namespace Aron_V3
 			StyleButton(btnSave);
 			StyleButton(btnCompile);
 			StyleButton(btnRun);
+			StyleButton(btnShowInputs);
+			StyleButton(btnShowOutputs);
 			StyleButton(btnInputAdd);
 			StyleButton(btnInputDelete);
 			StyleButton(btnOutputAdd);
@@ -908,23 +920,84 @@ namespace Aron_V3
 
 		private void InitPinGrid(DataGridView grid, bool isInput)
 		{
+			if (grid == null)
+			{
+				return;
+			}
+
 			StyleGrid(grid);
 			grid.Columns.Clear();
 
-			grid.Columns.Add(CreateTextColumn("Name", isInput ? "输入名" : "输出名", 130));
+			// 当前值/测试值放到前面，避免值显示跑到最右侧。
+			// 输出不再显示“目标去向/绑定去向”，只保留只读的当前输出值。
+			grid.Columns.Add(CreateTextColumn("Name", isInput ? "输入名" : "输出名", 150));
 			grid.Columns.Add(CreateComboColumn("DataType", "类型", 90));
-			grid.Columns.Add(CreateTextColumn("BindingPath", isInput ? "绑定来源" : "目标去向", 220));
-			grid.Columns.Add(CreateTextColumn("DefaultValue", isInput ? "当前值/默认值" : "默认值", 130));
-			grid.Columns.Add(CreateTextColumn("Description", "说明", 240));
+
+			if (isInput)
+			{
+				grid.Columns.Add(CreateTextColumn("DefaultValue", "当前值/测试值", 150));
+				grid.Columns.Add(CreateBindingSourceColumn("BindingPath", "绑定来源", 230));
+			}
+			else
+			{
+				grid.Columns.Add(CreateTextColumn("CurrentValue", "当前输出值", 170));
+			}
 
 			grid.Columns["Name"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
 			grid.Columns["DataType"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-			grid.Columns["BindingPath"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-			grid.Columns["DefaultValue"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-			grid.Columns["Description"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
-			grid.Columns["BindingPath"].FillWeight = 55;
-			grid.Columns["Description"].FillWeight = 45;
+			if (isInput)
+			{
+				grid.Columns["DefaultValue"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+				grid.Columns["DefaultValue"].ReadOnly = false;
+				grid.Columns["BindingPath"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+				grid.Columns["BindingPath"].MinimumWidth = 150;
+			}
+			else
+			{
+				grid.Columns["CurrentValue"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+				grid.Columns["CurrentValue"].ReadOnly = true;
+				grid.Columns["CurrentValue"].DefaultCellStyle.BackColor = Color.FromArgb(8, 22, 36);
+				grid.Columns["CurrentValue"].DefaultCellStyle.ForeColor = Color.FromArgb(180, 220, 190);
+			}
+
+			grid.Columns["Name"].ReadOnly = false;
+			grid.Columns["DataType"].ReadOnly = false;
+
+			grid.ColumnHeadersVisible = true;
+			EnsurePinGridHeaderVisible(grid);
+
+			if (isInput)
+			{
+				RefreshInputBindingSourceOptions();
+			}
+		}
+		private void EnsurePinGridHeaderVisible(DataGridView grid)
+		{
+			if (grid == null)
+			{
+				return;
+			}
+
+			grid.ColumnHeadersVisible = true;
+			grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+			grid.ColumnHeadersHeight = 30;
+
+			grid.EnableHeadersVisualStyles = false;
+			grid.ColumnHeadersDefaultCellStyle.BackColor = _panel2;
+			grid.ColumnHeadersDefaultCellStyle.ForeColor = _text;
+			grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = _panel2;
+			grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = _text;
+			grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
+
+			grid.RowHeadersVisible = false;
+			grid.AllowUserToAddRows = false;
+			grid.AllowUserToDeleteRows = false;
+			grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+			grid.RowTemplate.Height = 30;
+
+			grid.Refresh();
 		}
 
 		private void InitLogGrid(DataGridView grid)
@@ -953,6 +1026,8 @@ namespace Aron_V3
 			grid.GridColor = _border;
 			grid.EnableHeadersVisualStyles = false;
 			grid.RowHeadersVisible = false;
+			grid.ColumnHeadersVisible = true;
+			grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
 			grid.AllowUserToAddRows = false;
 			grid.AllowUserToResizeRows = true;
 			grid.AllowUserToResizeColumns = true;
@@ -961,11 +1036,15 @@ namespace Aron_V3
 			grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
 			grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
 			grid.ScrollBars = ScrollBars.Both;
+			grid.DataError -= PinGrid_DataError;
+			grid.DataError += PinGrid_DataError;
 
 			grid.ColumnHeadersDefaultCellStyle.BackColor = _panel2;
-			grid.ColumnHeadersDefaultCellStyle.ForeColor = _text;
+			grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
 			grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
+			grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
 
 			grid.DefaultCellStyle.BackColor = _back;
 			grid.DefaultCellStyle.ForeColor = _text;
@@ -980,6 +1059,14 @@ namespace Aron_V3
 			grid.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular);
 			grid.ColumnHeadersHeight = 30;
 			grid.RowTemplate.Height = 30;
+			grid.Refresh();
+		}
+
+		private void PinGrid_DataError(object sender, DataGridViewDataErrorEventArgs e)
+		{
+			// BindingPath 下拉列在旧配置值不在 Items 中时会触发 DataError。
+			// 这里吞掉异常，同时把旧值补进下拉项，保证兼容历史配置。
+			e.ThrowException = false;
 		}
 
 		private DataGridViewTextBoxColumn CreateTextColumn(string name, string header, int width)
@@ -1005,6 +1092,1418 @@ namespace Aron_V3
 			col.Items.Add(ScriptPinDataType.Decimal);
 			col.Items.Add(ScriptPinDataType.Object);
 			return col;
+		}
+
+		private DataGridViewComboBoxColumn CreateBindingSourceColumn(string name, string header, int width)
+		{
+			DataGridViewComboBoxColumn col = new DataGridViewComboBoxColumn();
+			col.Name = name;
+			col.HeaderText = header;
+			col.Width = width;
+			col.FlatStyle = FlatStyle.Flat;
+			col.DisplayStyle = DataGridViewComboBoxDisplayStyle.ComboBox;
+			col.DisplayStyleForCurrentCellOnly = false;
+			col.Items.Add(string.Empty);
+			return col;
+		}
+
+		private void RefreshInputBindingSourceOptions()
+		{
+			List<string> options = BuildInputBindingSourceOptions();
+
+			// 兼容当前配置里已有的手动绑定值，但过滤旧模板/默认通用 Comm 项。
+			if (_config != null && _config.Inputs != null)
+			{
+				foreach (ScriptPinConfig pin in _config.Inputs)
+				{
+					if (pin == null || IsOldDefaultSampleInput(pin))
+					{
+						continue;
+					}
+
+					if (ShouldKeepBindingOptionFromExistingInput(pin.BindingPath))
+					{
+						AddUniqueText(options, pin.BindingPath);
+					}
+				}
+			}
+
+			if (gridInputs != null && gridInputs.Columns.Contains("BindingPath"))
+			{
+				foreach (DataGridViewRow row in gridInputs.Rows)
+				{
+					if (row == null || row.IsNewRow)
+					{
+						continue;
+					}
+
+					string binding = GetPinCellString(row, "BindingPath");
+					if (ShouldKeepBindingOptionFromExistingInput(binding))
+					{
+						AddUniqueText(options, binding);
+					}
+				}
+			}
+
+			// 最终再过滤一次旧模板/默认通用项，避免 Comm.JobID 等旧值继续出现在下拉框。
+			for (int i = options.Count - 1; i >= 0; i--)
+			{
+				if (IsCommonRuntimeBinding(options[i]))
+				{
+					options.RemoveAt(i);
+				}
+			}
+
+			if (options.Count <= 0 || !string.IsNullOrEmpty(options[0]))
+			{
+				options.Insert(0, string.Empty);
+			}
+
+			_bindingSourceOptions = options;
+			ApplyBindingSourceOptionsToGrid();
+		}
+
+		private List<string> BuildInputBindingSourceOptions()
+		{
+			List<string> result = new List<string>();
+
+			// 只保留空项 + 当前 Script 在流程管理里绑定的前序模块输出。
+			// 不再默认加入 Comm.JobID / Comm.Barcode / Comm.ProductCode 等通用项，
+			// 避免用户以为这些是当前流程真实可用的前序输出。
+			AddUniqueText(result, string.Empty);
+
+			TaskConfig task = GetCurrentTaskConfig();
+			if (task == null || task.Steps == null || task.StepFlow == null)
+			{
+				return result;
+			}
+
+			StepFlowItem currentFlow = FindCurrentScriptFlowItem(task);
+			List<string> sourceStepNames = new List<string>();
+
+			if (currentFlow != null && currentFlow.ScriptInputStepKeyList != null && currentFlow.ScriptInputStepKeyList.Count > 0)
+			{
+				sourceStepNames.AddRange(currentFlow.ScriptInputStepKeyList);
+			}
+
+
+			foreach (string sourceStepName in sourceStepNames)
+			{
+				StepConfig step = task.Steps.FirstOrDefault(s =>
+					s != null &&
+					string.Equals(s.StepName, sourceStepName, StringComparison.OrdinalIgnoreCase));
+
+				AddStepOutputBindingOptions(result, task, sourceStepName, step);
+			}
+
+			return result;
+		}
+
+		private void AddCommonRuntimeInputOptions(List<string> result)
+		{
+			// 这些是通讯/任务运行时常用输入，保留给手动绑定使用。
+			AddUniqueText(result, "Comm.JobID");
+			AddUniqueText(result, "Comm.Barcode");
+			AddUniqueText(result, "Comm.ProductCode");
+			AddUniqueText(result, "Comm.TriggerName");
+			AddUniqueText(result, "Comm.PositionName");
+		}
+
+
+		private bool IsCommonRuntimeBinding(string bindingPath)
+		{
+			if (string.IsNullOrWhiteSpace(bindingPath))
+			{
+				return false;
+			}
+
+			string text = bindingPath.Trim();
+			return
+				string.Equals(text, "Comm.JobID", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "Comm.Barcode", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "Comm.ProductCode", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "Comm.TriggerName", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "Comm.PositionName", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "Vpp_01.Result1", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "Halcon_01.Code", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private TaskConfig GetCurrentTaskConfig()
+		{
+			if (string.IsNullOrWhiteSpace(_jobName) || string.IsNullOrWhiteSpace(_taskName))
+			{
+				return null;
+			}
+
+			try
+			{
+				ProjectFlowConfig flow = FlowConfigStore.LoadOrCreateDefault();
+				if (flow == null || flow.Jobs == null)
+				{
+					return null;
+				}
+
+				JobConfig job = flow.Jobs.FirstOrDefault(j =>
+					j != null && string.Equals(j.JobName, _jobName, StringComparison.OrdinalIgnoreCase));
+
+				if (job == null || job.Tasks == null)
+				{
+					return null;
+				}
+
+				return job.Tasks.FirstOrDefault(t =>
+					t != null && string.Equals(t.TaskName, _taskName, StringComparison.OrdinalIgnoreCase));
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private StepFlowItem FindCurrentScriptFlowItem(TaskConfig task)
+		{
+			if (task == null || task.StepFlow == null)
+			{
+				return null;
+			}
+
+			List<string> names = new List<string>();
+			AddUniqueText(names, _config == null ? string.Empty : _config.StepName);
+			AddUniqueText(names, GetCurrentScriptDisplayName());
+			AddUniqueText(names, _scriptPath == null ? string.Empty : Path.GetFileNameWithoutExtension(_scriptPath));
+
+			foreach (StepFlowItem item in task.StepFlow)
+			{
+				if (item == null || string.IsNullOrWhiteSpace(item.StepName))
+				{
+					continue;
+				}
+
+				foreach (string name in names)
+				{
+					if (string.Equals(item.StepName, name, StringComparison.OrdinalIgnoreCase))
+					{
+						return item;
+					}
+				}
+			}
+
+			return null;
+		}
+
+		private void AddStepOutputBindingOptions(List<string> result, TaskConfig task, string sourceStepName, StepConfig step)
+		{
+			if (string.IsNullOrWhiteSpace(sourceStepName))
+			{
+				return;
+			}
+
+			EnsureStepOutputPinsAvailable(task, step);
+
+			if (step != null && step.OutputPins != null)
+			{
+				foreach (PinConfig pin in step.OutputPins)
+				{
+					if (pin == null)
+					{
+						continue;
+					}
+
+					AddStepPinOption(result, sourceStepName, pin.PinName);
+					AddUniqueText(result, pin.TargetKey);
+					AddUniqueText(result, pin.SourceKey);
+				}
+			}
+
+			if (step != null && step.StepType == StepType.Script)
+			{
+				CSharpScriptStepConfig scriptConfig = TryLoadScriptConfigForStep(task, step);
+				if (scriptConfig != null && scriptConfig.Outputs != null)
+				{
+					foreach (ScriptPinConfig output in scriptConfig.Outputs)
+					{
+						if (output != null)
+						{
+							AddStepPinOption(result, sourceStepName, output.Name);
+							AddUniqueText(result, output.BindingPath);
+						}
+					}
+				}
+			}
+		}
+
+		private void AddStepPinOption(List<string> result, string stepName, string pinName)
+		{
+			if (string.IsNullOrWhiteSpace(stepName) || string.IsNullOrWhiteSpace(pinName))
+			{
+				return;
+			}
+
+			string text = pinName.Trim();
+			if (text.IndexOf('.') >= 0 && text.StartsWith(stepName + ".", StringComparison.OrdinalIgnoreCase))
+			{
+				AddUniqueText(result, text);
+			}
+			else
+			{
+				AddUniqueText(result, stepName.Trim() + "." + text);
+			}
+		}
+
+		private CSharpScriptStepConfig TryLoadScriptConfigForStep(TaskConfig task, StepConfig step)
+		{
+			try
+			{
+				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_jobName, _taskName);
+
+				List<string> scriptFiles = new List<string>();
+				AddUniqueText(scriptFiles, step.ProjectFilePath);
+				AddUniqueText(scriptFiles, step.SourceFilePath);
+
+				if (step.ScriptFiles != null)
+				{
+					foreach (string file in step.ScriptFiles)
+					{
+						AddUniqueText(scriptFiles, file);
+					}
+				}
+
+				foreach (string file in scriptFiles)
+				{
+					string scriptPath = ResolveStepFilePath(taskFolder, file);
+					if (string.IsNullOrWhiteSpace(scriptPath))
+					{
+						continue;
+					}
+
+					string configPath = Path.Combine(
+						Path.GetDirectoryName(scriptPath) ?? string.Empty,
+						Path.GetFileNameWithoutExtension(scriptPath) + ".script.xml");
+
+					if (File.Exists(configPath))
+					{
+						return CSharpScriptStepStore.Load(configPath);
+					}
+				}
+
+				string fallback = CSharpScriptStepStore.GetConfigPath(_jobName, _taskName, step.StepName);
+				if (File.Exists(fallback))
+				{
+					return CSharpScriptStepStore.Load(fallback);
+				}
+			}
+			catch
+			{
+			}
+
+			return null;
+		}
+
+		private void RemoveStalePreviousStepInputs()
+		{
+			if (_config == null || _config.Inputs == null || _config.Inputs.Count <= 0)
+			{
+				return;
+			}
+
+			TaskConfig task = GetCurrentTaskConfig();
+			if (task == null || task.Steps == null || task.StepFlow == null)
+			{
+				return;
+			}
+
+			StepFlowItem currentFlow = FindCurrentScriptFlowItem(task);
+			List<string> selectedSourceStepNames = GetSelectedScriptInputSourceStepNames(currentFlow);
+			List<string> taskStepNames = GetTaskStepNames(task);
+			List<string> allowedBindings = BuildAllowedSelectedPreviousOutputBindings(task, selectedSourceStepNames);
+
+			for (int i = _config.Inputs.Count - 1; i >= 0; i--)
+			{
+				ScriptPinConfig pin = _config.Inputs[i];
+				if (pin == null)
+				{
+					_config.Inputs.RemoveAt(i);
+					continue;
+				}
+
+				string bindingPath = pin.BindingPath == null ? string.Empty : pin.BindingPath.Trim();
+				string sourceStepName = GetBindingSourceStepName(bindingPath, taskStepNames);
+
+				// 只清理来自 Task Step 的自动/流程绑定；自定义变量、空绑定、后续 Global.* 变量保留。
+				if (string.IsNullOrWhiteSpace(sourceStepName))
+				{
+					string autoSource = GetAutoInputSourceFromDescription(pin.Description);
+					if (!string.IsNullOrWhiteSpace(autoSource) && !ContainsText(selectedSourceStepNames, autoSource))
+					{
+						_config.Inputs.RemoveAt(i);
+					}
+
+					continue;
+				}
+
+				// 绑定的来源 Step 已经不在“流程管理 -> Script 输入源”中，直接删除。
+				if (!ContainsText(selectedSourceStepNames, sourceStepName))
+				{
+					_config.Inputs.RemoveAt(i);
+					continue;
+				}
+
+				// 来源 Step 仍然选中，但该输出引脚已经不存在，也删除，避免换 VPP 后残留旧输出。
+				if (!ContainsText(allowedBindings, bindingPath))
+				{
+					_config.Inputs.RemoveAt(i);
+					continue;
+				}
+			}
+		}
+
+		private bool ShouldKeepBindingOptionFromExistingInput(string bindingPath)
+		{
+			if (string.IsNullOrWhiteSpace(bindingPath))
+			{
+				return false;
+			}
+
+			if (IsCommonRuntimeBinding(bindingPath))
+			{
+				return false;
+			}
+
+			TaskConfig task = GetCurrentTaskConfig();
+			if (task == null || task.Steps == null || task.StepFlow == null)
+			{
+				return true;
+			}
+
+			List<string> taskStepNames = GetTaskStepNames(task);
+			string sourceStepName = GetBindingSourceStepName(bindingPath, taskStepNames);
+
+			// 非 Step 输出绑定，例如手动变量、Global.xxx，允许保留。
+			if (string.IsNullOrWhiteSpace(sourceStepName))
+			{
+				return true;
+			}
+
+			StepFlowItem currentFlow = FindCurrentScriptFlowItem(task);
+			List<string> selectedSourceStepNames = GetSelectedScriptInputSourceStepNames(currentFlow);
+			if (!ContainsText(selectedSourceStepNames, sourceStepName))
+			{
+				return false;
+			}
+
+			List<string> allowedBindings = BuildAllowedSelectedPreviousOutputBindings(task, selectedSourceStepNames);
+			return ContainsText(allowedBindings, bindingPath);
+		}
+
+		private string GetAutoInputDescriptionByBinding(string bindingPath)
+		{
+			TaskConfig task = GetCurrentTaskConfig();
+			if (task == null || task.Steps == null)
+			{
+				return string.Empty;
+			}
+
+			string sourceStepName = GetBindingSourceStepName(bindingPath, GetTaskStepNames(task));
+			if (string.IsNullOrWhiteSpace(sourceStepName))
+			{
+				return string.Empty;
+			}
+
+			return "AUTO_FROM_STEP:" + sourceStepName;
+		}
+
+		private List<string> GetSelectedScriptInputSourceStepNames(StepFlowItem currentFlow)
+		{
+			List<string> result = new List<string>();
+
+			if (currentFlow == null || currentFlow.ScriptInputStepKeyList == null)
+			{
+				return result;
+			}
+
+			foreach (string name in currentFlow.ScriptInputStepKeyList)
+			{
+				AddUniqueText(result, name);
+			}
+
+			return result;
+		}
+
+		private List<string> GetTaskStepNames(TaskConfig task)
+		{
+			List<string> result = new List<string>();
+
+			if (task == null || task.Steps == null)
+			{
+				return result;
+			}
+
+			foreach (StepConfig step in task.Steps)
+			{
+				if (step != null)
+				{
+					AddUniqueText(result, step.StepName);
+				}
+			}
+
+			return result;
+		}
+
+		private List<string> BuildAllowedSelectedPreviousOutputBindings(TaskConfig task, List<string> selectedSourceStepNames)
+		{
+			List<string> result = new List<string>();
+
+			if (task == null || task.Steps == null || selectedSourceStepNames == null)
+			{
+				return result;
+			}
+
+			foreach (string sourceStepName in selectedSourceStepNames)
+			{
+				if (string.IsNullOrWhiteSpace(sourceStepName))
+				{
+					continue;
+				}
+
+				StepConfig step = task.Steps.FirstOrDefault(s =>
+					s != null && string.Equals(s.StepName, sourceStepName, StringComparison.OrdinalIgnoreCase));
+
+				if (step == null)
+				{
+					continue;
+				}
+
+				EnsureStepOutputPinsAvailable(task, step);
+
+				if (step.OutputPins != null)
+				{
+					foreach (PinConfig pin in step.OutputPins)
+					{
+						if (pin == null)
+						{
+							continue;
+						}
+
+						if (!string.IsNullOrWhiteSpace(pin.PinName))
+						{
+							AddUniqueText(result, step.StepName + "." + pin.PinName.Trim());
+						}
+
+						AddUniqueText(result, pin.TargetKey);
+						AddUniqueText(result, pin.SourceKey);
+					}
+				}
+
+				if (step.StepType == StepType.Script)
+				{
+					CSharpScriptStepConfig scriptConfig = TryLoadScriptConfigForStep(task, step);
+					if (scriptConfig != null && scriptConfig.Outputs != null)
+					{
+						foreach (ScriptPinConfig output in scriptConfig.Outputs)
+						{
+							if (output == null || string.IsNullOrWhiteSpace(output.Name))
+							{
+								continue;
+							}
+
+							AddUniqueText(result, step.StepName + "." + output.Name.Trim());
+							AddUniqueText(result, output.BindingPath);
+						}
+					}
+				}
+			}
+
+			return result;
+		}
+
+		private string GetBindingSourceStepName(string bindingPath, List<string> taskStepNames)
+		{
+			if (string.IsNullOrWhiteSpace(bindingPath) || taskStepNames == null)
+			{
+				return string.Empty;
+			}
+
+			string binding = bindingPath.Trim();
+			foreach (string stepName in taskStepNames)
+			{
+				if (string.IsNullOrWhiteSpace(stepName))
+				{
+					continue;
+				}
+
+				string prefix = stepName.Trim() + ".";
+				if (binding.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+				{
+					return stepName.Trim();
+				}
+			}
+
+			return string.Empty;
+		}
+
+		private string GetAutoInputSourceFromDescription(string description)
+		{
+			if (string.IsNullOrWhiteSpace(description))
+			{
+				return string.Empty;
+			}
+
+			string text = description.Trim();
+			const string newPrefix = "AUTO_FROM_STEP:";
+			if (text.StartsWith(newPrefix, StringComparison.OrdinalIgnoreCase))
+			{
+				return text.Substring(newPrefix.Length).Trim();
+			}
+
+			const string oldPrefix = "From ";
+			if (text.StartsWith(oldPrefix, StringComparison.OrdinalIgnoreCase))
+			{
+				return text.Substring(oldPrefix.Length).Trim();
+			}
+
+			return string.Empty;
+		}
+
+		private bool ContainsText(List<string> list, string value)
+		{
+			if (list == null || string.IsNullOrWhiteSpace(value))
+			{
+				return false;
+			}
+
+			foreach (string item in list)
+			{
+				if (string.Equals(item, value.Trim(), StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private void RemoveDefaultSampleInputs()
+		{
+			if (_config == null || _config.Inputs == null)
+			{
+				return;
+			}
+
+			for (int i = _config.Inputs.Count - 1; i >= 0; i--)
+			{
+				ScriptPinConfig pin = _config.Inputs[i];
+				if (IsOldDefaultSampleInput(pin))
+				{
+					_config.Inputs.RemoveAt(i);
+				}
+			}
+		}
+
+		private bool IsOldDefaultSampleInput(ScriptPinConfig pin)
+		{
+			if (pin == null)
+			{
+				return false;
+			}
+
+			string name = pin.Name == null ? string.Empty : pin.Name.Trim();
+			string binding = pin.BindingPath == null ? string.Empty : pin.BindingPath.Trim();
+
+			// 旧模板的三个示例输入统一清理。
+			// 这里按名称或典型绑定路径都清理，避免旧 .script.xml 里被用户改过默认值后残留。
+			return
+				string.Equals(name, "JobID", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(name, "Measure1", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(name, "Barcode", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(binding, "Comm.JobID", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(binding, "Vpp_01.Result1", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(binding, "Halcon_01.Code", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private void AutoMergeOutputsFromScriptCode(string code)
+		{
+			if (_config == null)
+			{
+				return;
+			}
+
+			if (_config.Outputs == null)
+			{
+				_config.Outputs = new List<ScriptPinConfig>();
+			}
+
+			foreach (string outputName in ExtractSetOutputNames(code))
+			{
+				if (ScriptOutputNameExists(outputName))
+				{
+					continue;
+				}
+
+				ScriptPinConfig output = new ScriptPinConfig();
+				output.Name = outputName;
+				output.DataType = GuessScriptOutputDataType(outputName);
+				output.BindingPath = outputName;
+				output.DefaultValue = string.Empty;
+				output.Description = "Auto detected from context.SetOutput";
+				_config.Outputs.Add(output);
+			}
+		}
+
+		private List<string> ExtractSetOutputNames(string code)
+		{
+			List<string> result = new List<string>();
+
+			if (string.IsNullOrWhiteSpace(code))
+			{
+				return result;
+			}
+
+			try
+			{
+				MatchCollection matches = Regex.Matches(
+					code,
+					@"\.SetOutput\s*\(\s*""(?<name>[^""\\]+)""",
+					RegexOptions.IgnoreCase);
+
+				foreach (Match match in matches)
+				{
+					if (match == null || !match.Success)
+					{
+						continue;
+					}
+
+					string name = match.Groups["name"].Value;
+					if (!string.IsNullOrWhiteSpace(name))
+					{
+						AddUniqueText(result, name.Trim());
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return result;
+		}
+
+		private bool ScriptOutputNameExists(string outputName)
+		{
+			if (_config == null || _config.Outputs == null || string.IsNullOrWhiteSpace(outputName))
+			{
+				return false;
+			}
+
+			foreach (ScriptPinConfig output in _config.Outputs)
+			{
+				if (output != null && string.Equals(output.Name, outputName, StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private ScriptPinDataType GuessScriptOutputDataType(string outputName)
+		{
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return ScriptPinDataType.String;
+			}
+
+			string name = outputName.Trim();
+			if (name.IndexOf("OK", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("Pass", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("NG", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return ScriptPinDataType.Bool;
+			}
+
+			if (name.IndexOf("X", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("Y", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("A", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("Sum", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("Score", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				name.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return ScriptPinDataType.Double;
+			}
+
+			return ScriptPinDataType.String;
+		}
+
+		private void EnsureStepOutputPinsAvailable(TaskConfig task, StepConfig sourceStep)
+		{
+			if (task == null || sourceStep == null)
+			{
+				return;
+			}
+
+			if (sourceStep.OutputPins != null && sourceStep.OutputPins.Count > 0)
+			{
+				return;
+			}
+
+			List<PinConfig> pins = null;
+
+			if (sourceStep.StepType == StepType.Vpp)
+			{
+				pins = TryReadVppOutputPins(sourceStep);
+			}
+			else if (sourceStep.StepType == StepType.Script)
+			{
+				CSharpScriptStepConfig scriptConfig = TryLoadScriptConfigForStep(task, sourceStep);
+				if (scriptConfig != null && scriptConfig.Outputs != null && scriptConfig.Outputs.Count > 0)
+				{
+					pins = new List<PinConfig>();
+					foreach (ScriptPinConfig output in scriptConfig.Outputs)
+					{
+						if (output == null || string.IsNullOrWhiteSpace(output.Name))
+						{
+							continue;
+						}
+
+						PinConfig pin = new PinConfig();
+						pin.PinName = output.Name;
+						pin.SourceKey = sourceStep.StepName + "." + output.Name;
+						pin.TargetKey = pin.SourceKey;
+						pin.DataType = ConvertScriptPinDataTypeToPinDataType(output.DataType);
+						pin.Description = "Script output";
+						pins.Add(pin);
+					}
+				}
+			}
+
+			if (pins == null || pins.Count <= 0)
+			{
+				return;
+			}
+
+			sourceStep.OutputPins = pins;
+			TrySaveOutputPinsToFlowConfig(sourceStep.StepName, pins);
+		}
+
+		private List<PinConfig> TryReadVppOutputPins(StepConfig step)
+		{
+			string vppPath = ResolveStepVppFilePath(step);
+			if (string.IsNullOrWhiteSpace(vppPath) || !File.Exists(vppPath))
+			{
+				return new List<PinConfig>();
+			}
+
+			object toolBlock = TryLoadVisionProObject(vppPath);
+			if (toolBlock == null)
+			{
+				return new List<PinConfig>();
+			}
+
+			return ReadToolBlockPinsByReflection(toolBlock, true, step.StepName);
+		}
+
+		private string ResolveStepVppFilePath(StepConfig step)
+		{
+			if (step == null)
+			{
+				return string.Empty;
+			}
+
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_jobName, _taskName);
+			List<string> candidates = new List<string>();
+			AddUniqueText(candidates, step.ProjectFilePath);
+			AddUniqueText(candidates, step.SourceFilePath);
+
+			if (step.VppFiles != null)
+			{
+				foreach (string file in step.VppFiles)
+				{
+					AddUniqueText(candidates, file);
+				}
+			}
+
+			// 常见情况：StepName=Inspection，而文件名为 Inspection.vpp。
+			AddUniqueText(candidates, step.StepName + ".vpp");
+			AddUniqueText(candidates, Path.Combine("VPP", step.StepName + ".vpp"));
+
+			foreach (string candidate in candidates)
+			{
+				string path = ResolveStepFilePath(taskFolder, candidate);
+				if (IsVppFile(path) && File.Exists(path))
+				{
+					return path;
+				}
+			}
+
+			try
+			{
+				if (!string.IsNullOrWhiteSpace(taskFolder) && Directory.Exists(taskFolder))
+				{
+					string[] files = Directory.GetFiles(taskFolder, "*.vpp", SearchOption.AllDirectories);
+					foreach (string file in files)
+					{
+						if (string.Equals(Path.GetFileNameWithoutExtension(file), step.StepName, StringComparison.OrdinalIgnoreCase))
+						{
+							return file;
+						}
+					}
+
+					if (files.Length == 1)
+					{
+						return files[0];
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return string.Empty;
+		}
+
+		private bool IsVppFile(string path)
+		{
+			return !string.IsNullOrWhiteSpace(path) &&
+				Path.GetExtension(path).Equals(".vpp", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private object TryLoadVisionProObject(string filePath)
+		{
+			try
+			{
+				Type serializerType = Type.GetType("Cognex.VisionPro.CogSerializer, Cognex.VisionPro");
+				if (serializerType == null)
+				{
+					foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+					{
+						try
+						{
+							serializerType = asm.GetType("Cognex.VisionPro.CogSerializer", false, true);
+							if (serializerType != null)
+							{
+								break;
+							}
+						}
+						catch
+						{
+						}
+					}
+				}
+
+				if (serializerType == null)
+				{
+					return null;
+				}
+
+				MethodInfo method = serializerType.GetMethod("LoadObjectFromFile", BindingFlags.Public | BindingFlags.Static, null, new Type[] { typeof(string) }, null);
+				if (method == null)
+				{
+					return null;
+				}
+
+				return method.Invoke(null, new object[] { filePath });
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private List<PinConfig> ReadToolBlockPinsByReflection(object toolBlock, bool outputOnly, string stepName)
+		{
+			List<PinConfig> result = new List<PinConfig>();
+			if (toolBlock == null)
+			{
+				return result;
+			}
+
+			object outputs = GetObjectProperty(toolBlock, "Outputs");
+			foreach (object terminal in EnumerateCollectionItems(outputs))
+			{
+				string name = Convert.ToString(GetObjectProperty(terminal, "Name"));
+				if (string.IsNullOrWhiteSpace(name))
+				{
+					continue;
+				}
+
+				object value = GetObjectProperty(terminal, "Value");
+				object valueType = GetObjectProperty(terminal, "ValueType");
+
+				PinConfig pin = new PinConfig();
+				pin.PinName = name.Trim();
+				pin.SourceKey = stepName + "." + pin.PinName;
+				pin.TargetKey = pin.SourceKey;
+				pin.DataType = GuessPinDataType(value, valueType);
+				pin.Description = "VPP output";
+				result.Add(pin);
+			}
+
+			return result;
+		}
+
+		private object GetObjectProperty(object obj, string propertyName)
+		{
+			if (obj == null || string.IsNullOrWhiteSpace(propertyName))
+			{
+				return null;
+			}
+
+			try
+			{
+				PropertyInfo prop = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+				if (prop != null)
+				{
+					return prop.GetValue(obj, null);
+				}
+			}
+			catch
+			{
+			}
+
+			return null;
+		}
+
+		private List<object> EnumerateCollectionItems(object collection)
+		{
+			List<object> result = new List<object>();
+			if (collection == null)
+			{
+				return result;
+			}
+
+			System.Collections.IEnumerable enumerable = collection as System.Collections.IEnumerable;
+			if (enumerable != null)
+			{
+				try
+				{
+					foreach (object item in enumerable)
+					{
+						if (item != null)
+						{
+							result.Add(item);
+						}
+					}
+					if (result.Count > 0)
+					{
+						return result;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			try
+			{
+				PropertyInfo countProp = collection.GetType().GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+				int count = countProp == null ? 0 : Convert.ToInt32(countProp.GetValue(collection, null));
+				PropertyInfo itemProp = collection.GetType().GetProperty("Item", BindingFlags.Public | BindingFlags.Instance);
+				for (int i = 0; i < count; i++)
+				{
+					object item = null;
+					if (itemProp != null)
+					{
+						try { item = itemProp.GetValue(collection, new object[] { i }); } catch { }
+					}
+					if (item == null)
+					{
+						MethodInfo method = collection.GetType().GetMethod("get_Item", new Type[] { typeof(int) });
+						if (method != null)
+						{
+							try { item = method.Invoke(collection, new object[] { i }); } catch { }
+						}
+					}
+
+					if (item != null)
+					{
+						result.Add(item);
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return result;
+		}
+
+		private PinDataType GuessPinDataType(object value, object valueType)
+		{
+			Type type = null;
+			if (value != null)
+			{
+				type = value.GetType();
+			}
+			else if (valueType is Type)
+			{
+				type = (Type)valueType;
+			}
+
+			string name = type == null ? Convert.ToString(valueType) : type.FullName;
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return PinDataType.String;
+			}
+
+			if (name.IndexOf("Boolean", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Bool", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return PinDataType.Bool;
+			}
+			if (name.IndexOf("Int", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Short", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Long", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return PinDataType.Int;
+			}
+			if (name.IndexOf("Double", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Single", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Float", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Decimal", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return PinDataType.Double;
+			}
+
+			return PinDataType.String;
+		}
+
+		private PinDataType ConvertScriptPinDataTypeToPinDataType(ScriptPinDataType dataType)
+		{
+			if (dataType == ScriptPinDataType.Bool) return PinDataType.Bool;
+			if (dataType == ScriptPinDataType.Int) return PinDataType.Int;
+			if (dataType == ScriptPinDataType.Double) return PinDataType.Double;
+			if (dataType == ScriptPinDataType.Decimal) return PinDataType.Double;
+			return PinDataType.String;
+		}
+
+		private void TrySaveOutputPinsToFlowConfig(string stepName, List<PinConfig> pins)
+		{
+			if (string.IsNullOrWhiteSpace(stepName) || pins == null || pins.Count <= 0)
+			{
+				return;
+			}
+
+			try
+			{
+				ProjectFlowConfig flow = FlowConfigStore.LoadOrCreateDefault();
+				if (flow == null || flow.Jobs == null)
+				{
+					return;
+				}
+
+				JobConfig job = flow.Jobs.FirstOrDefault(j => j != null && string.Equals(j.JobName, _jobName, StringComparison.OrdinalIgnoreCase));
+				if (job == null || job.Tasks == null)
+				{
+					return;
+				}
+
+				TaskConfig task = job.Tasks.FirstOrDefault(t => t != null && string.Equals(t.TaskName, _taskName, StringComparison.OrdinalIgnoreCase));
+				if (task == null || task.Steps == null)
+				{
+					return;
+				}
+
+				StepConfig step = task.Steps.FirstOrDefault(s => s != null && string.Equals(s.StepName, stepName, StringComparison.OrdinalIgnoreCase));
+				if (step == null)
+				{
+					return;
+				}
+
+				step.OutputPins = pins;
+				FlowConfigStore.Save(flow);
+			}
+			catch
+			{
+			}
+		}
+
+		private void AutoMergeSelectedPreviousOutputPinsToInputs()
+		{
+			if (_config == null)
+			{
+				return;
+			}
+
+			if (_config.Inputs == null)
+			{
+				_config.Inputs = new List<ScriptPinConfig>();
+			}
+
+			TaskConfig task = GetCurrentTaskConfig();
+			if (task == null || task.Steps == null || task.StepFlow == null)
+			{
+				return;
+			}
+
+			StepFlowItem currentFlow = FindCurrentScriptFlowItem(task);
+			if (currentFlow == null || currentFlow.ScriptInputStepKeyList == null || currentFlow.ScriptInputStepKeyList.Count <= 0)
+			{
+				return;
+			}
+
+			foreach (string sourceStepName in currentFlow.ScriptInputStepKeyList)
+			{
+				if (string.IsNullOrWhiteSpace(sourceStepName))
+				{
+					continue;
+				}
+
+				StepConfig sourceStep = task.Steps.FirstOrDefault(s =>
+					s != null && string.Equals(s.StepName, sourceStepName, StringComparison.OrdinalIgnoreCase));
+
+				if (sourceStep == null)
+				{
+					continue;
+				}
+
+				// VPP/Hdev/VM 统一走 StepConfig.OutputPins。
+				// 如果 VPP 还没有在算法模块页面打开过，这里会直接从 .vpp 文件读取输出引脚。
+				EnsureStepOutputPinsAvailable(task, sourceStep);
+
+				if (sourceStep.OutputPins != null && sourceStep.OutputPins.Count > 0)
+				{
+					foreach (PinConfig outputPin in sourceStep.OutputPins)
+					{
+						if (outputPin == null || string.IsNullOrWhiteSpace(outputPin.PinName))
+						{
+							continue;
+						}
+
+						string bindingPath = sourceStep.StepName + "." + outputPin.PinName;
+
+						if (ScriptInputBindingExists(bindingPath))
+						{
+							continue;
+						}
+
+						ScriptPinConfig input = new ScriptPinConfig();
+						input.Name = MakeUniqueScriptInputName(outputPin.PinName, sourceStep.StepName);
+						input.DataType = ConvertPinDataTypeToScriptPinDataType(outputPin.DataType);
+						input.BindingPath = bindingPath;
+						input.DefaultValue = string.Empty;
+						input.Description = "AUTO_FROM_STEP:" + sourceStep.StepName;
+
+						_config.Inputs.Add(input);
+					}
+					continue;
+				}
+
+				// 如果前序模块本身也是 Script，则读取它的 .script.xml 输出定义。
+				if (sourceStep.StepType == StepType.Script)
+				{
+					CSharpScriptStepConfig scriptConfig = TryLoadScriptConfigForStep(task, sourceStep);
+					if (scriptConfig == null || scriptConfig.Outputs == null)
+					{
+						continue;
+					}
+
+					foreach (ScriptPinConfig output in scriptConfig.Outputs)
+					{
+						if (output == null || string.IsNullOrWhiteSpace(output.Name))
+						{
+							continue;
+						}
+
+						string bindingPath = sourceStep.StepName + "." + output.Name;
+						if (ScriptInputBindingExists(bindingPath))
+						{
+							continue;
+						}
+
+						ScriptPinConfig input = new ScriptPinConfig();
+						input.Name = MakeUniqueScriptInputName(output.Name, sourceStep.StepName);
+						input.DataType = output.DataType;
+						input.BindingPath = bindingPath;
+						input.DefaultValue = string.Empty;
+						input.Description = "AUTO_FROM_STEP:" + sourceStep.StepName;
+
+						_config.Inputs.Add(input);
+					}
+				}
+			}
+		}
+
+		private bool ScriptInputBindingExists(string bindingPath)
+		{
+			if (_config == null || _config.Inputs == null || string.IsNullOrWhiteSpace(bindingPath))
+			{
+				return false;
+			}
+
+			foreach (ScriptPinConfig input in _config.Inputs)
+			{
+				if (input == null)
+				{
+					continue;
+				}
+
+				if (string.Equals(input.BindingPath, bindingPath, StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private string MakeUniqueScriptInputName(string outputPinName, string sourceStepName)
+		{
+			string baseName = MakeSafeIdentifier(outputPinName);
+			if (string.IsNullOrWhiteSpace(baseName))
+			{
+				baseName = MakeSafeIdentifier(sourceStepName + "_Output");
+			}
+
+			if (!ScriptInputNameExists(baseName))
+			{
+				return baseName;
+			}
+
+			string prefixName = MakeSafeIdentifier(sourceStepName + "_" + outputPinName);
+			if (!ScriptInputNameExists(prefixName))
+			{
+				return prefixName;
+			}
+
+			int index = 2;
+			while (ScriptInputNameExists(prefixName + "_" + index.ToString()))
+			{
+				index++;
+			}
+
+			return prefixName + "_" + index.ToString();
+		}
+
+		private bool ScriptInputNameExists(string name)
+		{
+			if (_config == null || _config.Inputs == null || string.IsNullOrWhiteSpace(name))
+			{
+				return false;
+			}
+
+			foreach (ScriptPinConfig input in _config.Inputs)
+			{
+				if (input != null && string.Equals(input.Name, name, StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private string MakeSafeIdentifier(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return string.Empty;
+			}
+
+			StringBuilder sb = new StringBuilder();
+			foreach (char c in text.Trim())
+			{
+				if (char.IsLetterOrDigit(c) || c == '_')
+				{
+					sb.Append(c);
+				}
+				else
+				{
+					sb.Append('_');
+				}
+			}
+
+			string result = sb.ToString().Trim('_');
+			if (string.IsNullOrWhiteSpace(result))
+			{
+				return string.Empty;
+			}
+
+			if (!(char.IsLetter(result[0]) || result[0] == '_'))
+			{
+				result = "P_" + result;
+			}
+
+			return result;
+		}
+
+		private ScriptPinDataType ConvertPinDataTypeToScriptPinDataType(PinDataType type)
+		{
+			switch (type)
+			{
+				case PinDataType.Bool:
+					return ScriptPinDataType.Bool;
+				case PinDataType.Int:
+					return ScriptPinDataType.Int;
+				case PinDataType.Double:
+				case PinDataType.Float:
+					return ScriptPinDataType.Double;
+				case PinDataType.Image:
+				case PinDataType.ByteArray:
+					return ScriptPinDataType.Object;
+				case PinDataType.String:
+				default:
+					return ScriptPinDataType.String;
+			}
+		}
+
+		private void AddUniqueText(List<string> list, string value)
+		{
+			if (list == null || string.IsNullOrWhiteSpace(value))
+			{
+				return;
+			}
+
+			string text = value.Trim();
+			if (text.Length <= 0)
+			{
+				return;
+			}
+
+			foreach (string item in list)
+			{
+				if (string.Equals(item, text, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+			}
+
+			list.Add(text);
+		}
+
+		private void EnsureBindingPathOption(string bindingPath)
+		{
+			if (string.IsNullOrWhiteSpace(bindingPath) || IsCommonRuntimeBinding(bindingPath))
+			{
+				return;
+			}
+
+			if (_bindingSourceOptions == null)
+			{
+				_bindingSourceOptions = new List<string>();
+			}
+
+			AddUniqueText(_bindingSourceOptions, bindingPath);
+			ApplyBindingSourceOptionsToGrid();
+		}
+
+		private void ApplyBindingSourceOptionsToGrid()
+		{
+			if (gridInputs == null || !gridInputs.Columns.Contains("BindingPath"))
+			{
+				return;
+			}
+
+			DataGridViewComboBoxColumn combo = gridInputs.Columns["BindingPath"] as DataGridViewComboBoxColumn;
+			if (combo == null)
+			{
+				return;
+			}
+
+			combo.Items.Clear();
+			combo.Items.Add(string.Empty);
+
+			if (_bindingSourceOptions != null)
+			{
+				foreach (string item in _bindingSourceOptions)
+				{
+					if (!string.IsNullOrWhiteSpace(item) && !combo.Items.Contains(item))
+					{
+						combo.Items.Add(item);
+					}
+				}
+			}
 		}
 
 
@@ -1051,38 +2550,36 @@ namespace Aron_V3
 				Panel header = new Panel();
 				header.Name = isInput ? "inputHeaderPanel" : "outputHeaderPanel";
 				header.Dock = DockStyle.Top;
-				header.Height = 40;
+				header.Height = 34;
 				header.Padding = new Padding(0, 0, 0, 4);
 				header.BackColor = _back;
 
-				deleteButton.Visible = true;
-				deleteButton.Enabled = true;
-				deleteButton.Text = "-";
-				deleteButton.Width = 42;
-				deleteButton.Dock = DockStyle.Right;
-				deleteButton.Margin = new Padding(4, 2, 0, 2);
-				deleteButton.BringToFront();
+				Panel buttonHost = new Panel();
+				buttonHost.Dock = DockStyle.Right;
+				buttonHost.Width = 72;
+				buttonHost.Padding = new Padding(0, 2, 0, 2);
+				buttonHost.Margin = new Padding(0);
+				buttonHost.BackColor = _back;
 
-				addButton.Visible = true;
-				addButton.Enabled = true;
-				addButton.Text = "+";
-				addButton.Width = 42;
-				addButton.Dock = DockStyle.Right;
-				addButton.Margin = new Padding(4, 2, 4, 2);
-				addButton.BringToFront();
+				PreparePinSmallButton(deleteButton, "-", 0);
+				PreparePinSmallButton(addButton, "+", 36);
+
+				buttonHost.Controls.Add(deleteButton);
+				buttonHost.Controls.Add(addButton);
 
 				title.Dock = DockStyle.Fill;
 				title.Margin = new Padding(0);
+				title.Padding = new Padding(0, 0, 8, 0);
 				title.TextAlign = ContentAlignment.MiddleLeft;
 				title.BackColor = Color.Transparent;
 				title.ForeColor = _text;
 
 				header.Controls.Add(title);
-				header.Controls.Add(deleteButton);
-				header.Controls.Add(addButton);
+				header.Controls.Add(buttonHost);
 
 				grid.Dock = DockStyle.Fill;
 				grid.Margin = new Padding(0);
+				grid.ColumnHeadersVisible = true;
 
 				panel.Controls.Add(grid);
 				panel.Controls.Add(header);
@@ -1096,16 +2593,84 @@ namespace Aron_V3
 			}
 		}
 
+		private void PreparePinSmallButton(Button button, string text, int x)
+		{
+			if (button == null)
+			{
+				return;
+			}
+
+			button.Visible = true;
+			button.Enabled = true;
+			button.Text = text;
+			button.Dock = DockStyle.None;
+			button.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			button.Location = new Point(x, 2);
+			button.Size = new Size(30, 26);
+			button.Margin = new Padding(0);
+			button.Padding = new Padding(0);
+			button.FlatStyle = FlatStyle.Flat;
+			button.FlatAppearance.BorderSize = 1;
+			button.FlatAppearance.BorderColor = _accent;
+			button.FlatAppearance.MouseDownBackColor = Color.FromArgb(20, 70, 135);
+			button.FlatAppearance.MouseOverBackColor = Color.FromArgb(15, 45, 78);
+			button.BackColor = _panel;
+			button.ForeColor = Color.White;
+			button.Font = new Font("Microsoft YaHei UI", 8F, FontStyle.Bold);
+			button.TextAlign = ContentAlignment.MiddleCenter;
+			button.UseVisualStyleBackColor = false;
+		}
+
 		private void UpdatePinToolbarText()
 		{
+			if (btnShowInputs != null) btnShowInputs.Text = _isEnglish ? "Inputs" : "输入";
+			if (btnShowOutputs != null) btnShowOutputs.Text = _isEnglish ? "Outputs" : "输出";
 			if (btnInputAdd != null) btnInputAdd.Text = "+";
 			if (btnInputDelete != null) btnInputDelete.Text = "-";
 			if (btnOutputAdd != null) btnOutputAdd.Text = "+";
 			if (btnOutputDelete != null) btnOutputDelete.Text = "-";
+			ApplyPinTabButtonStyle();
+		}
+
+		private void InitializePinToggleLayout()
+		{
+			_showInputPins = true;
+			ShowPinPage(true);
+		}
+
+
+		private void ApplyPinTabButtonStyle()
+		{
+			ApplyPinTabSingleButton(btnShowInputs, _showInputPins);
+			ApplyPinTabSingleButton(btnShowOutputs, !_showInputPins);
+		}
+
+		private void ApplyPinTabSingleButton(Button button, bool selected)
+		{
+			if (button == null)
+			{
+				return;
+			}
+
+			button.BackColor = selected ? Color.FromArgb(0, 95, 190) : _panel;
+			button.ForeColor = selected ? Color.White : _text;
+			button.FlatAppearance.BorderColor = selected ? _accent : _border;
 		}
 
 		private void BindEvents()
 		{
+			if (btnShowInputs != null)
+			{
+				btnShowInputs.Click -= btnShowInputs_Click;
+				btnShowInputs.Click += btnShowInputs_Click;
+			}
+
+			if (btnShowOutputs != null)
+			{
+				btnShowOutputs.Click -= btnShowOutputs_Click;
+				btnShowOutputs.Click += btnShowOutputs_Click;
+			}
+
 			btnReferenceDll.Click += btnReferenceDll_Click;
 			btnSave.Click += btnSave_Click;
 			btnCompile.Click += btnCompile_Click;
@@ -1116,8 +2681,8 @@ namespace Aron_V3
 			btnOutputAdd.Click += delegate { AddPinRow(gridOutputs); };
 			btnOutputDelete.Click += delegate { DeleteSelectedPinRows(gridOutputs); };
 
-			this.Resize += delegate { UpdateScriptEditorSplitter(); };
-			this.HandleCreated += delegate { UpdateScriptEditorSplitter(); };
+			gridInputs.CellBeginEdit -= gridInputs_CellBeginEdit;
+			gridInputs.CellBeginEdit += gridInputs_CellBeginEdit;
 
 			txtCode.TextChanged += txtCode_TextChanged;
 			txtCode.VScroll += txtCode_VScroll;
@@ -1129,6 +2694,97 @@ namespace Aron_V3
 			panelLineNumbers.Paint += panelLineNumbers_Paint;
 		}
 
+		private bool _showingInputPins = true;
+
+		private void btnShowInputs_Click(object sender, EventArgs e)
+		{
+			ShowPinPage(true);
+		}
+
+		private void btnShowOutputs_Click(object sender, EventArgs e)
+		{
+			ShowPinPage(false);
+		}
+
+		private void ShowPinPage(bool showInputs)
+		{
+			_showingInputPins = showInputs;
+
+			if (inputPanel != null)
+			{
+				inputPanel.Visible = showInputs;
+				inputPanel.Dock = DockStyle.Fill;
+			}
+
+			if (outputPanel != null)
+			{
+				outputPanel.Visible = !showInputs;
+				outputPanel.Dock = DockStyle.Fill;
+			}
+
+			if (showInputs)
+			{
+				if (inputPanel != null)
+				{
+					inputPanel.BringToFront();
+				}
+
+				if (gridInputs != null)
+				{
+					gridInputs.BringToFront();
+				}
+			}
+			else
+			{
+				if (outputPanel != null)
+				{
+					outputPanel.BringToFront();
+				}
+
+				if (gridOutputs != null)
+				{
+					gridOutputs.BringToFront();
+				}
+			}
+
+			UpdatePinPageButtonStyle();
+		}
+
+		private void UpdatePinPageButtonStyle()
+		{
+			StylePinPageButton(btnShowInputs, _showingInputPins);
+			StylePinPageButton(btnShowOutputs, !_showingInputPins);
+		}
+
+		private void StylePinPageButton(Button button, bool selected)
+		{
+			if (button == null)
+			{
+				return;
+			}
+
+			button.FlatStyle = FlatStyle.Flat;
+			button.FlatAppearance.BorderSize = 1;
+			button.FlatAppearance.BorderColor = selected ? _accent : _border;
+			button.BackColor = selected ? Color.FromArgb(0, 95, 190) : _panel;
+			button.ForeColor = selected ? Color.White : _muted;
+			button.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			button.UseVisualStyleBackColor = false;
+		}
+
+		private void gridInputs_CellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
+		{
+			if (e.RowIndex < 0 || e.ColumnIndex < 0 || gridInputs == null)
+			{
+				return;
+			}
+
+			if (gridInputs.Columns[e.ColumnIndex].Name == "BindingPath")
+			{
+				RefreshInputBindingSourceOptions();
+			}
+		}
+
 		private void AddPinRow(DataGridView grid)
 		{
 			if (grid == null)
@@ -1137,9 +2793,40 @@ namespace Aron_V3
 			}
 
 			int rowIndex = grid.Rows.Add();
+			DataGridViewRow row = grid.Rows[rowIndex];
+
+			if (grid.Columns.Contains("Name"))
+			{
+				row.Cells["Name"].Value = string.Empty;
+			}
+
 			if (grid.Columns.Contains("DataType"))
 			{
-				grid.Rows[rowIndex].Cells["DataType"].Value = ScriptPinDataType.String;
+				row.Cells["DataType"].Value = ScriptPinDataType.String;
+			}
+
+			if (grid.Columns.Contains("DefaultValue"))
+			{
+				row.Cells["DefaultValue"].Value = string.Empty;
+			}
+
+			if (grid.Columns.Contains("BindingPath"))
+			{
+				row.Cells["BindingPath"].Value = string.Empty;
+			}
+
+			if (grid.Columns.Contains("CurrentValue"))
+			{
+				row.Cells["CurrentValue"].Value = string.Empty;
+				row.Cells["CurrentValue"].ReadOnly = true;
+			}
+
+			grid.ClearSelection();
+			row.Selected = true;
+			if (grid.Columns.Contains("Name"))
+			{
+				grid.CurrentCell = row.Cells["Name"];
+				grid.BeginEdit(true);
 			}
 		}
 
@@ -1161,10 +2848,13 @@ namespace Aron_V3
 
 		private void UpdateScriptEditorSplitter()
 		{
+			// 左侧输入/输出配置区收窄，给右侧 C# 代码编辑区更多宽度。
 			if (mainSplit != null && !mainSplit.IsDisposed && mainSplit.Width > 500)
 			{
-				int leftWidth = (int)(mainSplit.Width * 0.46);
-				leftWidth = Clamp(leftWidth, 520, mainSplit.Width - 620);
+				int leftWidth = (int)(mainSplit.Width * 0.38);
+				int minLeft = 430;
+				int maxLeft = Math.Max(minLeft, mainSplit.Width - 760);
+				leftWidth = Clamp(leftWidth, minLeft, maxLeft);
 
 				try
 				{
@@ -1193,6 +2883,7 @@ namespace Aron_V3
 				}
 			}
 		}
+
 
 		private int Clamp(int value, int min, int max)
 		{
@@ -1231,11 +2922,57 @@ namespace Aron_V3
 				return;
 			}
 
-			if (grid.Columns.Contains("Name")) grid.Columns["Name"].HeaderText = isInput ? (_isEnglish ? "Input" : "输入名") : (_isEnglish ? "Output" : "输出名");
-			if (grid.Columns.Contains("DataType")) grid.Columns["DataType"].HeaderText = _isEnglish ? "Type" : "类型";
-			if (grid.Columns.Contains("BindingPath")) grid.Columns["BindingPath"].HeaderText = isInput ? (_isEnglish ? "Source" : "绑定来源") : (_isEnglish ? "Target" : "目标去向");
-			if (grid.Columns.Contains("DefaultValue")) grid.Columns["DefaultValue"].HeaderText = isInput ? (_isEnglish ? "Current / Default" : "当前值/默认值") : (_isEnglish ? "Default" : "默认值");
-			if (grid.Columns.Contains("Description")) grid.Columns["Description"].HeaderText = _isEnglish ? "Description" : "说明";
+			if (grid.Columns.Contains("Name"))
+			{
+				grid.Columns["Name"].HeaderText = isInput
+					? (_isEnglish ? "Input" : "输入名")
+					: (_isEnglish ? "Output" : "输出名");
+			}
+
+			if (grid.Columns.Contains("DataType"))
+			{
+				grid.Columns["DataType"].HeaderText = _isEnglish ? "Type" : "类型";
+			}
+
+			if (grid.Columns.Contains("DefaultValue"))
+			{
+				grid.Columns["DefaultValue"].HeaderText = _isEnglish ? "Current / Test" : "当前值/测试值";
+			}
+
+			if (grid.Columns.Contains("BindingPath"))
+			{
+				grid.Columns["BindingPath"].HeaderText = _isEnglish ? "Source" : "绑定来源";
+			}
+
+			if (grid.Columns.Contains("CurrentValue"))
+			{
+				grid.Columns["CurrentValue"].HeaderText = _isEnglish ? "Current Output" : "当前输出值";
+			}
+		}
+
+
+
+		private void EnsureOutputPanelVisible()
+		{
+			// 当前版本左侧用“输入/输出”按钮切换，不再通过 SplitContainer 同时显示两块区域。
+			// 这里仅保证两个表格对象没有被折叠或错误 Dock。
+			try
+			{
+				if (gridInputs != null)
+				{
+					gridInputs.Dock = DockStyle.Fill;
+				}
+
+				if (gridOutputs != null)
+				{
+					gridOutputs.Dock = DockStyle.Fill;
+				}
+
+				ShowPinPage(_showInputPins);
+			}
+			catch
+			{
+			}
 		}
 
 		private void LoadConfigToUi()
@@ -1248,17 +2985,27 @@ namespace Aron_V3
 				chkEnable.Checked = true;
 				txtScriptPath.Text = _config == null ? string.Empty : _config.ScriptFilePath;
 
-				LoadPinsToGrid(gridInputs, _config == null ? null : _config.Inputs);
-				LoadPinsToGrid(gridOutputs, _config == null ? null : _config.Outputs);
-
+				string scriptCode = string.Empty;
 				if (_config != null && !string.IsNullOrWhiteSpace(_config.ScriptFilePath) && File.Exists(_config.ScriptFilePath))
 				{
-					txtCode.Text = File.ReadAllText(_config.ScriptFilePath, System.Text.Encoding.UTF8);
+					scriptCode = File.ReadAllText(_config.ScriptFilePath, System.Text.Encoding.UTF8);
 				}
-				else
-				{
-					txtCode.Text = string.Empty;
-				}
+
+				// 1. 清理旧模板自动生成的 JobID / Measure1 / Barcode 示例输入。
+				// 2. 根据任务调度中 Script 绑定的前序模块，自动补齐 VPP/Hdev/Script 输出引脚。
+				//    VPP 即使没有在算法模块页面手动打开，也会直接读取 .vpp 文件提取 OutputPins。
+				// 3. 根据脚本代码中的 context.SetOutput("xxx", ...) 自动补齐输出表。
+				RemoveDefaultSampleInputs();
+				RemoveStalePreviousStepInputs();
+				AutoMergeSelectedPreviousOutputPinsToInputs();
+				AutoMergeOutputsFromScriptCode(scriptCode);
+				RefreshInputBindingSourceOptions();
+
+				EnsureOutputPanelVisible();
+				LoadPinsToGrid(gridInputs, _config == null ? null : _config.Inputs);
+				LoadPinsToGrid(gridOutputs, _config == null ? null : _config.Outputs);
+				EnsureOutputPanelVisible();
+				txtCode.Text = scriptCode;
 
 				RefreshCodeLineNumbers();
 				SetStatusReady();
@@ -1307,7 +3054,14 @@ namespace Aron_V3
 
 		private void LoadPinsToGrid(DataGridView grid, List<ScriptPinConfig> pins)
 		{
+			if (grid == null)
+			{
+				return;
+			}
+
+			bool isInput = grid == gridInputs;
 			grid.Rows.Clear();
+			EnsurePinGridHeaderVisible(grid);
 
 			if (pins == null)
 			{
@@ -1316,16 +3070,36 @@ namespace Aron_V3
 
 			foreach (ScriptPinConfig pin in pins)
 			{
+				if (pin == null)
+				{
+					continue;
+				}
+
 				int rowIndex = grid.Rows.Add();
 				DataGridViewRow row = grid.Rows[rowIndex];
 
-				row.Cells["Name"].Value = pin.Name;
-				row.Cells["DataType"].Value = pin.DataType;
-				row.Cells["BindingPath"].Value = pin.BindingPath;
-				row.Cells["DefaultValue"].Value = pin.DefaultValue;
-				row.Cells["Description"].Value = pin.Description;
+				SetPinCellValueIfExists(row, "Name", pin.Name);
+				SetPinCellValueIfExists(row, "DataType", pin.DataType);
+
+				if (isInput)
+				{
+					SetPinCellValueIfExists(row, "DefaultValue", pin.DefaultValue);
+					EnsureBindingPathOption(pin.BindingPath);
+					SetPinCellValueIfExists(row, "BindingPath", pin.BindingPath);
+				}
+				else
+				{
+					SetPinCellValueIfExists(row, "CurrentValue", pin.DefaultValue);
+					if (grid.Columns.Contains("CurrentValue"))
+					{
+						row.Cells["CurrentValue"].ReadOnly = true;
+					}
+				}
 			}
+
+			EnsurePinGridHeaderVisible(grid);
 		}
+
 
 		private List<ScriptPinConfig> ReadPinsFromGrid(DataGridView grid)
 		{
@@ -1336,14 +3110,16 @@ namespace Aron_V3
 				return result;
 			}
 
+			bool isInput = grid == gridInputs;
+
 			foreach (DataGridViewRow row in grid.Rows)
 			{
-				if (row.IsNewRow)
+				if (row == null || row.IsNewRow)
 				{
 					continue;
 				}
 
-				string name = Convert.ToString(row.Cells["Name"].Value);
+				string name = GetPinCellString(row, "Name");
 
 				if (string.IsNullOrWhiteSpace(name))
 				{
@@ -1352,15 +3128,57 @@ namespace Aron_V3
 
 				ScriptPinConfig pin = new ScriptPinConfig();
 				pin.Name = name.Trim();
-				pin.DataType = ParseDataType(Convert.ToString(row.Cells["DataType"].Value));
-				pin.BindingPath = Convert.ToString(row.Cells["BindingPath"].Value);
-				pin.DefaultValue = Convert.ToString(row.Cells["DefaultValue"].Value);
-				pin.Description = Convert.ToString(row.Cells["Description"].Value);
+				pin.DataType = ParseDataType(GetPinCellString(row, "DataType"));
 
+				if (isInput)
+				{
+					pin.DefaultValue = GetPinCellString(row, "DefaultValue");
+					pin.BindingPath = GetPinCellString(row, "BindingPath");
+				}
+				else
+				{
+					// 输出“当前输出值”只用于调试显示，不保存为绑定去向。
+					pin.DefaultValue = GetPinCellString(row, "CurrentValue");
+					pin.BindingPath = string.Empty;
+				}
+
+				pin.Description = isInput ? GetAutoInputDescriptionByBinding(pin.BindingPath) : string.Empty;
 				result.Add(pin);
 			}
 
 			return result;
+		}
+
+
+		private void SetPinCellValueIfExists(DataGridViewRow row, string columnName, object value)
+		{
+			if (row == null || row.DataGridView == null)
+			{
+				return;
+			}
+
+			if (!row.DataGridView.Columns.Contains(columnName))
+			{
+				return;
+			}
+
+			row.Cells[columnName].Value = value;
+		}
+
+		private string GetPinCellString(DataGridViewRow row, string columnName)
+		{
+			if (row == null || row.DataGridView == null)
+			{
+				return string.Empty;
+			}
+
+			if (!row.DataGridView.Columns.Contains(columnName))
+			{
+				return string.Empty;
+			}
+
+			object value = row.Cells[columnName].Value;
+			return value == null ? string.Empty : Convert.ToString(value);
 		}
 
 		private ScriptPinDataType ParseDataType(string text)
@@ -1955,14 +3773,14 @@ namespace Aron_V3
 
 			foreach (DataGridViewRow row in gridInputs.Rows)
 			{
-				if (row.IsNewRow)
+				if (row == null || row.IsNewRow)
 				{
 					continue;
 				}
 
-				string name = Convert.ToString(row.Cells["Name"].Value);
-				string bindingPath = Convert.ToString(row.Cells["BindingPath"].Value);
-				string value = Convert.ToString(row.Cells["DefaultValue"].Value);
+				string name = GetPinCellString(row, "Name");
+				string bindingPath = GetPinCellString(row, "BindingPath");
+				string value = GetPinCellString(row, "DefaultValue");
 
 				if (!string.IsNullOrWhiteSpace(name))
 				{
@@ -1977,6 +3795,7 @@ namespace Aron_V3
 
 			return dict;
 		}
+
 
 		private CompilerResultProxy CompileOnly(CSharpScriptStepRunner runner)
 		{
@@ -2021,8 +3840,52 @@ namespace Aron_V3
 			foreach (KeyValuePair<string, object> pair in outputs)
 			{
 				LogInfo("Output: " + pair.Key + " = " + Convert.ToString(pair.Value));
+				UpdateOutputCurrentValue(pair.Key, pair.Value);
 			}
 		}
+
+		private void UpdateOutputCurrentValue(string outputName, object value)
+		{
+			if (gridOutputs == null || string.IsNullOrWhiteSpace(outputName))
+			{
+				return;
+			}
+
+			if (!gridOutputs.Columns.Contains("Name") || !gridOutputs.Columns.Contains("CurrentValue"))
+			{
+				return;
+			}
+
+			foreach (DataGridViewRow row in gridOutputs.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				string name = GetPinCellString(row, "Name");
+
+				if (string.Equals(name, outputName, StringComparison.OrdinalIgnoreCase))
+				{
+					row.Cells["CurrentValue"].Value = value == null ? string.Empty : Convert.ToString(value);
+					row.Cells["CurrentValue"].ReadOnly = true;
+					return;
+				}
+			}
+
+			int rowIndex = gridOutputs.Rows.Add();
+			DataGridViewRow newRow = gridOutputs.Rows[rowIndex];
+
+			SetPinCellValueIfExists(newRow, "Name", outputName);
+			SetPinCellValueIfExists(newRow, "DataType", ScriptPinDataType.String);
+			SetPinCellValueIfExists(newRow, "CurrentValue", value == null ? string.Empty : Convert.ToString(value));
+
+			if (gridOutputs.Columns.Contains("CurrentValue"))
+			{
+				newRow.Cells["CurrentValue"].ReadOnly = true;
+			}
+		}
+
 
 		private void ClearLogs()
 		{

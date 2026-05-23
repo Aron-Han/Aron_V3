@@ -2558,7 +2558,185 @@ namespace Aron_V3
 			finally
 			{
 				_loadingPins = false;
+
+				// 关键：VPP 页面当前显示的输出引脚，需要同步回 FlowConfig 的 StepConfig.OutputPins。
+				// Script 编辑器的“绑定来源”下拉，就是从这些 OutputPins 中生成的。
+				SyncDisplayedPinsToCurrentStepConfig();
 			}
+		}
+
+		private void SyncDisplayedPinsToCurrentStepConfig()
+		{
+			if (dgvPins == null || string.IsNullOrWhiteSpace(_currentJobName) ||
+				string.IsNullOrWhiteSpace(_currentTaskName) || string.IsNullOrWhiteSpace(_currentAlgorithmName))
+			{
+				return;
+			}
+
+			try
+			{
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+				if (config == null || config.Jobs == null)
+				{
+					return;
+				}
+
+				JobConfig job = config.Jobs.FirstOrDefault(j =>
+					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
+
+				if (job == null || job.Tasks == null)
+				{
+					return;
+				}
+
+				TaskConfig task = job.Tasks.FirstOrDefault(t =>
+					t != null && string.Equals(t.TaskName, _currentTaskName, StringComparison.OrdinalIgnoreCase));
+
+				if (task == null || task.Steps == null)
+				{
+					return;
+				}
+
+				StepConfig step = task.Steps.FirstOrDefault(s =>
+					s != null &&
+					(s.StepType == StepType.Vpp || s.StepType == StepType.Halcon || s.StepType == StepType.VisionMaster) &&
+					(string.Equals(s.StepName, _currentAlgorithmName, StringComparison.OrdinalIgnoreCase) ||
+					 IsSameAlgorithmFileName(s, _currentAlgorithmName, _currentAlgorithmPath)));
+
+				if (step == null)
+				{
+					return;
+				}
+
+				step.InputPins = new List<PinConfig>();
+				step.OutputPins = new List<PinConfig>();
+
+				foreach (DataGridViewRow row in dgvPins.Rows)
+				{
+					if (row == null || row.IsNewRow)
+					{
+						continue;
+					}
+
+					string direction = GetPinGridCellString(row, "colDirection");
+					string pinName = GetPinGridCellString(row, "colName");
+					string dataTypeText = GetPinGridCellString(row, "colDataType");
+					string remark = GetPinGridCellString(row, "colRemark");
+
+					if (string.IsNullOrWhiteSpace(pinName))
+					{
+						continue;
+					}
+
+					PinConfig pin = new PinConfig();
+					pin.PinName = pinName.Trim();
+					pin.DataType = ConvertVppTypeTextToPinDataType(dataTypeText);
+					pin.SourceKey = step.StepName + "." + pin.PinName;
+					pin.TargetKey = step.StepName + "." + pin.PinName;
+					pin.Description = remark;
+
+					if (string.Equals(direction, "Input", StringComparison.OrdinalIgnoreCase))
+					{
+						step.InputPins.Add(pin);
+					}
+					else if (string.Equals(direction, "Output", StringComparison.OrdinalIgnoreCase))
+					{
+						step.OutputPins.Add(pin);
+					}
+				}
+
+				FlowConfigStore.Save(config);
+			}
+			catch
+			{
+				// 引脚同步失败不影响 VPP 显示和运行。
+			}
+		}
+
+		private bool IsSameAlgorithmFileName(StepConfig step, string currentAlgorithmName, string currentAlgorithmPath)
+		{
+			if (step == null)
+			{
+				return false;
+			}
+
+			string currentName = Path.GetFileNameWithoutExtension(currentAlgorithmName ?? string.Empty);
+			string currentPathName = Path.GetFileNameWithoutExtension(currentAlgorithmPath ?? string.Empty);
+
+			List<string> names = new List<string>();
+			AddNameForCompare(names, step.StepName);
+			AddNameForCompare(names, step.ProjectFilePath);
+			AddNameForCompare(names, step.SourceFilePath);
+
+			if (step.VppFiles != null)
+			{
+				foreach (string file in step.VppFiles)
+				{
+					AddNameForCompare(names, file);
+				}
+			}
+
+			foreach (string name in names)
+			{
+				if (string.Equals(name, currentName, StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(name, currentPathName, StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private void AddNameForCompare(List<string> names, string value)
+		{
+			if (names == null || string.IsNullOrWhiteSpace(value))
+			{
+				return;
+			}
+
+			string name = Path.GetFileNameWithoutExtension(value.Trim());
+			if (!string.IsNullOrWhiteSpace(name) && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+			{
+				names.Add(name);
+			}
+		}
+
+		private string GetPinGridCellString(DataGridViewRow row, string columnName)
+		{
+			if (row == null || row.DataGridView == null || string.IsNullOrWhiteSpace(columnName))
+			{
+				return string.Empty;
+			}
+
+			if (!row.DataGridView.Columns.Contains(columnName))
+			{
+				return string.Empty;
+			}
+
+			object value = row.Cells[columnName].Value;
+			return value == null ? string.Empty : Convert.ToString(value);
+		}
+
+		private PinDataType ConvertVppTypeTextToPinDataType(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return PinDataType.String;
+			}
+
+			string t = text.Trim();
+
+			if (t.IndexOf("bool", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Bool;
+			if (t.IndexOf("int", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Int;
+			if (t.IndexOf("double", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Double;
+			if (t.IndexOf("single", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Float;
+			if (t.IndexOf("float", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Float;
+			if (t.IndexOf("image", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Image;
+			if (t.IndexOf("ICogImage", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.Image;
+			if (t.IndexOf("byte", StringComparison.OrdinalIgnoreCase) >= 0) return PinDataType.ByteArray;
+
+			return PinDataType.String;
 		}
 
 		private object GetPropertyObject(object obj, string propertyName)
