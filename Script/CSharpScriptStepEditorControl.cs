@@ -2629,15 +2629,95 @@ namespace Aron_V3
 			if (btnInputDelete != null) btnInputDelete.Text = "-";
 			if (btnOutputAdd != null) btnOutputAdd.Text = "+";
 			if (btnOutputDelete != null) btnOutputDelete.Text = "-";
+
+			LayoutPinToolbarButtons();
 			ApplyPinTabButtonStyle();
 		}
 
 		private void InitializePinToggleLayout()
 		{
 			_showInputPins = true;
+
+			if (pinToolPanel != null)
+			{
+				pinToolPanel.Resize -= pinToolPanel_Resize;
+				pinToolPanel.Resize += pinToolPanel_Resize;
+			}
+
 			ShowPinPage(true);
 		}
 
+		private void pinToolPanel_Resize(object sender, EventArgs e)
+		{
+			LayoutPinToolbarButtons();
+		}
+
+		private void LayoutPinToolbarButtons()
+		{
+			if (pinToolPanel == null)
+			{
+				return;
+			}
+
+			int width = pinToolPanel.ClientSize.Width;
+			if (width <= 0)
+			{
+				return;
+			}
+
+			int top = 6;
+			int buttonH = 32;
+			int tabW = 86;
+			int smallW = 34;
+			int gap = 6;
+			int rightPadding = 12;
+
+			SetPinButtonBounds(btnShowInputs, 0, top, tabW, buttonH);
+			SetPinButtonBounds(btnShowOutputs, tabW + 4, top, tabW, buttonH);
+
+			int deleteX = width - rightPadding - smallW;
+			int addX = deleteX - gap - smallW;
+
+			if (addX < tabW * 2 + 20)
+			{
+				addX = tabW * 2 + 20;
+				deleteX = addX + gap + smallW;
+			}
+
+			SetPinButtonBounds(btnInputAdd, addX, top, smallW, buttonH);
+			SetPinButtonBounds(btnInputDelete, deleteX, top, smallW, buttonH);
+			SetPinButtonBounds(btnOutputAdd, addX, top, smallW, buttonH);
+			SetPinButtonBounds(btnOutputDelete, deleteX, top, smallW, buttonH);
+
+			int titleX = tabW * 2 + 18;
+			int titleW = Math.Max(40, addX - titleX - 8);
+
+			if (lblInputTitle != null)
+			{
+				lblInputTitle.SetBounds(titleX, 8, titleW, 28);
+				lblInputTitle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+			}
+
+			if (lblOutputTitle != null)
+			{
+				lblOutputTitle.SetBounds(titleX, 8, titleW, 28);
+				lblOutputTitle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+			}
+		}
+
+		private void SetPinButtonBounds(Button button, int x, int y, int width, int height)
+		{
+			if (button == null)
+			{
+				return;
+			}
+
+			button.Dock = DockStyle.None;
+			button.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+			button.Margin = new Padding(0);
+			button.Padding = new Padding(0);
+			button.SetBounds(x, y, width, height);
+		}
 
 		private void ApplyPinTabButtonStyle()
 		{
@@ -2652,9 +2732,15 @@ namespace Aron_V3
 				return;
 			}
 
-			button.BackColor = selected ? Color.FromArgb(0, 95, 190) : _panel;
-			button.ForeColor = selected ? Color.White : _text;
+			button.FlatStyle = FlatStyle.Flat;
+			button.FlatAppearance.BorderSize = 1;
 			button.FlatAppearance.BorderColor = selected ? _accent : _border;
+			button.FlatAppearance.MouseDownBackColor = selected ? Color.FromArgb(0, 85, 170) : Color.FromArgb(15, 45, 78);
+			button.FlatAppearance.MouseOverBackColor = selected ? Color.FromArgb(0, 110, 210) : Color.FromArgb(15, 45, 78);
+			button.BackColor = selected ? Color.FromArgb(0, 95, 190) : _panel;
+			button.ForeColor = selected ? Color.White : _muted;
+			button.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			button.UseVisualStyleBackColor = false;
 		}
 
 		private void BindEvents()
@@ -2671,30 +2757,83 @@ namespace Aron_V3
 				btnShowOutputs.Click += btnShowOutputs_Click;
 			}
 
+			btnReferenceDll.Click -= btnReferenceDll_Click;
 			btnReferenceDll.Click += btnReferenceDll_Click;
+
+			btnSave.Click -= btnSave_Click;
 			btnSave.Click += btnSave_Click;
+
+			btnCompile.Click -= btnCompile_Click;
 			btnCompile.Click += btnCompile_Click;
+
+			btnRun.Click -= btnRun_Click;
 			btnRun.Click += btnRun_Click;
 
-			btnInputAdd.Click += delegate { AddPinRow(gridInputs); };
-			btnInputDelete.Click += delegate { DeleteSelectedPinRows(gridInputs); };
-			btnOutputAdd.Click += delegate { AddPinRow(gridOutputs); };
-			btnOutputDelete.Click += delegate { DeleteSelectedPinRows(gridOutputs); };
+			if (btnInputAdd != null)
+			{
+				btnInputAdd.Click -= btnPinAdd_Click;
+				btnInputAdd.Click += btnPinAdd_Click;
+			}
+
+			if (btnInputDelete != null)
+			{
+				btnInputDelete.Click -= btnPinDelete_Click;
+				btnInputDelete.Click += btnPinDelete_Click;
+			}
+
+			if (btnOutputAdd != null)
+			{
+				btnOutputAdd.Click -= btnPinAdd_Click;
+				btnOutputAdd.Click += btnPinAdd_Click;
+			}
+
+			if (btnOutputDelete != null)
+			{
+				btnOutputDelete.Click -= btnPinDelete_Click;
+				btnOutputDelete.Click += btnPinDelete_Click;
+			}
 
 			gridInputs.CellBeginEdit -= gridInputs_CellBeginEdit;
 			gridInputs.CellBeginEdit += gridInputs_CellBeginEdit;
 
+			txtCode.TextChanged -= txtCode_TextChanged;
 			txtCode.TextChanged += txtCode_TextChanged;
+
+			txtCode.VScroll -= txtCode_VScroll;
 			txtCode.VScroll += txtCode_VScroll;
+
+			txtCode.Resize -= txtCode_Resize;
 			txtCode.Resize += txtCode_Resize;
+
+			txtCode.FontChanged -= txtCode_FontChanged;
 			txtCode.FontChanged += txtCode_FontChanged;
+
+			txtCode.KeyDown -= txtCode_KeyDown;
 			txtCode.KeyDown += txtCode_KeyDown;
+
+			txtCode.KeyUp -= txtCode_KeyUp;
 			txtCode.KeyUp += txtCode_KeyUp;
+
+			txtCode.LostFocus -= txtCode_LostFocus;
 			txtCode.LostFocus += txtCode_LostFocus;
+
+			panelLineNumbers.Paint -= panelLineNumbers_Paint;
 			panelLineNumbers.Paint += panelLineNumbers_Paint;
 		}
 
-		private bool _showingInputPins = true;
+		private void btnPinAdd_Click(object sender, EventArgs e)
+		{
+			DataGridView targetGrid = _showInputPins ? gridInputs : gridOutputs;
+			AddPinRow(targetGrid);
+			ShowPinPage(_showInputPins);
+		}
+
+		private void btnPinDelete_Click(object sender, EventArgs e)
+		{
+			DataGridView targetGrid = _showInputPins ? gridInputs : gridOutputs;
+			DeleteSelectedPinRows(targetGrid);
+			ShowPinPage(_showInputPins);
+		}
 
 		private void btnShowInputs_Click(object sender, EventArgs e)
 		{
@@ -2708,7 +2847,7 @@ namespace Aron_V3
 
 		private void ShowPinPage(bool showInputs)
 		{
-			_showingInputPins = showInputs;
+			_showInputPins = showInputs;
 
 			if (inputPanel != null)
 			{
@@ -2722,54 +2861,57 @@ namespace Aron_V3
 				outputPanel.Dock = DockStyle.Fill;
 			}
 
+			if (lblInputTitle != null)
+			{
+				lblInputTitle.Visible = showInputs;
+			}
+
+			if (lblOutputTitle != null)
+			{
+				lblOutputTitle.Visible = !showInputs;
+			}
+
+			if (btnInputAdd != null)
+			{
+				btnInputAdd.Visible = showInputs;
+				btnInputAdd.Enabled = true;
+			}
+
+			if (btnInputDelete != null)
+			{
+				btnInputDelete.Visible = showInputs;
+				btnInputDelete.Enabled = true;
+			}
+
+			if (btnOutputAdd != null)
+			{
+				btnOutputAdd.Visible = !showInputs;
+				btnOutputAdd.Enabled = true;
+			}
+
+			if (btnOutputDelete != null)
+			{
+				btnOutputDelete.Visible = !showInputs;
+				btnOutputDelete.Enabled = true;
+			}
+
 			if (showInputs)
 			{
-				if (inputPanel != null)
-				{
-					inputPanel.BringToFront();
-				}
-
-				if (gridInputs != null)
-				{
-					gridInputs.BringToFront();
-				}
+				if (inputPanel != null) inputPanel.BringToFront();
+				if (gridInputs != null) gridInputs.BringToFront();
+				if (btnInputAdd != null) btnInputAdd.BringToFront();
+				if (btnInputDelete != null) btnInputDelete.BringToFront();
 			}
 			else
 			{
-				if (outputPanel != null)
-				{
-					outputPanel.BringToFront();
-				}
-
-				if (gridOutputs != null)
-				{
-					gridOutputs.BringToFront();
-				}
+				if (outputPanel != null) outputPanel.BringToFront();
+				if (gridOutputs != null) gridOutputs.BringToFront();
+				if (btnOutputAdd != null) btnOutputAdd.BringToFront();
+				if (btnOutputDelete != null) btnOutputDelete.BringToFront();
 			}
 
-			UpdatePinPageButtonStyle();
-		}
-
-		private void UpdatePinPageButtonStyle()
-		{
-			StylePinPageButton(btnShowInputs, _showingInputPins);
-			StylePinPageButton(btnShowOutputs, !_showingInputPins);
-		}
-
-		private void StylePinPageButton(Button button, bool selected)
-		{
-			if (button == null)
-			{
-				return;
-			}
-
-			button.FlatStyle = FlatStyle.Flat;
-			button.FlatAppearance.BorderSize = 1;
-			button.FlatAppearance.BorderColor = selected ? _accent : _border;
-			button.BackColor = selected ? Color.FromArgb(0, 95, 190) : _panel;
-			button.ForeColor = selected ? Color.White : _muted;
-			button.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
-			button.UseVisualStyleBackColor = false;
+			LayoutPinToolbarButtons();
+			ApplyPinTabButtonStyle();
 		}
 
 		private void gridInputs_CellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
