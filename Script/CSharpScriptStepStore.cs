@@ -235,6 +235,11 @@ public class ScriptMain : IScriptMain
 					pin.BindingPath = string.Empty;
 				}
 
+				if (pin.GlobalVariableName == null)
+				{
+					pin.GlobalVariableName = string.Empty;
+				}
+
 				if (pin.DefaultValue == null)
 				{
 					pin.DefaultValue = string.Empty;
@@ -243,6 +248,11 @@ public class ScriptMain : IScriptMain
 				if (pin.Description == null)
 				{
 					pin.Description = string.Empty;
+				}
+
+				if (pin.DataType == ScriptPinDataType.Int)
+				{
+					pin.DataType = ScriptPinDataType.Int32;
 				}
 			}
 		}

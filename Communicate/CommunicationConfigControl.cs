@@ -158,12 +158,48 @@ namespace Aron_V3
 		{
 			ConfigureInputSecondColumn(false);
 			RefreshDataTypeComboItems();
+			EnsureGlobalVariableColumns();
 
 			cmbMode.Items.Clear();
 			cmbMode.Items.Add("Server");
 			cmbMode.Items.Add("Client");
 			cmbMode.SelectedIndex = 0;
 			cmbMode.SelectedIndexChanged += cmbMode_SelectedIndexChanged;
+		}
+
+		private void EnsureGlobalVariableColumns()
+		{
+			if (!dgvInput.Columns.Contains("colInputGlobalVariable"))
+			{
+				dgvInput.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn("colInputGlobalVariable", "关联全局变量", 150));
+			}
+
+			if (!dgvOutput.Columns.Contains("colOutputGlobalVariable"))
+			{
+				dgvOutput.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn("colOutputGlobalVariable", "关联来源", 150));
+			}
+
+			dgvInput.CellContentClick -= VariableBindingCellContentClick;
+			dgvOutput.CellContentClick -= VariableBindingCellContentClick;
+			dgvInput.CellContentClick += VariableBindingCellContentClick;
+			dgvOutput.CellContentClick += VariableBindingCellContentClick;
+		}
+
+		private void VariableBindingCellContentClick(object sender, DataGridViewCellEventArgs e)
+		{
+			DataGridView grid = sender as DataGridView;
+			if (grid == null || e.RowIndex < 0 || e.ColumnIndex < 0)
+			{
+				return;
+			}
+
+			string columnName = grid.Columns[e.ColumnIndex].Name;
+			if (columnName != "colInputGlobalVariable" && columnName != "colOutputGlobalVariable")
+			{
+				return;
+			}
+
+			GlobalVariableBindingUi.SelectForCell(this, grid.Rows[e.RowIndex], columnName);
 		}
 
 		private void cmbMode_SelectedIndexChanged(object sender, EventArgs e)
@@ -1272,7 +1308,6 @@ namespace Aron_V3
 				ConfigureInputSecondColumn(isProfinet);
 				ApplyColumnModeByCommunicationType();
 				RefreshDataTypeComboItems();
-
 				if (_selectedType == CommunicationType.TcpIp)
 				{
 					LoadInputRows(_config.TcpIp.InputVariables, false);
@@ -1321,7 +1356,7 @@ namespace Aron_V3
 				{
 					string engine = string.IsNullOrEmpty(item.EngineName) ? "engine0" : item.EngineName;
 
-					dgvInput.Rows.Add(
+					int rowIndex = dgvInput.Rows.Add(
 						item.Name,
 						engine,
 						item.UseAsPosition,
@@ -1330,10 +1365,11 @@ namespace Aron_V3
 						item.BitOffset.ToString(),
 						item.Length.ToString(),
 						item.Remark);
+					GlobalVariableBindingUi.SetCellValue(dgvInput.Rows[rowIndex], "colInputGlobalVariable", item.GlobalVariableName);
 				}
 				else
 				{
-					dgvInput.Rows.Add(
+					int rowIndex = dgvInput.Rows.Add(
 						item.Name,
 						item.UseAsTrigger,
 						item.UseAsPosition,
@@ -1342,6 +1378,7 @@ namespace Aron_V3
 						item.BitOffset.ToString(),
 						item.Length.ToString(),
 						item.Remark);
+					GlobalVariableBindingUi.SetCellValue(dgvInput.Rows[rowIndex], "colInputGlobalVariable", item.GlobalVariableName);
 				}
 			}
 		}
@@ -1355,13 +1392,14 @@ namespace Aron_V3
 
 			foreach (CommOutputVariable item in list)
 			{
-				dgvOutput.Rows.Add(
+				int rowIndex = dgvOutput.Rows.Add(
 					item.Name,
 					DataTypeToDisplayText(NormalizeDataTypeForCurrentCommunication(item.DataType)),
 					item.ByteOffset.ToString(),
 					item.BitOffset.ToString(),
 					item.Length.ToString(),
 					item.Remark);
+				GlobalVariableBindingUi.SetCellValue(dgvOutput.Rows[rowIndex], "colOutputGlobalVariable", item.GlobalVariableName);
 			}
 		}
 
@@ -1498,6 +1536,7 @@ namespace Aron_V3
 				item.BitOffset = GetCellInt(row, 5, 0);
 				item.Length = GetCellInt(row, 6, 1);
 				item.Remark = GetCellString(row, 7);
+				item.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colInputGlobalVariable");
 
 				inputList.Add(item);
 			}
@@ -1523,6 +1562,7 @@ namespace Aron_V3
 				item.BitOffset = GetCellInt(row, 3, 0);
 				item.Length = GetCellInt(row, 4, 1);
 				item.Remark = GetCellString(row, 5);
+				item.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colOutputGlobalVariable");
 
 				outputList.Add(item);
 			}
@@ -1564,6 +1604,7 @@ namespace Aron_V3
 				item.BitOffset = GetCellInt(row, 5, 0);
 				item.Length = GetCellInt(row, 6, 1);
 				item.Remark = GetCellString(row, 7);
+				item.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colInputGlobalVariable");
 
 				_config.Profinet.InputVariables.Add(item);
 			}
@@ -1589,6 +1630,7 @@ namespace Aron_V3
 				item.BitOffset = GetCellInt(row, 3, 0);
 				item.Length = GetCellInt(row, 4, 1);
 				item.Remark = GetCellString(row, 5);
+				item.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colOutputGlobalVariable");
 
 				_config.Profinet.OutputVariables.Add(item);
 			}
@@ -1611,9 +1653,10 @@ namespace Aron_V3
 
 		private void btnAddInput_Click(object sender, EventArgs e)
 		{
+			int rowIndex;
 			if (_selectedType == CommunicationType.Profinet)
 			{
-				dgvInput.Rows.Add(
+				rowIndex = dgvInput.Rows.Add(
 					"Input_" + (dgvInput.Rows.Count + 1).ToString("00"),
 					"engine0",
 					false,
@@ -1625,7 +1668,7 @@ namespace Aron_V3
 			}
 			else
 			{
-				dgvInput.Rows.Add(
+				rowIndex = dgvInput.Rows.Add(
 					"Input_" + (dgvInput.Rows.Count + 1).ToString("00"),
 					false,
 					false,
@@ -1635,6 +1678,7 @@ namespace Aron_V3
 					"1",
 					string.Empty);
 			}
+			GlobalVariableBindingUi.SetCellValue(dgvInput.Rows[rowIndex], "colInputGlobalVariable", string.Empty);
 		}
 
 		private void btnDeleteInput_Click(object sender, EventArgs e)
@@ -1644,13 +1688,14 @@ namespace Aron_V3
 
 		private void btnAddOutput_Click(object sender, EventArgs e)
 		{
-			dgvOutput.Rows.Add(
+			int rowIndex = dgvOutput.Rows.Add(
 				"Output_" + (dgvOutput.Rows.Count + 1).ToString("00"),
 				DataTypeToDisplayText(GetDefaultVariableDataType()),
 				"0",
 				"0",
 				"1",
 				string.Empty);
+			GlobalVariableBindingUi.SetCellValue(dgvOutput.Rows[rowIndex], "colOutputGlobalVariable", string.Empty);
 		}
 
 		private void btnDeleteOutput_Click(object sender, EventArgs e)
@@ -1767,6 +1812,18 @@ namespace Aron_V3
 			return row.Cells[columnIndex].Value.ToString().Trim();
 		}
 
+		private string GetCellString(DataGridViewRow row, string columnName)
+		{
+			if (row == null || row.DataGridView == null ||
+				string.IsNullOrWhiteSpace(columnName) || !row.DataGridView.Columns.Contains(columnName))
+			{
+				return string.Empty;
+			}
+
+			object value = row.Cells[columnName].Value;
+			return value == null ? string.Empty : value.ToString().Trim();
+		}
+
 		private bool GetCellBool(DataGridViewRow row, int columnIndex)
 		{
 			if (row.Cells[columnIndex].Value == null)
@@ -1824,6 +1881,8 @@ namespace Aron_V3
 
 				colInputName.HeaderText = "Input Name";
 				if (dgvInput.Columns.Contains("colInputUseAsPosition")) dgvInput.Columns["colInputUseAsPosition"].HeaderText = "Use As Position";
+				if (dgvInput.Columns.Contains("colInputGlobalVariable")) dgvInput.Columns["colInputGlobalVariable"].HeaderText = "Global Variable";
+				if (dgvOutput.Columns.Contains("colOutputGlobalVariable")) dgvOutput.Columns["colOutputGlobalVariable"].HeaderText = "Source Variable";
 				colInputType.HeaderText = "Type";
 				colInputByteOffset.HeaderText = "Byte Offset";
 				colInputBitOffset.HeaderText = "Bit";
@@ -1856,6 +1915,8 @@ namespace Aron_V3
 
 				colInputName.HeaderText = "输入变量名称";
 				if (dgvInput.Columns.Contains("colInputUseAsPosition")) dgvInput.Columns["colInputUseAsPosition"].HeaderText = "作为位置号";
+				if (dgvInput.Columns.Contains("colInputGlobalVariable")) dgvInput.Columns["colInputGlobalVariable"].HeaderText = "关联全局变量";
+				if (dgvOutput.Columns.Contains("colOutputGlobalVariable")) dgvOutput.Columns["colOutputGlobalVariable"].HeaderText = "关联来源";
 				colInputType.HeaderText = "类型";
 				colInputByteOffset.HeaderText = "偏移字节";
 				colInputBitOffset.HeaderText = "Bit";

@@ -54,6 +54,111 @@ namespace Aron_V3
 			WriteLog("Runtime flow orchestrator started.");
 		}
 
+		public bool RunTaskTest(string jobName, string taskName, TaskRunOptions options)
+		{
+			if (_disposed)
+			{
+				throw new ObjectDisposedException("RuntimeFlowOrchestrator");
+			}
+
+			ProjectFlowConfig flowConfig = FlowConfigStore.LoadOrCreateDefault();
+			JobConfig job = flowConfig == null || flowConfig.Jobs == null
+				? null
+				: flowConfig.Jobs.FirstOrDefault(x =>
+					x != null && string.Equals(x.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			TaskConfig task = job == null || job.Tasks == null
+				? null
+				: job.Tasks.FirstOrDefault(x =>
+					x != null && string.Equals(x.TaskName, taskName, StringComparison.OrdinalIgnoreCase));
+
+			if (task == null)
+			{
+				throw new Exception("Task not found: " + taskName);
+			}
+
+			if (options == null)
+			{
+				options = TaskRunOptions.Test(false);
+			}
+
+			DateTime startTime = DateTime.Now;
+			VisionRunContext context = new VisionRunContext();
+			context.JobName = jobName;
+			context.TaskName = taskName;
+			context.TriggerName = task.TriggerName;
+			StepResult finalResult = StepResult.NG("Task was not executed.");
+
+			try
+			{
+				WriteLog("Task offline test started. Job=" + jobName + ", Task=" + taskName);
+
+				using (TaskRunContext.Begin(options))
+				{
+					ApplyTestImageOverrides(options, context);
+
+					TaskRunner runner = new TaskRunner();
+					finalResult = runner.Run(task, context);
+
+					if (options.EnableCommunicationOutput &&
+						!string.IsNullOrWhiteSpace(task.CommunicationProtocol) &&
+						!task.CommunicationProtocol.Equals("Not Use", StringComparison.OrdinalIgnoreCase) &&
+						!task.CommunicationProtocol.Equals("None", StringComparison.OrdinalIgnoreCase))
+					{
+						_outputService.SendTaskOutput(task.CommunicationProtocol, task, context, finalResult);
+					}
+				}
+
+				WriteLog("Task offline test finished. Job=" + jobName +
+					", Task=" + taskName +
+					", OK=" + finalResult.IsOK +
+					", CommunicationOutput=" + options.EnableCommunicationOutput +
+					", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
+			}
+			catch (Exception ex)
+			{
+				finalResult = StepResult.NG(ex.Message);
+				WriteLog("Task offline test failed. Job=" + jobName + ", Task=" + taskName + ", Error=" + ex.Message);
+				throw;
+			}
+			finally
+			{
+				OnTaskFinished(new RuntimeTaskFinishedEventArgs(
+					jobName,
+					taskName,
+					finalResult,
+					context,
+					DateTime.Now - startTime));
+			}
+
+			return true;
+		}
+
+		private void ApplyTestImageOverrides(TaskRunOptions options, VisionRunContext context)
+		{
+			if (options == null || options.OverrideImageSources == null || context == null)
+			{
+				return;
+			}
+
+			foreach (KeyValuePair<string, object> pair in options.OverrideImageSources)
+			{
+				if (string.IsNullOrWhiteSpace(pair.Key) || pair.Value == null)
+				{
+					continue;
+				}
+
+				VisionImage image = new VisionImage();
+				image.ImageName = pair.Key;
+				image.ImageType = "OfflineTest";
+				image.SourceStep = "TaskTest";
+				image.RawImage = pair.Value;
+
+				context.SetImage(pair.Key, image);
+				context.SetData(pair.Key, pair.Value);
+				context.SetData(pair.Key + ".RawImage", pair.Value);
+			}
+		}
+
 		public void Stop()
 		{
 			if (!_started)
@@ -268,13 +373,19 @@ namespace Aron_V3
 			RuntimeCommunicationValueProvider valueProvider)
 		{
 			string triggerActual = valueProvider.GetInputValue(protocolName, task.TriggerName);
-			string positionActual = valueProvider.GetInputValue(protocolName, task.PositionName);
-
 			bool triggerOk = TriggerConditionEvaluator.CompareValue(
 				triggerActual,
 				task.TriggerValue,
 				task.TriggerCompare);
 
+			if (string.IsNullOrWhiteSpace(task.PositionName) ||
+				task.PositionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				task.PositionName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return triggerOk;
+			}
+
+			string positionActual = valueProvider.GetInputValue(protocolName, task.PositionName);
 			bool positionOk = TriggerConditionEvaluator.CompareValue(
 				positionActual,
 				task.PositionValue,
@@ -494,11 +605,13 @@ namespace Aron_V3
 
 		private void WriteLog(string message)
 		{
+			RuntimeFlowLogEventArgs args = new RuntimeFlowLogEventArgs(message);
+			RuntimeLogStore.Append(args.Time, args.Category, args.Message);
 			EventHandler<RuntimeFlowLogEventArgs> handler = LogGenerated;
 
 			if (handler != null)
 			{
-				handler(this, new RuntimeFlowLogEventArgs(message));
+				handler(this, args);
 			}
 		}
 
@@ -534,11 +647,13 @@ namespace Aron_V3
 	{
 		public string Message { get; private set; }
 		public DateTime Time { get; private set; }
+		public RuntimeLogCategory Category { get; private set; }
 
 		public RuntimeFlowLogEventArgs(string message)
 		{
 			Message = message ?? string.Empty;
 			Time = DateTime.Now;
+			Category = RuntimeLogStore.Classify(Message);
 		}
 	}
 
@@ -626,6 +741,11 @@ namespace Aron_V3
 				else
 				{
 					result[item.Name] = parsedValue;
+				}
+
+				if (!string.IsNullOrWhiteSpace(item.GlobalVariableName))
+				{
+					GlobalVariableStore.SetValue(item.GlobalVariableName, parsedValue);
 				}
 			}
 
@@ -1144,6 +1264,14 @@ namespace Aron_V3
 			{
 				if (variable == null || string.IsNullOrWhiteSpace(variable.Name))
 				{
+					continue;
+				}
+
+				object globalValue;
+				if (!string.IsNullOrWhiteSpace(variable.GlobalVariableName) &&
+					GlobalVariableStore.TryGetValue(variable.GlobalVariableName, out globalValue))
+				{
+					result[variable.Name] = globalValue;
 					continue;
 				}
 

@@ -67,7 +67,6 @@
 		private System.Windows.Forms.DataGridViewTextBoxColumn colCamera;
 		private System.Windows.Forms.DataGridViewTextBoxColumn colItem;
 		private System.Windows.Forms.DataGridViewTextBoxColumn colValue;
-		private System.Windows.Forms.DataGridViewTextBoxColumn colTime;
 
 		protected override void Dispose(bool disposing)
 		{
@@ -124,7 +123,6 @@
 			this.colCamera = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.colItem = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.colValue = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.colTime = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.logPanel = new System.Windows.Forms.Panel();
 			this.lstLog = new System.Windows.Forms.ListBox();
 			this.cmbLogLevel = new System.Windows.Forms.ComboBox();
@@ -691,8 +689,7 @@
 			this.dgvResults.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.colCamera,
             this.colItem,
-            this.colValue,
-            this.colTime});
+            this.colValue});
 			dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
 			dataGridViewCellStyle2.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(10)))), ((int)(((byte)(24)))), ((int)(((byte)(42)))));
 			dataGridViewCellStyle2.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
@@ -736,13 +733,6 @@
 			this.colValue.MinimumWidth = 8;
 			this.colValue.Name = "colValue";
 			this.colValue.ReadOnly = true;
-			// 
-			// colTime
-			// 
-			this.colTime.HeaderText = "Time";
-			this.colTime.MinimumWidth = 8;
-			this.colTime.Name = "colTime";
-			this.colTime.ReadOnly = true;
 			// 
 			// logPanel
 			// 

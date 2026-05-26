@@ -560,7 +560,9 @@ namespace Aron_V3
 			}
 			else
 			{
-				item.DisplayOutputKey = "Not Use";
+				item.DisplayOutputKey = step.StepType == StepType.Vpp
+					? "LastRun.CogIPOneImageTool1.OutputImage"
+					: "Not Use";
 				item.DisplaySlotName = "Not Show";
 				item.DisplayMode = "Fit";
 			}
@@ -1140,6 +1142,7 @@ namespace Aron_V3
 			"OutputImage",
 			"ResultImage",
 			"LastRun.OutputImage",
+			"LastRun.CogIPOneImageTool1.OutputImage",
 			"DisplayImage",
 			"DebugImage"
 				});

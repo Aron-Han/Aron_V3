@@ -58,11 +58,11 @@ namespace Aron_V3
 			this.colName = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.colDataType = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.colValue = new System.Windows.Forms.DataGridViewTextBoxColumn();
-			this.colBrowse = new System.Windows.Forms.DataGridViewButtonColumn();
-			this.colRemark = new System.Windows.Forms.DataGridViewTextBoxColumn();
+			this.colGlobalVariable = new System.Windows.Forms.DataGridViewButtonColumn();
 			this.panelPinButtons = new System.Windows.Forms.Panel();
 			this.btnApplyInputs = new System.Windows.Forms.Button();
 			this.btnRunReplay = new System.Windows.Forms.Button();
+			this.btnLoadEditor = new System.Windows.Forms.Button();
 			this.btnSaveVpp = new System.Windows.Forms.Button();
 			this.grpEditor = new System.Windows.Forms.GroupBox();
 			this.panelEditorHost = new System.Windows.Forms.Panel();
@@ -697,8 +697,7 @@ namespace Aron_V3
             this.colName,
             this.colDataType,
             this.colValue,
-            this.colBrowse,
-            this.colRemark});
+            this.colGlobalVariable});
 			dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
 			dataGridViewCellStyle2.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(1)))), ((int)(((byte)(8)))), ((int)(((byte)(16)))));
 			dataGridViewCellStyle2.Font = new System.Drawing.Font("Microsoft YaHei UI", 10F, System.Drawing.FontStyle.Bold);
@@ -750,28 +749,21 @@ namespace Aron_V3
 			this.colValue.MinimumWidth = 8;
 			this.colValue.Name = "colValue";
 			// 
-			// colBrowse
+			// colGlobalVariable
 			// 
-			this.colBrowse.FillWeight = 50F;
-			this.colBrowse.HeaderText = "文件";
-			this.colBrowse.MinimumWidth = 8;
-			this.colBrowse.Name = "colBrowse";
-			this.colBrowse.Text = "...";
-			this.colBrowse.UseColumnTextForButtonValue = true;
-			// 
-			// colRemark
-			// 
-			this.colRemark.FillWeight = 140F;
-			this.colRemark.HeaderText = "说明";
-			this.colRemark.MinimumWidth = 8;
-			this.colRemark.Name = "colRemark";
-			this.colRemark.ReadOnly = true;
+			this.colGlobalVariable.FillWeight = 120F;
+			this.colGlobalVariable.HeaderText = "关联全局变量";
+			this.colGlobalVariable.MinimumWidth = 8;
+			this.colGlobalVariable.Name = "colGlobalVariable";
+			this.colGlobalVariable.Text = "选择...";
+			this.colGlobalVariable.UseColumnTextForButtonValue = false;
 			// 
 			// panelPinButtons
 			// 
 			this.panelPinButtons.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(14)))), ((int)(((byte)(27)))));
 			this.panelPinButtons.Controls.Add(this.btnApplyInputs);
 			this.panelPinButtons.Controls.Add(this.btnRunReplay);
+			this.panelPinButtons.Controls.Add(this.btnLoadEditor);
 			this.panelPinButtons.Controls.Add(this.btnSaveVpp);
 			this.panelPinButtons.Dock = System.Windows.Forms.DockStyle.Fill;
 			this.panelPinButtons.Location = new System.Drawing.Point(0, 807);
@@ -808,6 +800,20 @@ namespace Aron_V3
 			this.btnRunReplay.Text = "回放运行";
 			this.btnRunReplay.UseVisualStyleBackColor = false;
 			// 
+			// btnLoadEditor
+			// 
+			this.btnLoadEditor.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(14)))), ((int)(((byte)(27)))));
+			this.btnLoadEditor.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(150)))), ((int)(((byte)(220)))));
+			this.btnLoadEditor.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnLoadEditor.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F, System.Drawing.FontStyle.Bold);
+			this.btnLoadEditor.ForeColor = System.Drawing.Color.White;
+			this.btnLoadEditor.Location = new System.Drawing.Point(210, 6);
+			this.btnLoadEditor.Name = "btnLoadEditor";
+			this.btnLoadEditor.Size = new System.Drawing.Size(95, 30);
+			this.btnLoadEditor.TabIndex = 2;
+			this.btnLoadEditor.Text = "修改工具";
+			this.btnLoadEditor.UseVisualStyleBackColor = false;
+			// 
 			// btnSaveVpp
 			// 
 			this.btnSaveVpp.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(95)))), ((int)(((byte)(220)))));
@@ -815,10 +821,10 @@ namespace Aron_V3
 			this.btnSaveVpp.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
 			this.btnSaveVpp.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F, System.Drawing.FontStyle.Bold);
 			this.btnSaveVpp.ForeColor = System.Drawing.Color.White;
-			this.btnSaveVpp.Location = new System.Drawing.Point(210, 6);
+			this.btnSaveVpp.Location = new System.Drawing.Point(315, 6);
 			this.btnSaveVpp.Name = "btnSaveVpp";
 			this.btnSaveVpp.Size = new System.Drawing.Size(95, 30);
-			this.btnSaveVpp.TabIndex = 2;
+			this.btnSaveVpp.TabIndex = 3;
 			this.btnSaveVpp.Text = "保存 VPP";
 			this.btnSaveVpp.UseVisualStyleBackColor = false;
 			// 
@@ -921,7 +927,6 @@ namespace Aron_V3
 		private DataGridViewTextBoxColumn colName;
 		private DataGridViewTextBoxColumn colDataType;
 		private DataGridViewTextBoxColumn colValue;
-		private DataGridViewButtonColumn colBrowse;
-		private DataGridViewTextBoxColumn colRemark;
+		private DataGridViewButtonColumn colGlobalVariable;
 	}
 }

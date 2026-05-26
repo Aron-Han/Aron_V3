@@ -20,11 +20,15 @@ namespace Aron_V3
 		private Panel _contentPanel;
 
 		private Button _btnDisplayLayout;
+		private Button _btnGlobalVariables;
+		private Button _btnDataDisplay;
 		private Button _btnUserManager;
 		private Button _btnSystemInfo;
 
 		private Control _currentPage;
 		private DisplayLayoutControl _displayLayoutPage;
+		private GlobalVariableControl _globalVariablePage;
+		private DataDisplayControl _dataDisplayPage;
 
 		public SystemManagementControl()
 		{
@@ -48,6 +52,16 @@ namespace Aron_V3
 				_btnUserManager.Text = isEnglish ? "User Manager" : "用户管理";
 			}
 
+			if (_btnGlobalVariables != null)
+			{
+				_btnGlobalVariables.Text = isEnglish ? "Global Variables" : "全局变量";
+			}
+
+			if (_btnDataDisplay != null)
+			{
+				_btnDataDisplay.Text = isEnglish ? "Data Display" : "界面数据显示";
+			}
+
 			if (_btnSystemInfo != null)
 			{
 				_btnSystemInfo.Text = isEnglish ? "System Info" : "系统信息";
@@ -56,6 +70,16 @@ namespace Aron_V3
 			if (_displayLayoutPage != null)
 			{
 				_displayLayoutPage.ApplyLanguage(isEnglish);
+			}
+
+			if (_globalVariablePage != null)
+			{
+				_globalVariablePage.ApplyLanguage(isEnglish);
+			}
+
+			if (_dataDisplayPage != null)
+			{
+				_dataDisplayPage.ApplyLanguage(isEnglish);
 			}
 		}
 
@@ -104,19 +128,27 @@ namespace Aron_V3
 			title.Padding = new Padding(4, 0, 0, 0);
 
 			_btnDisplayLayout = CreateMenuButton("显示布局");
+			_btnGlobalVariables = CreateMenuButton("全局变量");
+			_btnDataDisplay = CreateMenuButton("界面数据显示");
 			_btnUserManager = CreateMenuButton("用户管理");
 			_btnSystemInfo = CreateMenuButton("系统信息");
 
 			_btnDisplayLayout.Top = 44;
-			_btnUserManager.Top = 98;
-			_btnSystemInfo.Top = 152;
+			_btnGlobalVariables.Top = 98;
+			_btnDataDisplay.Top = 152;
+			_btnUserManager.Top = 206;
+			_btnSystemInfo.Top = 260;
 
 			_btnDisplayLayout.Click += delegate { ShowDisplayLayoutPage(); };
+			_btnGlobalVariables.Click += delegate { ShowGlobalVariablePage(); };
+			_btnDataDisplay.Click += delegate { ShowDataDisplayPage(); };
 			_btnUserManager.Click += delegate { ShowPlaceholderPage("用户管理", "后续可接入 UserAccounts.xml、权限、自动登出等设置。"); };
 			_btnSystemInfo.Click += delegate { ShowPlaceholderPage("系统信息", "后续可显示软件版本、项目路径、日志路径、授权状态等信息。"); };
 
 			_menuPanel.Controls.Add(title);
 			_menuPanel.Controls.Add(_btnDisplayLayout);
+			_menuPanel.Controls.Add(_btnGlobalVariables);
+			_menuPanel.Controls.Add(_btnDataDisplay);
 			_menuPanel.Controls.Add(_btnUserManager);
 			_menuPanel.Controls.Add(_btnSystemInfo);
 		}
@@ -151,6 +183,29 @@ namespace Aron_V3
 
 			ShowPage(_displayLayoutPage);
 			SetSelectedButton(_btnDisplayLayout);
+		}
+
+		private void ShowGlobalVariablePage()
+		{
+			if (_globalVariablePage == null || _globalVariablePage.IsDisposed)
+			{
+				_globalVariablePage = new GlobalVariableControl();
+				_globalVariablePage.Dock = DockStyle.Fill;
+			}
+
+			ShowPage(_globalVariablePage);
+			SetSelectedButton(_btnGlobalVariables);
+		}
+
+		private void ShowDataDisplayPage()
+		{
+			if (_dataDisplayPage == null || _dataDisplayPage.IsDisposed)
+			{
+				_dataDisplayPage = new DataDisplayControl();
+				_dataDisplayPage.Dock = DockStyle.Fill;
+			}
+			ShowPage(_dataDisplayPage);
+			SetSelectedButton(_btnDataDisplay);
 		}
 
 		private void ShowPlaceholderPage(string title, string message)
@@ -196,6 +251,11 @@ namespace Aron_V3
 				return;
 			}
 
+			if (_currentPage == page && page.Parent == _contentPanel)
+			{
+				return;
+			}
+
 			_contentPanel.SuspendLayout();
 			_contentPanel.Controls.Clear();
 
@@ -211,6 +271,8 @@ namespace Aron_V3
 			Button[] buttons = new Button[]
 			{
 				_btnDisplayLayout,
+				_btnGlobalVariables,
+				_btnDataDisplay,
 				_btnUserManager,
 				_btnSystemInfo
 			};
@@ -243,6 +305,8 @@ namespace Aron_V3
 			{
 				int width = Math.Max(120, _menuPanel.ClientSize.Width - 20);
 				_btnDisplayLayout.Width = width;
+				_btnGlobalVariables.Width = width;
+				_btnDataDisplay.Width = width;
 				_btnUserManager.Width = width;
 				_btnSystemInfo.Width = width;
 			}

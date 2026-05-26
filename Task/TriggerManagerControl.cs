@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using System.Xml;
+using Cognex.VisionPro.ImageFile;
 
 namespace Aron_V3
 {
@@ -1183,10 +1184,10 @@ namespace Aron_V3
 		private List<string> LoadPositionSourceOptions(string protocol)
 		{
 			List<string> result = new List<string>();
+			result.Add("Not Use");
 
 			if (string.IsNullOrEmpty(protocol) || protocol == "Not Use")
 			{
-				result.Add("Not Use");
 				return result;
 			}
 
@@ -1223,7 +1224,6 @@ namespace Aron_V3
 				}
 			}
 
-			if (result.Count == 0) result.Add("Not Use");
 			return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 		}
 
@@ -1878,7 +1878,7 @@ namespace Aron_V3
 				task.InputAddress = imageSource;
 				task.PositionName = GetCellString(row, COL_POSITION_NAME);
 				task.PositionValue = GetCellString(row, COL_POSITION_VALUE);
-				if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = "0";
+				if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = "Not Use";
 				if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = "1";
 
 				// 旧字段同步保留，避免旧代码读取 FlagBit / FlagValue 时失效。
@@ -1889,6 +1889,19 @@ namespace Aron_V3
 				task.Remark = GetCellString(row, COL_REMARK);
 				if (task.Steps == null) task.Steps = new List<StepConfig>();
 				if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
+
+				// 图像源取消选择后，历史调度行不能继续要求旧图像源。
+				if (IsNotUseSelection(task.ImageSourceKey))
+				{
+					foreach (StepFlowItem flowItem in task.StepFlow)
+					{
+						if (flowItem != null)
+						{
+							flowItem.InputImageKey = string.Empty;
+						}
+					}
+				}
+
 				job.Tasks.Add(task);
 				Directory.CreateDirectory(FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName));
 				runOrder++;
@@ -2133,11 +2146,17 @@ namespace Aron_V3
 				return;
 			}
 
-			List<string> imageSources = CollectTaskImageSources(task);
-
 			string gridImageSourceText = GetCurrentTriggerGridImageSourceText();
+			string selectedImageSources = string.IsNullOrWhiteSpace(gridImageSourceText)
+				? task.ImageSourceKey
+				: gridImageSourceText;
+			List<string> imageSources = new List<string>();
 
-			AddImageSourceName(imageSources, gridImageSourceText);
+			// 触发管理的当前选择为准；Not Use 不再回收旧 StepFlow 的残留图像源。
+			if (!IsNotUseSelection(selectedImageSources))
+			{
+				AddImageSourceName(imageSources, selectedImageSources);
+			}
 
 			using (TaskTestDialog dialog = new TaskTestDialog(taskName, imageSources))
 			{
@@ -2280,6 +2299,13 @@ namespace Aron_V3
 			return result;
 		}
 
+		private bool IsNotUseSelection(string value)
+		{
+			return string.IsNullOrWhiteSpace(value) ||
+				string.Equals(value.Trim(), "Not Use", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(value.Trim(), "None", StringComparison.OrdinalIgnoreCase);
+		}
+
 
 
 
@@ -2332,10 +2358,20 @@ namespace Aron_V3
 				return null;
 			}
 
-			// 使用克隆方式读取，避免 Bitmap 长时间锁住本地测试图片文件。
-			using (Bitmap temp = new Bitmap(imagePath))
+			CogImageFile imageFile = null;
+
+			try
 			{
-				return new Bitmap(temp);
+				imageFile = new CogImageFile();
+				imageFile.Open(imagePath, CogImageFileModeConstants.Read);
+				return imageFile[0];
+			}
+			finally
+			{
+				if (imageFile != null)
+				{
+					imageFile.Close();
+				}
 			}
 		}
 

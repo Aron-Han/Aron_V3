@@ -117,6 +117,7 @@ namespace Aron_V3
 				return;
 			}
 
+			ConfigureVppPinsGrid();
 			EnableDoubleBuffer(this);
 			BindRuntimeEvents();
 			ApplyLibraryEnabledState();
@@ -511,25 +512,15 @@ namespace Aron_V3
 			colValue.FillWeight = 180;
 			colValue.ReadOnly = false;
 
-			DataGridViewButtonColumn colBrowse = new DataGridViewButtonColumn();
-			colBrowse.Name = "colBrowse";
-			colBrowse.HeaderText = "文件";
-			colBrowse.Text = "...";
-			colBrowse.UseColumnTextForButtonValue = true;
-			colBrowse.FillWeight = 50;
-
-			DataGridViewTextBoxColumn colRemark = new DataGridViewTextBoxColumn();
-			colRemark.Name = "colRemark";
-			colRemark.HeaderText = "说明";
-			colRemark.FillWeight = 140;
-			colRemark.ReadOnly = true;
+			DataGridViewButtonColumn colGlobalVariable =
+				GlobalVariableBindingUi.CreateButtonColumn("colGlobalVariable", "关联全局变量", 135);
+			colGlobalVariable.FillWeight = 120;
 
 			dgv.Columns.Add(colDirection);
 			dgv.Columns.Add(colName);
 			dgv.Columns.Add(colDataType);
 			dgv.Columns.Add(colValue);
-			dgv.Columns.Add(colBrowse);
-			dgv.Columns.Add(colRemark);
+			dgv.Columns.Add(colGlobalVariable);
 
 			dgv.CellContentClick += dgvPins_CellContentClick;
 			dgv.CellEndEdit += dgvPins_CellEndEdit;
@@ -537,6 +528,54 @@ namespace Aron_V3
 			dgv.DataError += delegate (object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
 
 			return dgv;
+		}
+
+		private void ConfigureVppPinsGrid()
+		{
+			if (dgvPins == null)
+			{
+				return;
+			}
+
+			dgvPins.Columns.Clear();
+			dgvPins.Columns.Add(new DataGridViewTextBoxColumn
+			{
+				Name = "colDirection",
+				HeaderText = "类型",
+				FillWeight = 60,
+				ReadOnly = true
+			});
+			dgvPins.Columns.Add(new DataGridViewTextBoxColumn
+			{
+				Name = "colName",
+				HeaderText = "引脚名称",
+				FillWeight = 130,
+				ReadOnly = true
+			});
+			dgvPins.Columns.Add(new DataGridViewTextBoxColumn
+			{
+				Name = "colDataType",
+				HeaderText = "数据类型",
+				FillWeight = 110,
+				ReadOnly = true
+			});
+			dgvPins.Columns.Add(new DataGridViewTextBoxColumn
+			{
+				Name = "colValue",
+				HeaderText = "当前值 / 自定义值",
+				FillWeight = 180
+			});
+			DataGridViewButtonColumn bindingColumn =
+				GlobalVariableBindingUi.CreateButtonColumn("colGlobalVariable", "关联全局变量", 135);
+			bindingColumn.FillWeight = 120;
+			dgvPins.Columns.Add(bindingColumn);
+			dgvPins.CellContentClick -= dgvPins_CellContentClick;
+			dgvPins.CellEndEdit -= dgvPins_CellEndEdit;
+			dgvPins.CurrentCellDirtyStateChanged -= dgvPins_CurrentCellDirtyStateChanged;
+			dgvPins.CellContentClick += dgvPins_CellContentClick;
+			dgvPins.CellEndEdit += dgvPins_CellEndEdit;
+			dgvPins.CurrentCellDirtyStateChanged += dgvPins_CurrentCellDirtyStateChanged;
+			dgvPins.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
 		}
 
 		private bool IsLibraryEnabled(AlgorithmLibraryType library)
@@ -1331,8 +1370,18 @@ namespace Aron_V3
 				fileName += ".vpp";
 			}
 
-			// 1. 优先使用当前运行目录 Project 下的工程内 VPP。
-			// 这样保存后再次进入算法模块，会加载 Debug Project 内的文件。
+			// 1. 优先使用当前 Task 标准目录下的工程内 VPP。
+			string standardTaskPath = Path.Combine(
+				FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName),
+				"VPP",
+				fileName);
+
+			if (File.Exists(standardTaskPath))
+			{
+				return standardTaskPath;
+			}
+
+			// 2. 兼容旧版本保存到 DemoProject\Steps 的文件。
 			string runtimeProjectPath = Path.Combine(GetRuntimeProjectRoot(), "Steps", jobName, taskName, "VPP", fileName);
 
 			if (File.Exists(runtimeProjectPath))
@@ -1340,7 +1389,7 @@ namespace Aron_V3
 				return runtimeProjectPath;
 			}
 
-			// 2. 再使用 XML 中记录的 LocalFilePath。
+			// 3. 再使用 XML 中记录的 LocalFilePath。
 			string localFile = GetPropertyString(step, "LocalFilePath");
 
 			if (File.Exists(localFile))
@@ -1348,7 +1397,7 @@ namespace Aron_V3
 				return localFile;
 			}
 
-			// 3. 再兼容旧版本字段。
+			// 4. 再兼容旧版本字段。
 			string vppFile = GetPropertyString(step, "VppFilePath");
 
 			if (File.Exists(vppFile))
@@ -1375,7 +1424,7 @@ namespace Aron_V3
 				}
 			}
 
-			// 4. 最后才使用最初导入来源 SourceFilePath，比如 D:\Work\...
+			// 5. 最后才使用最初导入来源 SourceFilePath，比如 D:\Work\...
 			// SourceFilePath 只作为导入源，不作为保存目标。
 			string sourceFile = GetPropertyString(step, "SourceFilePath");
 
@@ -1399,7 +1448,7 @@ namespace Aron_V3
 				return sourceFile;
 			}
 
-			return runtimeProjectPath;
+			return standardTaskPath;
 		}
 
 		private string GetPropertyString(object obj, string propertyName)
@@ -1763,9 +1812,22 @@ namespace Aron_V3
 				return false;
 			}
 
-			object toolBlock;
+			object toolBlock = null;
 
-			if (!_preloadedToolBlocks.TryGetValue(item.FilePath, out toolBlock) || toolBlock == null)
+			if (AlgorithmRuntimeBridge.Provider != null)
+			{
+				object runtimeToolBlock = AlgorithmRuntimeBridge.Provider.TryGetRunningToolBlock(
+					item.JobName,
+					item.TaskName,
+					item.Name);
+				if (runtimeToolBlock != null)
+				{
+					toolBlock = TryCloneVisionObject(runtimeToolBlock);
+				}
+			}
+
+			if (toolBlock == null &&
+				(!_preloadedToolBlocks.TryGetValue(item.FilePath, out toolBlock) || toolBlock == null))
 			{
 				return false;
 			}
@@ -1778,7 +1840,6 @@ namespace Aron_V3
 
 			LoadPinsFromToolBlock(_currentToolBlock);
 			ShowVppEditorPlaceholder(item.FilePath);
-			OpenVppEditorDetached(_currentToolBlock, item.FilePath, GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, item.Name));
 
 			return true;
 		}
@@ -1969,7 +2030,6 @@ namespace Aron_V3
 
 				LoadPinsFromToolBlock(_currentToolBlock);
 				ShowVppEditorPlaceholder(item.FilePath);
-				OpenVppEditorDetached(_currentToolBlock, item.FilePath, GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, item.Name));
 			}
 			catch (Exception ex)
 			{
@@ -2028,6 +2088,7 @@ namespace Aron_V3
 
 			if (btnApplyInputs != null) btnApplyInputs.Enabled = !busy;
 			if (btnRunReplay != null) btnRunReplay.Enabled = !busy;
+			if (btnLoadEditor != null) btnLoadEditor.Enabled = !busy;
 			if (btnSaveVpp != null) btnSaveVpp.Enabled = !busy;
 
 			this.Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
@@ -2344,15 +2405,30 @@ namespace Aron_V3
 
 		private void ShowVppEditorPlaceholder(string filePath)
 		{
-			// 主界面底部 VPP 编辑器区域已取消显示。
-			// VPP 编辑器会在独立 STA 线程窗口中自动打开。
-			// 这里不再向 panelEditorHost 添加任何控件，避免占用主界面空间。
+			// 主界面只显示引脚；工具细节由“修改工具”按钮在独立窗口打开。
 		}
 
 		private void btnLoadEditor_Click(object sender, EventArgs e)
 		{
-			// 兼容旧事件。当前版本已取消主界面“加载 VPP 编辑器”按钮。
-			// VPP 编辑器会在独立 STA 线程窗口中自动打开。
+			if (_currentLibrary != AlgorithmLibraryType.Vpp)
+			{
+				return;
+			}
+
+			if (_currentToolBlock == null || string.IsNullOrWhiteSpace(_currentAlgorithmPath))
+			{
+				MessageBox.Show(
+					_isEnglish ? "Please double-click a VPP file first." : "请先双击选择一个 VPP 文件。",
+					_isEnglish ? "Edit Tool" : "修改工具",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				return;
+			}
+
+			OpenVppEditorDetached(
+				_currentToolBlock,
+				_currentAlgorithmPath,
+				GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, _currentAlgorithmName));
 		}
 
 		private void SetEditorLoadingMessage(string message)
@@ -2621,8 +2697,6 @@ namespace Aron_V3
 					string direction = GetPinGridCellString(row, "colDirection");
 					string pinName = GetPinGridCellString(row, "colName");
 					string dataTypeText = GetPinGridCellString(row, "colDataType");
-					string remark = GetPinGridCellString(row, "colRemark");
-
 					if (string.IsNullOrWhiteSpace(pinName))
 					{
 						continue;
@@ -2633,7 +2707,8 @@ namespace Aron_V3
 					pin.DataType = ConvertVppTypeTextToPinDataType(dataTypeText);
 					pin.SourceKey = step.StepName + "." + pin.PinName;
 					pin.TargetKey = step.StepName + "." + pin.PinName;
-					pin.Description = remark;
+					pin.Description = string.Empty;
+					pin.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable");
 
 					if (string.Equals(direction, "Input", StringComparison.OrdinalIgnoreCase))
 					{
@@ -2848,6 +2923,39 @@ namespace Aron_V3
 			}
 		}
 
+		private string GetSavedPinGlobalVariable(string direction, string pinName)
+		{
+			if (string.IsNullOrWhiteSpace(pinName) || string.IsNullOrWhiteSpace(_currentJobName) ||
+				string.IsNullOrWhiteSpace(_currentTaskName) || string.IsNullOrWhiteSpace(_currentAlgorithmName))
+			{
+				return string.Empty;
+			}
+
+			try
+			{
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+				JobConfig job = config.Jobs.FirstOrDefault(j =>
+					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
+				TaskConfig task = job == null ? null : job.Tasks.FirstOrDefault(t =>
+					t != null && string.Equals(t.TaskName, _currentTaskName, StringComparison.OrdinalIgnoreCase));
+				StepConfig step = task == null ? null : task.Steps.FirstOrDefault(s =>
+					s != null && (string.Equals(s.StepName, _currentAlgorithmName, StringComparison.OrdinalIgnoreCase) ||
+						IsSameAlgorithmFileName(s, _currentAlgorithmName, _currentAlgorithmPath)));
+
+				List<PinConfig> pins = string.Equals(direction, "Input", StringComparison.OrdinalIgnoreCase)
+					? (step == null ? null : step.InputPins)
+					: (step == null ? null : step.OutputPins);
+
+				PinConfig pin = pins == null ? null : pins.FirstOrDefault(x =>
+					x != null && string.Equals(x.PinName, pinName, StringComparison.OrdinalIgnoreCase));
+				return pin == null ? string.Empty : (pin.GlobalVariableName ?? string.Empty);
+			}
+			catch
+			{
+				return string.Empty;
+			}
+		}
+
 		private void AddTerminalRow(object terminal, string direction)
 		{
 			if (terminal == null)
@@ -2860,22 +2968,19 @@ namespace Aron_V3
 			string dataType = value == null ? GetPropertyString(terminal, "ValueType") : value.GetType().Name;
 			string valueText = ValueToDisplayText(value);
 
-			string remark = direction == "Input" ? "可编辑输入值" : "输出值只读";
-
-			int rowIndex = dgvPins.Rows.Add(direction, name, dataType, valueText, "...", remark);
+			string globalVariableName = GetSavedPinGlobalVariable(direction, name);
+			int rowIndex = dgvPins.Rows.Add(direction, name, dataType, valueText, GlobalVariableBindingUi.SelectText);
 			DataGridViewRow row = dgvPins.Rows[rowIndex];
 			row.Tag = terminal;
+			GlobalVariableBindingUi.SetCellValue(row, "colGlobalVariable", globalVariableName);
 
 			if (direction == "Output")
 			{
 				row.Cells["colValue"].ReadOnly = true;
-				row.Cells["colBrowse"].ReadOnly = true;
-			}
-
-			if (!IsImageTerminal(name, dataType))
-			{
-				row.Cells["colBrowse"].ReadOnly = true;
-				row.Cells["colBrowse"].Value = string.Empty;
+				if (!string.IsNullOrWhiteSpace(globalVariableName))
+				{
+					GlobalVariableStore.SetValue(globalVariableName, value);
+				}
 			}
 		}
 
@@ -2919,30 +3024,24 @@ namespace Aron_V3
 				return;
 			}
 
-			if (dgvPins.Columns[e.ColumnIndex].Name != "colBrowse")
+			if (dgvPins.Columns[e.ColumnIndex].Name != "colGlobalVariable")
 			{
 				return;
 			}
 
 			DataGridViewRow row = dgvPins.Rows[e.RowIndex];
-
-			if (row.Cells["colBrowse"].ReadOnly)
+			if (GlobalVariableBindingUi.SelectForCell(this, row, "colGlobalVariable"))
 			{
-				return;
-			}
-
-			using (OpenFileDialog dialog = new OpenFileDialog())
-			{
-				dialog.Title = "Select Image File";
-				dialog.Filter = "Image Files|*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff|All Files|*.*";
-
-				if (dialog.ShowDialog(this) == DialogResult.OK)
+				if (string.Equals(GetPinGridCellString(row, "colDirection"), "Input", StringComparison.OrdinalIgnoreCase))
 				{
-					row.Cells["colValue"].Value = dialog.FileName;
-					row.Cells["colRemark"].Value = "本地图片文件，已应用到输入引脚";
-
 					ApplyGridRowValueToInput(row, true);
 				}
+				else
+				{
+					GlobalVariableStore.SetValue(GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable"),
+						GetPropertyObject(row.Tag, "Value"));
+				}
+				SyncDisplayedPinsToCurrentStepConfig();
 			}
 		}
 
@@ -2963,6 +3062,7 @@ namespace Aron_V3
 
 			DataGridViewRow row = dgvPins.Rows[e.RowIndex];
 			ApplyGridRowValueToInput(row, false);
+			SyncDisplayedPinsToCurrentStepConfig();
 		}
 
 		private void btnApplyInputs_Click(object sender, EventArgs e)
@@ -2978,7 +3078,7 @@ namespace Aron_V3
 
 		private void btnSaveVpp_Click(object sender, EventArgs e)
 		{
-			ApplyAllInputRows(false);
+			ApplyAllInputRows(true);
 			SaveCurrentVpp();
 		}
 
@@ -3029,6 +3129,13 @@ namespace Aron_V3
 			string valueText = Convert.ToString(row.Cells["colValue"].Value);
 			string dataType = Convert.ToString(row.Cells["colDataType"].Value);
 			string pinName = Convert.ToString(row.Cells["colName"].Value);
+			string globalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable");
+
+			if (!string.IsNullOrWhiteSpace(globalVariableName))
+			{
+				valueText = GlobalVariableStore.GetValueText(globalVariableName);
+				row.Cells["colValue"].Value = valueText;
+			}
 
 			try
 			{
@@ -3037,12 +3144,9 @@ namespace Aron_V3
 
 				SetPropertyObject(terminal, "Value", newValue);
 
-				row.Cells["colRemark"].Value = "已应用到输入引脚";
 			}
 			catch (Exception ex)
 			{
-				row.Cells["colRemark"].Value = "应用失败：" + ex.Message;
-
 				if (!silent)
 				{
 					MessageBox.Show("Apply input failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -3221,15 +3325,6 @@ namespace Aron_V3
 
 			string savePath = GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, _currentAlgorithmName);
 
-			if (MessageBox.Show(
-				"Save and overwrite current task VPP?" + Environment.NewLine + savePath,
-				"Save VPP",
-				MessageBoxButtons.YesNo,
-				MessageBoxIcon.Question) != DialogResult.Yes)
-			{
-				return;
-			}
-
 			try
 			{
 				string folder = Path.GetDirectoryName(savePath);
@@ -3273,11 +3368,7 @@ namespace Aron_V3
 				fileName += ".vpp";
 			}
 
-			// 固定保存到当前软件运行目录下的 Project 工程内部路径：
-			// bin\x64\Debug\Project\DemoProject\Steps\<JobID>\<TaskName>\VPP\<VppName>.vpp
-			string projectRoot = GetRuntimeProjectRoot();
-
-			return Path.Combine(projectRoot, "Steps", jobName, taskName, "VPP", fileName);
+			return Path.Combine(FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName), "VPP", fileName);
 		}
 
 		private string GetRuntimeProjectRoot()
@@ -3566,14 +3657,14 @@ namespace Aron_V3
 				grpJobs.Text = "All JobID";
 				grpTasks.Text = "All Task";
 
-				dgvPins.Columns["colDirection"].HeaderText = "Type";
-				dgvPins.Columns["colName"].HeaderText = "Pin Name";
-				dgvPins.Columns["colDataType"].HeaderText = "Data Type";
-				dgvPins.Columns["colValue"].HeaderText = "Current / Custom Value";
-				dgvPins.Columns["colBrowse"].HeaderText = "File";
-				dgvPins.Columns["colRemark"].HeaderText = "Remark";
+				SetVppColumnHeader("colDirection", "Type");
+				SetVppColumnHeader("colName", "Pin Name");
+				SetVppColumnHeader("colDataType", "Data Type");
+				SetVppColumnHeader("colValue", "Current / Custom Value");
+				SetVppColumnHeader("colGlobalVariable", "Global Variable");
 				if (btnApplyInputs != null) btnApplyInputs.Text = "Apply";
 				if (btnRunReplay != null) btnRunReplay.Text = "Run";
+				if (btnLoadEditor != null) btnLoadEditor.Text = "Edit Tool";
 				if (btnSaveVpp != null) btnSaveVpp.Text = "Save VPP";
 			}
 			else
@@ -3586,14 +3677,14 @@ namespace Aron_V3
 				grpJobs.Text = "所有 JobID";
 				grpTasks.Text = "所有 Task";
 
-				dgvPins.Columns["colDirection"].HeaderText = "类型";
-				dgvPins.Columns["colName"].HeaderText = "引脚名称";
-				dgvPins.Columns["colDataType"].HeaderText = "数据类型";
-				dgvPins.Columns["colValue"].HeaderText = "当前值 / 自定义值";
-				dgvPins.Columns["colBrowse"].HeaderText = "文件";
-				dgvPins.Columns["colRemark"].HeaderText = "说明";
+				SetVppColumnHeader("colDirection", "类型");
+				SetVppColumnHeader("colName", "引脚名称");
+				SetVppColumnHeader("colDataType", "数据类型");
+				SetVppColumnHeader("colValue", "当前值 / 自定义值");
+				SetVppColumnHeader("colGlobalVariable", "关联全局变量");
 				if (btnApplyInputs != null) btnApplyInputs.Text = "应用输入";
 				if (btnRunReplay != null) btnRunReplay.Text = "回放运行";
+				if (btnLoadEditor != null) btnLoadEditor.Text = "修改工具";
 				if (btnSaveVpp != null) btnSaveVpp.Text = "保存 VPP";
 			}
 			if (_scriptEditor != null && !_scriptEditor.IsDisposed)
@@ -3602,6 +3693,14 @@ namespace Aron_V3
 			}
 
 			SelectLibrary(_currentLibrary);
+		}
+
+		private void SetVppColumnHeader(string columnName, string headerText)
+		{
+			if (dgvPins != null && dgvPins.Columns.Contains(columnName))
+			{
+				dgvPins.Columns[columnName].HeaderText = headerText;
+			}
 		}
 
 		private class AlgorithmFileItem

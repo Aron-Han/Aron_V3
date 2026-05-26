@@ -59,6 +59,9 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string Remark { get; set; }
 
+		[XmlAttribute]
+		public string GlobalVariableName { get; set; }
+
 		public CommInputVariable()
 		{
 			Name = string.Empty;
@@ -70,6 +73,7 @@ namespace Aron_V3
 			BitOffset = 0;
 			Length = 1;
 			Remark = string.Empty;
+			GlobalVariableName = string.Empty;
 		}
 	}
 
@@ -93,6 +97,9 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string Remark { get; set; }
 
+		[XmlAttribute]
+		public string GlobalVariableName { get; set; }
+
 		public CommOutputVariable()
 		{
 			Name = string.Empty;
@@ -101,6 +108,7 @@ namespace Aron_V3
 			BitOffset = 0;
 			Length = 1;
 			Remark = string.Empty;
+			GlobalVariableName = string.Empty;
 		}
 	}
 

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace Aron_V3
@@ -13,12 +14,9 @@ namespace Aron_V3
 		private readonly Color _accent = Color.FromArgb(0, 150, 220);
 		private readonly Color _text = Color.FromArgb(220, 235, 245);
 
-		private ComboBox cboCount;
-		private ComboBox cboMode;
+		private NumericUpDown numCount;
 		private DataGridView dgvSlots;
-		private Button btnApply;
 		private Button btnSave;
-		private Button btnPreview;
 
 		private DisplayLayoutConfig _config;
 
@@ -32,16 +30,6 @@ namespace Aron_V3
 
 		public void ApplyLanguage(bool isEnglish)
 		{
-			if (btnApply != null)
-			{
-				btnApply.Text = isEnglish ? "Apply" : "应用布局";
-			}
-
-			if (btnPreview != null)
-			{
-				btnPreview.Text = isEnglish ? "Preview" : "预览布局";
-			}
-
 			if (btnSave != null)
 			{
 				btnSave.Text = isEnglish ? "Save" : "保存配置";
@@ -65,7 +53,7 @@ namespace Aron_V3
 			root.Padding = new Padding(16);
 			root.RowCount = 3;
 			root.ColumnCount = 1;
-			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 82F));
+			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68F));
 			root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54F));
 
@@ -75,17 +63,18 @@ namespace Aron_V3
 			top.Padding = new Padding(14);
 
 			Label lblCount = CreateLabel("显示框数量", 14, 14, 90, 26);
-			cboCount = CreateCombo(110, 13, 130, 28);
-			cboCount.Items.AddRange(new object[] { "1", "2", "4", "6", "8", "9", "12" });
-
-			Label lblMode = CreateLabel("布局方式", 280, 14, 80, 26);
-			cboMode = CreateCombo(360, 13, 160, 28);
-			cboMode.Items.AddRange(new object[] { "AutoGrid", "Horizontal", "Vertical" });
+			numCount = new NumericUpDown();
+			numCount.Left = 110;
+			numCount.Top = 13;
+			numCount.Width = 130;
+			numCount.Height = 28;
+			numCount.Minimum = 1;
+			numCount.Maximum = 16;
+			numCount.BackColor = Color.White;
+			numCount.ValueChanged += delegate { ApplyCountToGrid(); };
 
 			top.Controls.Add(lblCount);
-			top.Controls.Add(cboCount);
-			top.Controls.Add(lblMode);
-			top.Controls.Add(cboMode);
+			top.Controls.Add(numCount);
 
 			dgvSlots = new DataGridView();
 			dgvSlots.Dock = DockStyle.Fill;
@@ -107,6 +96,7 @@ namespace Aron_V3
 			dgvSlots.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 190);
 			dgvSlots.DefaultCellStyle.SelectionForeColor = Color.White;
 			dgvSlots.GridColor = _border;
+			SetDoubleBuffered(dgvSlots);
 
 			DataGridViewTextBoxColumn colSlot = new DataGridViewTextBoxColumn();
 			colSlot.Name = "SlotName";
@@ -132,17 +122,11 @@ namespace Aron_V3
 			bottom.BackColor = _panel;
 			bottom.Padding = new Padding(0, 10, 0, 0);
 
-			btnApply = CreateButton("应用布局", 0, 10, 110, 32);
-			btnPreview = CreateButton("预览布局", 120, 10, 110, 32);
-			btnSave = CreateButton("保存配置", 240, 10, 110, 32);
+			btnSave = CreateButton("保存配置", 0, 10, 110, 32);
 			btnSave.BackColor = Color.FromArgb(0, 95, 210);
 
-			btnApply.Click += delegate { ApplyCountToGrid(); };
-			btnPreview.Click += delegate { PreviewLayout(); };
 			btnSave.Click += delegate { SaveConfigFromUi(); };
 
-			bottom.Controls.Add(btnApply);
-			bottom.Controls.Add(btnPreview);
 			bottom.Controls.Add(btnSave);
 
 			root.Controls.Add(top, 0, 0);
@@ -156,8 +140,7 @@ namespace Aron_V3
 		{
 			_config = DisplayLayoutStore.LoadOrCreateDefault();
 
-			cboCount.SelectedItem = _config.DisplayCount.ToString();
-			cboMode.SelectedItem = _config.LayoutMode;
+			numCount.Value = Math.Max(numCount.Minimum, Math.Min(numCount.Maximum, _config.DisplayCount));
 
 			LoadSlotsToGrid();
 		}
@@ -191,16 +174,14 @@ namespace Aron_V3
 		{
 			int count;
 
-			if (!int.TryParse(Convert.ToString(cboCount.SelectedItem), out count))
-			{
-				count = 4;
-			}
+			count = Convert.ToInt32(numCount.Value);
 
 			if (_config == null)
 			{
 				_config = DisplayLayoutStore.CreateDefault();
 			}
 
+			CaptureRowsIntoConfig();
 			_config.DisplayCount = count;
 
 			while (_config.Displays.Count < count)
@@ -217,6 +198,28 @@ namespace Aron_V3
 			LoadSlotsToGrid();
 		}
 
+		private void CaptureRowsIntoConfig()
+		{
+			if (_config == null || dgvSlots == null || dgvSlots.Rows.Count == 0)
+			{
+				return;
+			}
+
+			for (int i = 0; i < dgvSlots.Rows.Count; i++)
+			{
+				DataGridViewRow row = dgvSlots.Rows[i];
+				if (row.IsNewRow) continue;
+				while (_config.Displays.Count <= i)
+				{
+					_config.Displays.Add(new DisplaySlotConfig());
+				}
+				_config.Displays[i].SlotName = Convert.ToString(row.Cells["SlotName"].Value);
+				_config.Displays[i].Title = Convert.ToString(row.Cells["Title"].Value);
+				object value = row.Cells["Enable"].Value;
+				_config.Displays[i].Enable = value == null || Convert.ToBoolean(value);
+			}
+		}
+
 		private void SaveConfigFromUi()
 		{
 			if (_config == null)
@@ -226,13 +229,10 @@ namespace Aron_V3
 
 			int count;
 
-			if (!int.TryParse(Convert.ToString(cboCount.SelectedItem), out count))
-			{
-				count = 4;
-			}
+			count = Convert.ToInt32(numCount.Value);
 
 			_config.DisplayCount = count;
-			_config.LayoutMode = Convert.ToString(cboMode.SelectedItem);
+			_config.LayoutMode = "AutoGrid";
 
 			_config.Displays.Clear();
 
@@ -258,23 +258,6 @@ namespace Aron_V3
 			MessageBox.Show("Display layout saved.", "Display Layout", MessageBoxButtons.OK, MessageBoxIcon.Information);
 		}
 
-		private void PreviewLayout()
-		{
-			SaveConfigFromUi();
-
-			Form form = new Form();
-			form.Text = "Display Layout Preview";
-			form.StartPosition = FormStartPosition.CenterParent;
-			form.Size = new Size(900, 600);
-			form.BackColor = _back;
-
-			MainDisplayControl preview = new MainDisplayControl();
-			preview.Dock = DockStyle.Fill;
-			form.Controls.Add(preview);
-
-			form.ShowDialog(this);
-		}
-
 		private Label CreateLabel(string text, int x, int y, int w, int h)
 		{
 			Label lbl = new Label();
@@ -290,15 +273,13 @@ namespace Aron_V3
 			return lbl;
 		}
 
-		private ComboBox CreateCombo(int x, int y, int w, int h)
+		private void SetDoubleBuffered(Control control)
 		{
-			ComboBox cbo = new ComboBox();
-			cbo.Left = x;
-			cbo.Top = y;
-			cbo.Width = w;
-			cbo.Height = h;
-			cbo.DropDownStyle = ComboBoxStyle.DropDownList;
-			return cbo;
+			PropertyInfo property = typeof(Control).GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic);
+			if (property != null)
+			{
+				property.SetValue(control, true, null);
+			}
 		}
 
 		private Button CreateButton(string text, int x, int y, int w, int h)

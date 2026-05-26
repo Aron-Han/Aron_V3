@@ -177,7 +177,7 @@ namespace Aron_V3
 			lblNoImageTip.TextAlign = ContentAlignment.MiddleCenter;
 			lblNoImageTip.ForeColor = _muted;
 			lblNoImageTip.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
-			lblNoImageTip.Text = "当前 Task 未配置图像源。\r\n点击 OK 后将直接按正常流程执行，不需要选择本地图片。";
+			lblNoImageTip.Text = "当前 Task 未配置图像源。\r\n点击 OK 后将直接离线执行，不需要选择本地图片。";
 			lblNoImageTip.Visible = false;
 
 			imagePanel.Controls.Add(dgvImages);
@@ -339,16 +339,21 @@ namespace Aron_V3
 					return;
 				}
 
-				// 有图像源但没有选择本地图片时，允许继续。
-				// 后续执行时没有 OverrideImageSources，则走正常图像源取图。
-				if (!string.IsNullOrWhiteSpace(imagePath))
+				if (string.IsNullOrWhiteSpace(imagePath))
 				{
-					Options.ImageSources.Add(new TaskTestImageSource
-					{
-						ImageSourceName = sourceName,
-						LocalImagePath = imagePath
-					});
+					MessageBox.Show(
+						"离线测试需要为图像源选择本地图片：\r\n" + sourceName,
+						_taskName,
+						MessageBoxButtons.OK,
+						MessageBoxIcon.Information);
+					return;
 				}
+
+				Options.ImageSources.Add(new TaskTestImageSource
+				{
+					ImageSourceName = sourceName,
+					LocalImagePath = imagePath
+				});
 			}
 
 			DialogResult = DialogResult.OK;

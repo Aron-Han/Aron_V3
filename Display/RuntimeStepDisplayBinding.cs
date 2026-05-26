@@ -6,7 +6,12 @@ namespace Aron_V3
 {
 	public static class StepDisplayBindingRunner
 	{
-		public static void TryPublishStepImage(string jobName, string taskName, StepConfig step, object stepRunResult)
+		public static void TryPublishStepImage(
+			string jobName,
+			string taskName,
+			StepConfig step,
+			StepResult stepRunResult,
+			VisionRunContext context)
 		{
 			if (step == null)
 			{
@@ -19,17 +24,13 @@ namespace Aron_V3
 				return;
 			}
 
-			if (string.IsNullOrWhiteSpace(step.DisplayOutputKey) ||
-				string.Equals(step.DisplayOutputKey, "Not Use", StringComparison.OrdinalIgnoreCase))
-			{
-				return;
-			}
-
-			object rawImage = TryGetOutputImage(stepRunResult, step.DisplayOutputKey);
+			VisionImage selectedImage = TryGetOutputVisionImage(stepRunResult, step.DisplayOutputKey);
+			object rawImage = selectedImage == null ? null : selectedImage.RawImage;
 
 			if (rawImage == null)
 			{
-				return;
+				rawImage = TryGetFirstInputImage(step, context);
+				selectedImage = null;
 			}
 
 			Bitmap bitmap = ImageConvertHelper.TryConvertToBitmap(rawImage);
@@ -41,15 +42,50 @@ namespace Aron_V3
 
 			try
 			{
-				string title = step.StepName + " - " + step.DisplayOutputKey;
 				string sourceInfo = jobName + " / " + taskName + " / " + step.StepName;
 
-				DisplayRuntimeManager.ShowImage(step.DisplaySlotName, bitmap, title, sourceInfo, step.DisplayMode);
+				DisplayRuntimeManager.ShowImage(
+					step.DisplaySlotName,
+					bitmap,
+					sourceInfo,
+					step.DisplayMode,
+					selectedImage == null ? null : selectedImage.DisplayRecord,
+					selectedImage == null ? string.Empty : selectedImage.DisplayRecordKey);
 			}
 			finally
 			{
 				bitmap.Dispose();
 			}
+		}
+
+		private static VisionImage TryGetOutputVisionImage(StepResult result, string outputKey)
+		{
+			if (result == null || string.IsNullOrWhiteSpace(outputKey))
+			{
+				return null;
+			}
+
+			VisionImage image;
+			return result.OutputImages.TryGetValue(outputKey, out image) ? image : null;
+		}
+
+		private static object TryGetFirstInputImage(StepConfig step, VisionRunContext context)
+		{
+			if (step == null || context == null)
+			{
+				return null;
+			}
+
+			foreach (string key in RuntimeImageSourceParser.SplitImageSources(step.InputImageKey))
+			{
+				VisionImage image;
+				if (context.TryGetImage(key, out image) && image != null && image.RawImage != null)
+				{
+					return image.RawImage;
+				}
+			}
+
+			return null;
 		}
 
 		private static object TryGetOutputImage(object runResult, string outputKey)
@@ -62,6 +98,19 @@ namespace Aron_V3
 			if (runResult is Bitmap)
 			{
 				return runResult;
+			}
+
+			StepResult stepResult = runResult as StepResult;
+			if (stepResult != null)
+			{
+				VisionImage image;
+				if (!string.IsNullOrWhiteSpace(outputKey) &&
+					stepResult.OutputImages.TryGetValue(outputKey, out image) &&
+					image != null)
+				{
+					return image.RawImage;
+				}
+
 			}
 
 			Type type = runResult.GetType();

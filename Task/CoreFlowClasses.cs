@@ -1,8 +1,11 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -177,12 +180,15 @@ namespace Aron_V3
 		public int Width { get; set; }
 		public int Height { get; set; }
 		public string SourceStep { get; set; }
+		public object DisplayRecord { get; set; }
+		public string DisplayRecordKey { get; set; }
 
 		public VisionImage()
 		{
 			ImageName = string.Empty;
 			ImageType = string.Empty;
 			SourceStep = string.Empty;
+			DisplayRecordKey = string.Empty;
 		}
 	}
 
@@ -326,12 +332,16 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string Description { get; set; }
 
+		[XmlAttribute]
+		public string GlobalVariableName { get; set; }
+
 		public PinConfig()
 		{
 			PinName = string.Empty;
 			SourceKey = string.Empty;
 			TargetKey = string.Empty;
 			Description = string.Empty;
+			GlobalVariableName = string.Empty;
 			DataType = PinDataType.String;
 			Length = 0;
 		}
@@ -650,7 +660,7 @@ namespace Aron_V3
 			TriggerName = string.Empty;
 			TriggerValue = "1";
 			TriggerCompare = TriggerCompareType.Equal;
-			PositionName = "0";
+			PositionName = "Not Use";
 			PositionValue = "1";
 			PositionCompare = TriggerCompareType.Equal;
 			InputAddress = string.Empty;
@@ -822,7 +832,7 @@ namespace Aron_V3
 			task.TriggerName = "Trigger_" + (runOrder - 1).ToString();
 			task.TriggerValue = "1";
 			task.TriggerCompare = TriggerCompareType.Equal;
-			task.PositionName = "0";
+			task.PositionName = "Not Use";
 			task.PositionValue = "1";
 			task.PositionCompare = TriggerCompareType.Equal;
 
@@ -1105,22 +1115,42 @@ namespace Aron_V3
 
 			try
 			{
-				// TODO:
-				// 1. 使用 _config.StepFolder + _config.VppFiles[0] 定位 Project 内部 VPP
-				// 2. 从 context.Images[_config.InputImageKey] 获取输入图像
-				// 3. 设置 ToolBlock.Inputs
-				// 4. Run
-				// 5. 读取 ToolBlock.Outputs 到 result.Outputs
-				// 6. 读取输出图像到 result.OutputImages
+				string filePath = ResolveVppPath(context);
+				if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+				{
+					throw new Exception("VPP file was not found: " + filePath);
+				}
 
-				result.Outputs["OK"] = true;
-				result.Outputs["Score"] = 0.99;
-				result.Message = "VPP step demo executed.";
+				object toolBlock = VisionProReflectionHelper.LoadObjectFromFile(filePath);
+				if (toolBlock == null)
+				{
+					throw new Exception("VPP load returned null: " + filePath);
+				}
+
+				List<object> inputTerminals = GetTerminals(GetPropertyValue(toolBlock, "Inputs"));
+				ApplyImageInputs(inputTerminals, context);
+				ApplyGlobalInputs(inputTerminals);
+
+				MethodInfo runMethod = toolBlock.GetType().GetMethod("Run", Type.EmptyTypes);
+				if (runMethod == null)
+				{
+					throw new Exception("VPP object does not provide Run().");
+				}
+
+				runMethod.Invoke(toolBlock, null);
+				ReadOutputs(toolBlock, result);
+				ReadDisplayImage(toolBlock, result);
+				AlgorithmRuntimeSnapshotStore.Instance.SetRunningToolBlock(
+					context.JobName, context.TaskName, _config.StepName, Path.GetFileName(filePath), toolBlock);
+				result.Message = "VPP step executed.";
 			}
 			catch (Exception ex)
 			{
 				result.IsOK = false;
-				result.Message = ex.Message;
+				TargetInvocationException targetException = ex as TargetInvocationException;
+				result.Message = targetException != null && targetException.InnerException != null
+					? targetException.InnerException.Message
+					: ex.Message;
 			}
 			finally
 			{
@@ -1129,6 +1159,404 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private string ResolveVppPath(VisionRunContext context)
+		{
+			List<string> candidates = new List<string>();
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(context.JobName, context.TaskName);
+			AddFileCandidate(candidates, _config.ProjectFilePath, taskFolder);
+
+			if (_config.VppFiles != null)
+			{
+				foreach (string file in _config.VppFiles)
+				{
+					AddFileCandidate(candidates, file, taskFolder);
+				}
+			}
+
+			AddFileCandidate(candidates, _config.SourceFilePath, taskFolder);
+			return candidates.FirstOrDefault(File.Exists) ?? (candidates.Count > 0 ? candidates[0] : string.Empty);
+		}
+
+		private void AddFileCandidate(List<string> candidates, string file, string taskFolder)
+		{
+			if (string.IsNullOrWhiteSpace(file))
+			{
+				return;
+			}
+
+			string candidate = Path.IsPathRooted(file) ? file : Path.Combine(taskFolder, file);
+			if (!candidates.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+			{
+				candidates.Add(candidate);
+			}
+		}
+
+		private void ApplyImageInputs(List<object> terminals, VisionRunContext context)
+		{
+			List<string> sourceKeys = RuntimeImageSourceParser.SplitImageSources(_config.InputImageKey);
+			if (sourceKeys.Count <= 0)
+			{
+				return;
+			}
+
+			List<object> imageTerminals = terminals.Where(IsImageTerminal).ToList();
+			if (sourceKeys.Count > imageTerminals.Count)
+			{
+				throw new Exception("VPP image input count is insufficient. Sources=" +
+					sourceKeys.Count.ToString() + ", ImageInputs=" + imageTerminals.Count.ToString());
+			}
+
+			for (int i = 0; i < sourceKeys.Count; i++)
+			{
+				VisionImage image;
+				if (!context.TryGetImage(sourceKeys[i], out image) || image == null || image.RawImage == null)
+				{
+					throw new Exception("VPP input image is null. Source=" + sourceKeys[i]);
+				}
+
+				SetTerminalValue(imageTerminals[i], image.RawImage);
+			}
+		}
+
+		private void ApplyGlobalInputs(List<object> terminals)
+		{
+			if (_config.InputPins == null)
+			{
+				return;
+			}
+
+			foreach (PinConfig pin in _config.InputPins)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.GlobalVariableName) || pin.DataType == PinDataType.Image)
+				{
+					continue;
+				}
+
+				object terminal = FindTerminal(terminals, pin.PinName);
+				object value;
+				if (terminal != null && GlobalVariableStore.TryGetValue(pin.GlobalVariableName, out value))
+				{
+					SetTerminalValue(terminal, ConvertForTerminal(value, GetPropertyValue(terminal, "Value")));
+				}
+			}
+		}
+
+		private void ReadOutputs(object toolBlock, StepResult result)
+		{
+			foreach (object terminal in GetTerminals(GetPropertyValue(toolBlock, "Outputs")))
+			{
+				string name = Convert.ToString(GetPropertyValue(terminal, "Name"));
+				if (string.IsNullOrWhiteSpace(name))
+				{
+					continue;
+				}
+
+				object value = GetPropertyValue(terminal, "Value");
+				result.Outputs[name] = value;
+
+				PinConfig pin = _config.OutputPins == null ? null : _config.OutputPins.FirstOrDefault(x =>
+					x != null && string.Equals(x.PinName, name, StringComparison.OrdinalIgnoreCase));
+				if (pin != null && !string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+				{
+					GlobalVariableStore.SetValue(pin.GlobalVariableName, value);
+				}
+
+				if (IsImageTerminal(terminal) && value != null)
+				{
+					VisionImage image = new VisionImage();
+					image.ImageName = name;
+					image.ImageType = "VisionPro";
+					image.SourceStep = _config.StepName;
+					image.RawImage = value;
+					result.OutputImages[name] = image;
+				}
+			}
+		}
+
+		private void ReadDisplayImage(object toolBlock, StepResult result)
+		{
+			string outputKey = _config.DisplayOutputKey;
+			if (string.IsNullOrWhiteSpace(outputKey) ||
+				outputKey.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				result.OutputImages.ContainsKey(outputKey))
+			{
+				return;
+			}
+
+			object displayRecord;
+			object value = TryGetLastRunImage(toolBlock, outputKey, out displayRecord);
+			if (value == null)
+			{
+				return;
+			}
+
+			VisionImage image = new VisionImage();
+			image.ImageName = outputKey;
+			image.ImageType = "VisionProRecord";
+			image.SourceStep = _config.StepName;
+			image.RawImage = value;
+			image.DisplayRecord = displayRecord;
+			image.DisplayRecordKey = outputKey.Substring("LastRun.".Length);
+			result.OutputImages[outputKey] = image;
+		}
+
+		private object TryGetLastRunImage(object toolBlock, string outputKey, out object displayRecord)
+		{
+			displayRecord = null;
+			if (toolBlock == null || string.IsNullOrWhiteSpace(outputKey) ||
+				!outputKey.StartsWith("LastRun.", StringComparison.OrdinalIgnoreCase))
+			{
+				return null;
+			}
+
+			object record = null;
+			MethodInfo createRecord = toolBlock.GetType().GetMethod("CreateLastRunRecord", Type.EmptyTypes);
+			if (createRecord != null)
+			{
+				record = createRecord.Invoke(toolBlock, null);
+			}
+
+			if (record == null)
+			{
+				record = GetPropertyValue(toolBlock, "LastRunRecord");
+			}
+
+			if (record == null)
+			{
+				return null;
+			}
+
+			string relativeKey = outputKey.Substring("LastRun.".Length);
+			object imageRecord = FindRecordByKey(record, relativeKey);
+			if (imageRecord != null)
+			{
+				displayRecord = imageRecord;
+				object imageContent = GetPropertyValue(imageRecord, "Content");
+				return imageContent ?? GetPropertyValue(imageRecord, "Image");
+			}
+
+			string[] parts = relativeKey
+				.Split(new char[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
+
+			foreach (string part in parts)
+			{
+				record = FindRecordChild(record, part);
+				if (record == null)
+				{
+					return null;
+				}
+			}
+
+			displayRecord = record;
+			object content = GetPropertyValue(record, "Content");
+			return content ?? GetPropertyValue(record, "Image");
+		}
+
+		private object FindRecordChild(object record, string name)
+		{
+			object subRecords = GetPropertyValue(record, "SubRecords");
+			if (subRecords == null)
+			{
+				return null;
+			}
+
+			try
+			{
+				PropertyInfo itemProperty = subRecords.GetType().GetProperty("Item", new Type[] { typeof(string) });
+				if (itemProperty != null)
+				{
+					object named = itemProperty.GetValue(subRecords, new object[] { name });
+					if (named != null)
+					{
+						return named;
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			IEnumerable values = subRecords as IEnumerable;
+			if (values != null)
+			{
+				foreach (object child in values)
+				{
+					string recordKey = Convert.ToString(GetPropertyValue(child, "RecordKey"));
+					if (string.Equals(recordKey, name, StringComparison.OrdinalIgnoreCase) ||
+						recordKey.EndsWith("." + name, StringComparison.OrdinalIgnoreCase))
+					{
+						return child;
+					}
+				}
+			}
+
+			return null;
+		}
+
+		private object FindRecordByKey(object record, string recordKey)
+		{
+			if (record == null || string.IsNullOrWhiteSpace(recordKey))
+			{
+				return null;
+			}
+
+			object subRecords = GetPropertyValue(record, "SubRecords");
+			if (subRecords == null)
+			{
+				return null;
+			}
+
+			try
+			{
+				PropertyInfo itemProperty = subRecords.GetType().GetProperty("Item", new Type[] { typeof(string) });
+				if (itemProperty != null)
+				{
+					object direct = itemProperty.GetValue(subRecords, new object[] { recordKey });
+					if (direct != null)
+					{
+						return direct;
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			IEnumerable values = subRecords as IEnumerable;
+			if (values == null)
+			{
+				return null;
+			}
+
+			foreach (object child in values)
+			{
+				string childKey = Convert.ToString(GetPropertyValue(child, "RecordKey"));
+				if (string.Equals(childKey, recordKey, StringComparison.OrdinalIgnoreCase) ||
+					childKey.EndsWith("." + recordKey, StringComparison.OrdinalIgnoreCase))
+				{
+					return child;
+				}
+
+				object nested = FindRecordByKey(child, recordKey);
+				if (nested != null)
+				{
+					return nested;
+				}
+			}
+
+			return null;
+		}
+
+		private List<object> GetTerminals(object collection)
+		{
+			List<object> result = new List<object>();
+			IEnumerable enumerable = collection as IEnumerable;
+			if (enumerable != null)
+			{
+				foreach (object item in enumerable)
+				{
+					if (item != null) result.Add(item);
+				}
+			}
+			return result;
+		}
+
+		private object FindTerminal(List<object> terminals, string name)
+		{
+			return terminals.FirstOrDefault(x =>
+				string.Equals(Convert.ToString(GetPropertyValue(x, "Name")), name, StringComparison.OrdinalIgnoreCase));
+		}
+
+		private bool IsImageTerminal(object terminal)
+		{
+			string name = Convert.ToString(GetPropertyValue(terminal, "Name"));
+			object value = GetPropertyValue(terminal, "Value");
+			string typeName = value == null ? Convert.ToString(GetPropertyValue(terminal, "ValueType")) : value.GetType().FullName;
+			string text = (name + " " + typeName).ToLowerInvariant();
+			return text.Contains("image") || text.Contains("cogimage") || text.Contains("bitmap");
+		}
+
+		private object GetPropertyValue(object obj, string propertyName)
+		{
+			if (obj == null)
+			{
+				return null;
+			}
+
+			PropertyInfo property = obj.GetType().GetProperty(propertyName);
+			return property == null ? null : property.GetValue(obj, null);
+		}
+
+		private void SetTerminalValue(object terminal, object value)
+		{
+			PropertyInfo property = terminal == null ? null : terminal.GetType().GetProperty("Value");
+			if (property == null || !property.CanWrite)
+			{
+				throw new Exception("VPP input terminal cannot be assigned.");
+			}
+
+			property.SetValue(terminal, value, null);
+		}
+
+		private object ConvertForTerminal(object value, object oldValue)
+		{
+			if (value == null || oldValue == null || oldValue.GetType().IsInstanceOfType(value))
+			{
+				return value;
+			}
+
+			try
+			{
+				return Convert.ChangeType(value, oldValue.GetType());
+			}
+			catch
+			{
+				return value;
+			}
+		}
+	}
+
+	public sealed class AlgorithmRuntimeSnapshotStore : IAlgorithmRuntimeSnapshotProvider
+	{
+		private readonly ConcurrentDictionary<string, object> _toolBlocks =
+			new ConcurrentDictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+		public static AlgorithmRuntimeSnapshotStore Instance { get; } = new AlgorithmRuntimeSnapshotStore();
+
+		private AlgorithmRuntimeSnapshotStore()
+		{
+		}
+
+		public void SetRunningToolBlock(string jobName, string taskName, string stepName, string fileName, object toolBlock)
+		{
+			if (toolBlock == null)
+			{
+				return;
+			}
+
+			SetSnapshot(jobName, taskName, stepName, toolBlock);
+			SetSnapshot(jobName, taskName, fileName, toolBlock);
+		}
+
+		public object TryGetRunningToolBlock(string jobName, string taskName, string vppName)
+		{
+			object value;
+			return _toolBlocks.TryGetValue(GetKey(jobName, taskName, vppName), out value) ? value : null;
+		}
+
+		private void SetSnapshot(string jobName, string taskName, string name, object value)
+		{
+			if (!string.IsNullOrWhiteSpace(name))
+			{
+				_toolBlocks[GetKey(jobName, taskName, name)] = value;
+			}
+		}
+
+		private string GetKey(string jobName, string taskName, string name)
+		{
+			return (jobName ?? string.Empty) + "|" + (taskName ?? string.Empty) + "|" + (name ?? string.Empty);
 		}
 	}
 
@@ -1229,9 +1657,16 @@ namespace Aron_V3
 			}
 
 			string triggerActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.TriggerName);
-			string positionActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.PositionName);
-
 			bool triggerOk = CompareValue(triggerActualValue, taskConfig.TriggerValue, taskConfig.TriggerCompare);
+
+			if (string.IsNullOrWhiteSpace(taskConfig.PositionName) ||
+				taskConfig.PositionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				taskConfig.PositionName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return triggerOk;
+			}
+
+			string positionActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.PositionName);
 			bool positionOk = CompareValue(positionActualValue, taskConfig.PositionValue, taskConfig.PositionCompare);
 
 			return triggerOk && positionOk;
@@ -1336,6 +1771,13 @@ namespace Aron_V3
 						context.SetImage(stepConfig.StepName + "." + image.Key, image.Value);
 					}
 
+					StepDisplayBindingRunner.TryPublishStepImage(
+						context.JobName,
+						context.TaskName,
+						stepConfig,
+						stepResult,
+						context);
+
 					finalResult = stepResult;
 
 					if (!stepResult.IsOK && stepConfig.StopWhenNG)
@@ -1386,6 +1828,10 @@ namespace Aron_V3
 			{
 				runStepConfig.ScriptInputStepKeys = flowItem.ScriptInputStepKeys;
 			}
+
+			runStepConfig.DisplayOutputKey = flowItem.DisplayOutputKey;
+			runStepConfig.DisplaySlotName = flowItem.DisplaySlotName;
+			runStepConfig.DisplayMode = flowItem.DisplayMode;
 
 			executeResult.StepConfig = runStepConfig;
 
@@ -1454,6 +1900,7 @@ namespace Aron_V3
 			target.DataType = source.DataType;
 			target.Length = source.Length;
 			target.Description = source.Description;
+			target.GlobalVariableName = source.GlobalVariableName;
 			return target;
 		}
 	}

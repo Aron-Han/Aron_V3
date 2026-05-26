@@ -9,6 +9,21 @@ namespace Aron_V3
 	{
 		private TriggerManagerControl _triggerPage;
 		private TaskSchedulerControl _taskPage;
+		private Func<string, string, TaskRunOptions, bool> _taskTestExecutor;
+
+		public Func<string, string, TaskRunOptions, bool> TaskTestExecutor
+		{
+			get { return _taskTestExecutor; }
+			set
+			{
+				_taskTestExecutor = value;
+
+				if (_triggerPage != null && !_triggerPage.IsDisposed)
+				{
+					_triggerPage.TaskTestExecutor = value;
+				}
+			}
+		}
 
 		public FlowConfigForm()
 		{
@@ -40,6 +55,7 @@ namespace Aron_V3
 			if (_triggerPage == null || _triggerPage.IsDisposed)
 			{
 				_triggerPage = new TriggerManagerControl();
+				_triggerPage.TaskTestExecutor = _taskTestExecutor;
 			}
 
 			ShowPage(_triggerPage);

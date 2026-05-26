@@ -936,11 +936,12 @@ namespace Aron_V3
 			if (isInput)
 			{
 				grid.Columns.Add(CreateTextColumn("DefaultValue", "当前值/测试值", 150));
-				grid.Columns.Add(CreateBindingSourceColumn("BindingPath", "绑定来源", 230));
+				grid.Columns.Add(CreateGlobalVariableColumn("GlobalVariableName", "全局变量", 150));
 			}
 			else
 			{
 				grid.Columns.Add(CreateTextColumn("CurrentValue", "当前输出值", 170));
+				grid.Columns.Add(CreateGlobalVariableColumn("GlobalVariableName", "全局变量", 150));
 			}
 
 			grid.Columns["Name"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
@@ -950,8 +951,8 @@ namespace Aron_V3
 			{
 				grid.Columns["DefaultValue"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
 				grid.Columns["DefaultValue"].ReadOnly = false;
-				grid.Columns["BindingPath"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-				grid.Columns["BindingPath"].MinimumWidth = 150;
+				grid.Columns["GlobalVariableName"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+				grid.Columns["GlobalVariableName"].MinimumWidth = 150;
 			}
 			else
 			{
@@ -959,6 +960,7 @@ namespace Aron_V3
 				grid.Columns["CurrentValue"].ReadOnly = true;
 				grid.Columns["CurrentValue"].DefaultCellStyle.BackColor = Color.FromArgb(8, 22, 36);
 				grid.Columns["CurrentValue"].DefaultCellStyle.ForeColor = Color.FromArgb(180, 220, 190);
+				grid.Columns["GlobalVariableName"].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
 			}
 
 			grid.Columns["Name"].ReadOnly = false;
@@ -967,10 +969,6 @@ namespace Aron_V3
 			grid.ColumnHeadersVisible = true;
 			EnsurePinGridHeaderVisible(grid);
 
-			if (isInput)
-			{
-				RefreshInputBindingSourceOptions();
-			}
 		}
 		private void EnsurePinGridHeaderVisible(DataGridView grid)
 		{
@@ -1085,12 +1083,14 @@ namespace Aron_V3
 			col.HeaderText = header;
 			col.Width = width;
 			col.FlatStyle = FlatStyle.Flat;
-			col.Items.Add(ScriptPinDataType.String);
-			col.Items.Add(ScriptPinDataType.Bool);
-			col.Items.Add(ScriptPinDataType.Int);
-			col.Items.Add(ScriptPinDataType.Double);
-			col.Items.Add(ScriptPinDataType.Decimal);
-			col.Items.Add(ScriptPinDataType.Object);
+			col.Items.Add(ScriptPinDataType.String.ToString());
+			col.Items.Add(ScriptPinDataType.Bool.ToString());
+			col.Items.Add(ScriptPinDataType.Int16.ToString());
+			col.Items.Add(ScriptPinDataType.Int32.ToString());
+			col.Items.Add(ScriptPinDataType.Float.ToString());
+			col.Items.Add(ScriptPinDataType.Double.ToString());
+			col.Items.Add(ScriptPinDataType.Decimal.ToString());
+			col.Items.Add(ScriptPinDataType.Object.ToString());
 			return col;
 		}
 
@@ -1105,6 +1105,11 @@ namespace Aron_V3
 			col.DisplayStyleForCurrentCellOnly = false;
 			col.Items.Add(string.Empty);
 			return col;
+		}
+
+		private DataGridViewButtonColumn CreateGlobalVariableColumn(string name, string header, int width)
+		{
+			return GlobalVariableBindingUi.CreateButtonColumn(name, header, width);
 		}
 
 		private void RefreshInputBindingSourceOptions()
@@ -1453,6 +1458,23 @@ namespace Aron_V3
 				{
 					_config.Inputs.RemoveAt(i);
 					continue;
+				}
+			}
+		}
+
+		private void RemoveLegacyAutoLinkedInputs()
+		{
+			if (_config == null || _config.Inputs == null)
+			{
+				return;
+			}
+
+			for (int i = _config.Inputs.Count - 1; i >= 0; i--)
+			{
+				ScriptPinConfig pin = _config.Inputs[i];
+				if (pin == null || !string.IsNullOrWhiteSpace(GetAutoInputSourceFromDescription(pin.Description)))
+				{
+					_config.Inputs.RemoveAt(i);
 				}
 			}
 		}
@@ -2162,7 +2184,8 @@ namespace Aron_V3
 		private PinDataType ConvertScriptPinDataTypeToPinDataType(ScriptPinDataType dataType)
 		{
 			if (dataType == ScriptPinDataType.Bool) return PinDataType.Bool;
-			if (dataType == ScriptPinDataType.Int) return PinDataType.Int;
+			if (dataType == ScriptPinDataType.Int || dataType == ScriptPinDataType.Int16 || dataType == ScriptPinDataType.Int32) return PinDataType.Int;
+			if (dataType == ScriptPinDataType.Float) return PinDataType.Float;
 			if (dataType == ScriptPinDataType.Double) return PinDataType.Double;
 			if (dataType == ScriptPinDataType.Decimal) return PinDataType.Double;
 			return PinDataType.String;
@@ -2425,10 +2448,11 @@ namespace Aron_V3
 				case PinDataType.Bool:
 					return ScriptPinDataType.Bool;
 				case PinDataType.Int:
-					return ScriptPinDataType.Int;
+					return ScriptPinDataType.Int32;
 				case PinDataType.Double:
-				case PinDataType.Float:
 					return ScriptPinDataType.Double;
+				case PinDataType.Float:
+					return ScriptPinDataType.Float;
 				case PinDataType.Image:
 				case PinDataType.ByteArray:
 					return ScriptPinDataType.Object;
@@ -2793,8 +2817,14 @@ namespace Aron_V3
 				btnOutputDelete.Click += btnPinDelete_Click;
 			}
 
-			gridInputs.CellBeginEdit -= gridInputs_CellBeginEdit;
-			gridInputs.CellBeginEdit += gridInputs_CellBeginEdit;
+			gridInputs.CellContentClick -= GlobalVariableCellContentClick;
+			gridOutputs.CellContentClick -= GlobalVariableCellContentClick;
+			gridInputs.CellContentClick += GlobalVariableCellContentClick;
+			gridOutputs.CellContentClick += GlobalVariableCellContentClick;
+			gridInputs.CurrentCellDirtyStateChanged -= PinGrid_CurrentCellDirtyStateChanged;
+			gridOutputs.CurrentCellDirtyStateChanged -= PinGrid_CurrentCellDirtyStateChanged;
+			gridInputs.CurrentCellDirtyStateChanged += PinGrid_CurrentCellDirtyStateChanged;
+			gridOutputs.CurrentCellDirtyStateChanged += PinGrid_CurrentCellDirtyStateChanged;
 
 			txtCode.TextChanged -= txtCode_TextChanged;
 			txtCode.TextChanged += txtCode_TextChanged;
@@ -2819,6 +2849,33 @@ namespace Aron_V3
 
 			panelLineNumbers.Paint -= panelLineNumbers_Paint;
 			panelLineNumbers.Paint += panelLineNumbers_Paint;
+		}
+
+		private void GlobalVariableCellContentClick(object sender, DataGridViewCellEventArgs e)
+		{
+			DataGridView grid = sender as DataGridView;
+			if (grid == null || e.RowIndex < 0 || e.ColumnIndex < 0 ||
+				grid.Columns[e.ColumnIndex].Name != "GlobalVariableName")
+			{
+				return;
+			}
+
+			if (GlobalVariableBindingUi.SelectForCell(this, grid.Rows[e.RowIndex], "GlobalVariableName") &&
+				grid == gridInputs)
+			{
+				UpdateBoundInputValue(grid.Rows[e.RowIndex]);
+			}
+		}
+
+		private void PinGrid_CurrentCellDirtyStateChanged(object sender, EventArgs e)
+		{
+			DataGridView grid = sender as DataGridView;
+			if (grid != null && grid.IsCurrentCellDirty &&
+				grid.CurrentCell != null &&
+				grid.Columns[grid.CurrentCell.ColumnIndex].Name == "DataType")
+			{
+				grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+			}
 		}
 
 		private void btnPinAdd_Click(object sender, EventArgs e)
@@ -2944,7 +3001,7 @@ namespace Aron_V3
 
 			if (grid.Columns.Contains("DataType"))
 			{
-				row.Cells["DataType"].Value = ScriptPinDataType.String;
+				row.Cells["DataType"].Value = ScriptPinDataType.String.ToString();
 			}
 
 			if (grid.Columns.Contains("DefaultValue"))
@@ -2961,6 +3018,11 @@ namespace Aron_V3
 			{
 				row.Cells["CurrentValue"].Value = string.Empty;
 				row.Cells["CurrentValue"].ReadOnly = true;
+			}
+
+			if (grid.Columns.Contains("GlobalVariableName"))
+			{
+				GlobalVariableBindingUi.SetCellValue(row, "GlobalVariableName", string.Empty);
 			}
 
 			grid.ClearSelection();
@@ -3090,6 +3152,11 @@ namespace Aron_V3
 			{
 				grid.Columns["CurrentValue"].HeaderText = _isEnglish ? "Current Output" : "当前输出值";
 			}
+
+			if (grid.Columns.Contains("GlobalVariableName"))
+			{
+				grid.Columns["GlobalVariableName"].HeaderText = _isEnglish ? "Global Variable" : "全局变量";
+			}
 		}
 
 
@@ -3133,16 +3200,9 @@ namespace Aron_V3
 					scriptCode = File.ReadAllText(_config.ScriptFilePath, System.Text.Encoding.UTF8);
 				}
 
-				// 1. 清理旧模板自动生成的 JobID / Measure1 / Barcode 示例输入。
-				// 2. 根据任务调度中 Script 绑定的前序模块，自动补齐 VPP/Hdev/Script 输出引脚。
-				//    VPP 即使没有在算法模块页面手动打开，也会直接读取 .vpp 文件提取 OutputPins。
-				// 3. 根据脚本代码中的 context.SetOutput("xxx", ...) 自动补齐输出表。
+				// 输入和输出均以表格中的显式配置为准；模块间数据统一通过全局变量关联。
 				RemoveDefaultSampleInputs();
-				RemoveStalePreviousStepInputs();
-				AutoMergeSelectedPreviousOutputPinsToInputs();
-				AutoMergeOutputsFromScriptCode(scriptCode);
-				RefreshInputBindingSourceOptions();
-
+				RemoveLegacyAutoLinkedInputs();
 				EnsureOutputPanelVisible();
 				LoadPinsToGrid(gridInputs, _config == null ? null : _config.Inputs);
 				LoadPinsToGrid(gridOutputs, _config == null ? null : _config.Outputs);
@@ -3221,13 +3281,13 @@ namespace Aron_V3
 				DataGridViewRow row = grid.Rows[rowIndex];
 
 				SetPinCellValueIfExists(row, "Name", pin.Name);
-				SetPinCellValueIfExists(row, "DataType", pin.DataType);
+				SetPinCellValueIfExists(row, "DataType", pin.DataType.ToString());
+				GlobalVariableBindingUi.SetCellValue(row, "GlobalVariableName", pin.GlobalVariableName);
 
 				if (isInput)
 				{
 					SetPinCellValueIfExists(row, "DefaultValue", pin.DefaultValue);
-					EnsureBindingPathOption(pin.BindingPath);
-					SetPinCellValueIfExists(row, "BindingPath", pin.BindingPath);
+					UpdateBoundInputValue(row);
 				}
 				else
 				{
@@ -3271,11 +3331,12 @@ namespace Aron_V3
 				ScriptPinConfig pin = new ScriptPinConfig();
 				pin.Name = name.Trim();
 				pin.DataType = ParseDataType(GetPinCellString(row, "DataType"));
+				pin.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "GlobalVariableName");
 
 				if (isInput)
 				{
 					pin.DefaultValue = GetPinCellString(row, "DefaultValue");
-					pin.BindingPath = GetPinCellString(row, "BindingPath");
+					pin.BindingPath = string.Empty;
 				}
 				else
 				{
@@ -3317,6 +3378,11 @@ namespace Aron_V3
 			if (!row.DataGridView.Columns.Contains(columnName))
 			{
 				return string.Empty;
+			}
+
+			if (columnName == "GlobalVariableName")
+			{
+				return GlobalVariableBindingUi.GetCellValue(row, columnName);
 			}
 
 			object value = row.Cells[columnName].Value;
@@ -3828,6 +3894,7 @@ namespace Aron_V3
 			{
 				ClearLogs();
 				SetStatusRunning("Compiling...");
+				RefreshBoundInputValues();
 				SaveCurrentScriptAndConfigOnly();
 
 				CSharpScriptStepRunner runner = new CSharpScriptStepRunner();
@@ -3857,6 +3924,7 @@ namespace Aron_V3
 			{
 				ClearLogs();
 				SetStatusRunning("Running...");
+				RefreshBoundInputValues();
 				SaveCurrentScriptAndConfigOnly();
 
 				btnRun.Enabled = false;
@@ -3923,6 +3991,13 @@ namespace Aron_V3
 				string name = GetPinCellString(row, "Name");
 				string bindingPath = GetPinCellString(row, "BindingPath");
 				string value = GetPinCellString(row, "DefaultValue");
+				string globalVariableName = GetPinCellString(row, "GlobalVariableName");
+
+				if (!string.IsNullOrWhiteSpace(globalVariableName))
+				{
+					value = GlobalVariableStore.GetValueText(globalVariableName);
+					row.Cells["DefaultValue"].Value = value;
+				}
 
 				if (!string.IsNullOrWhiteSpace(name))
 				{
@@ -3936,6 +4011,34 @@ namespace Aron_V3
 			}
 
 			return dict;
+		}
+
+		private void RefreshBoundInputValues()
+		{
+			if (gridInputs == null)
+			{
+				return;
+			}
+
+			foreach (DataGridViewRow row in gridInputs.Rows)
+			{
+				UpdateBoundInputValue(row);
+			}
+		}
+
+		private void UpdateBoundInputValue(DataGridViewRow row)
+		{
+			if (row == null || row.IsNewRow || row.DataGridView == null ||
+				!row.DataGridView.Columns.Contains("DefaultValue"))
+			{
+				return;
+			}
+
+			string globalVariableName = GlobalVariableBindingUi.GetCellValue(row, "GlobalVariableName");
+			if (!string.IsNullOrWhiteSpace(globalVariableName))
+			{
+				row.Cells["DefaultValue"].Value = GlobalVariableStore.GetValueText(globalVariableName);
+			}
 		}
 
 
@@ -4011,21 +4114,12 @@ namespace Aron_V3
 				{
 					row.Cells["CurrentValue"].Value = value == null ? string.Empty : Convert.ToString(value);
 					row.Cells["CurrentValue"].ReadOnly = true;
+					GlobalVariableStore.SetValue(GetPinCellString(row, "GlobalVariableName"), value);
 					return;
 				}
 			}
 
-			int rowIndex = gridOutputs.Rows.Add();
-			DataGridViewRow newRow = gridOutputs.Rows[rowIndex];
-
-			SetPinCellValueIfExists(newRow, "Name", outputName);
-			SetPinCellValueIfExists(newRow, "DataType", ScriptPinDataType.String);
-			SetPinCellValueIfExists(newRow, "CurrentValue", value == null ? string.Empty : Convert.ToString(value));
-
-			if (gridOutputs.Columns.Contains("CurrentValue"))
-			{
-				newRow.Cells["CurrentValue"].ReadOnly = true;
-			}
+			// The output table is user-configured. Do not create rows from runtime-only outputs.
 		}
 
 
@@ -4231,8 +4325,8 @@ namespace Aron_V3
 				if (isInput)
 				{
 					string methodName = "GetInputString";
-					if (dataType == ScriptPinDataType.Int) methodName = "GetInputInt";
-					else if (dataType == ScriptPinDataType.Double || dataType == ScriptPinDataType.Decimal) methodName = "GetInputDouble";
+					if (dataType == ScriptPinDataType.Int || dataType == ScriptPinDataType.Int16 || dataType == ScriptPinDataType.Int32) methodName = "GetInputInt";
+					else if (dataType == ScriptPinDataType.Float || dataType == ScriptPinDataType.Double || dataType == ScriptPinDataType.Decimal) methodName = "GetInputDouble";
 					else if (dataType == ScriptPinDataType.Bool) methodName = "GetInputBool";
 					else if (dataType == ScriptPinDataType.Object) methodName = "GetInput";
 

@@ -905,6 +905,7 @@ namespace Aron_V3
 							   string.Equals(value, "TRUE", StringComparison.OrdinalIgnoreCase);
 
 					case ScriptPinDataType.Int:
+					case ScriptPinDataType.Int32:
 						int i;
 						if (int.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out i))
 						{
@@ -918,6 +919,30 @@ namespace Aron_V3
 						}
 
 						return 0;
+
+					case ScriptPinDataType.Int16:
+						short s;
+						if (short.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out s))
+						{
+							return s;
+						}
+
+						double ds;
+						if (double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out ds))
+						{
+							return Convert.ToInt16(ds);
+						}
+
+						return (short)0;
+
+					case ScriptPinDataType.Float:
+						float f;
+						if (float.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out f))
+						{
+							return f;
+						}
+
+						return 0F;
 
 					case ScriptPinDataType.Double:
 						double d;

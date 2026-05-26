@@ -73,6 +73,8 @@ namespace Aron_V3
 		/// </summary>
 		public string BindingPath { get; set; }
 
+		public string GlobalVariableName { get; set; }
+
 		public string DefaultValue { get; set; }
 		public string Description { get; set; }
 
@@ -81,6 +83,7 @@ namespace Aron_V3
 			Name = string.Empty;
 			DataType = ScriptPinDataType.String;
 			BindingPath = string.Empty;
+			GlobalVariableName = string.Empty;
 			DefaultValue = string.Empty;
 			Description = string.Empty;
 		}
@@ -93,7 +96,10 @@ namespace Aron_V3
 		Int = 2,
 		Double = 3,
 		Decimal = 4,
-		Object = 5
+		Object = 5,
+		Int16 = 6,
+		Int32 = 7,
+		Float = 8
 	}
 
 	public class CSharpScriptRunResult

@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
+using Cognex.VisionPro;
+using Cognex.VisionPro.Display;
 
 namespace Aron_V3
 {
@@ -56,6 +58,8 @@ namespace Aron_V3
 				config = DisplayLayoutStore.CreateDefault();
 			}
 
+			SuspendLayout();
+			ReleaseCurrentImages();
 			Controls.Clear();
 			_pictureBoxes.Clear();
 			_titleLabels.Clear();
@@ -116,6 +120,29 @@ namespace Aron_V3
 			}
 
 			Controls.Add(_layout);
+			ResumeLayout(true);
+			ReplayLatestImages();
+		}
+
+		private void ReplayLatestImages()
+		{
+			foreach (DisplayImageEventArgs args in DisplayRuntimeManager.GetLatestImages())
+			{
+				DisplayRuntimeManager_DisplayImageRequested(null, args);
+			}
+		}
+
+		private void ReleaseCurrentImages()
+		{
+			foreach (PictureBox box in _pictureBoxes.Values)
+			{
+				if (box.Image != null)
+				{
+					box.Image.Dispose();
+					box.Image = null;
+				}
+			}
+
 		}
 
 		private Control CreateDisplayPanel(DisplaySlotConfig slot)
@@ -180,6 +207,7 @@ namespace Aron_V3
 
 			if (!_pictureBoxes.TryGetValue(e.DisplaySlotName, out box))
 			{
+				e.Image.Dispose();
 				return;
 			}
 
@@ -187,7 +215,7 @@ namespace Aron_V3
 
 			try
 			{
-				newImage = new Bitmap(e.Image);
+				newImage = TryRenderRecordBitmap(e) ?? new Bitmap(e.Image);
 
 				Image old = box.Image;
 				box.Image = newImage;
@@ -200,15 +228,6 @@ namespace Aron_V3
 
 				ApplyDisplayMode(box, e.DisplayMode);
 
-				Label title;
-
-				if (_titleLabels.TryGetValue(e.DisplaySlotName, out title))
-				{
-					if (!string.IsNullOrWhiteSpace(e.Title))
-					{
-						title.Text = e.Title;
-					}
-				}
 			}
 			finally
 			{
@@ -216,6 +235,42 @@ namespace Aron_V3
 				{
 					newImage.Dispose();
 				}
+
+				e.Image.Dispose();
+			}
+		}
+
+		private Bitmap TryRenderRecordBitmap(DisplayImageEventArgs e)
+		{
+			ICogRecord record = e.Record as ICogRecord;
+			if (record == null || string.IsNullOrWhiteSpace(e.RecordKey))
+			{
+				return null;
+			}
+
+			try
+			{
+				using (CogRecordDisplay renderer = new CogRecordDisplay())
+				{
+					renderer.BackColor = Color.Black;
+					renderer.CreateControl();
+					renderer.Record = record;
+					renderer.AutoFit = true;
+					renderer.AutoFitWithGraphics = true;
+					renderer.Fit(true);
+					using (Image rendered = renderer.CreateContentBitmap(
+						CogDisplayContentBitmapConstants.Display,
+						null,
+						0))
+					{
+						renderer.Record = null;
+						return rendered == null ? null : new Bitmap(rendered);
+					}
+				}
+			}
+			catch
+			{
+				return null;
 			}
 		}
 

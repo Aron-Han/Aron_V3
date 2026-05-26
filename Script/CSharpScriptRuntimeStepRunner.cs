@@ -115,12 +115,12 @@ namespace Aron_V3
 						context.SetData(stepKey, pair.Value);
 						context.SetData(pair.Key, pair.Value);
 
-						ScriptPinConfig outputPin = FindOutputPin(scriptConfig, pair.Key);
+					}
 
-						if (outputPin != null && !string.IsNullOrWhiteSpace(outputPin.BindingPath))
-						{
-							context.SetData(outputPin.BindingPath, pair.Value);
-						}
+					ScriptPinConfig boundOutputPin = FindOutputPin(scriptConfig, pair.Key);
+					if (boundOutputPin != null && !string.IsNullOrWhiteSpace(boundOutputPin.GlobalVariableName))
+					{
+						GlobalVariableStore.SetValue(boundOutputPin.GlobalVariableName, pair.Value);
 					}
 
 					stepResult.Outputs[pair.Key] = pair.Value;
@@ -162,10 +162,6 @@ namespace Aron_V3
 		{
 			Dictionary<string, object> result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
-			// 先把流程管理中为 Script 选择的前序模块输出加入输入字典。
-			// 这样脚本可直接 context.GetInput("Inspection.ResultX") 或 context.GetInput("ResultX")。
-			AddSelectedStepOutputsToRuntimeInputs(result, context);
-
 			if (config == null || config.Inputs == null)
 			{
 				return result;
@@ -180,13 +176,13 @@ namespace Aron_V3
 
 				object value = null;
 
+				if (!string.IsNullOrWhiteSpace(input.GlobalVariableName))
+				{
+					GlobalVariableStore.TryGetValue(input.GlobalVariableName, out value);
+				}
+
 				if (context != null)
 				{
-					if (!string.IsNullOrWhiteSpace(input.BindingPath))
-					{
-						value = context.GetData(input.BindingPath);
-					}
-
 					if (value == null)
 					{
 						value = context.GetData(input.Name);

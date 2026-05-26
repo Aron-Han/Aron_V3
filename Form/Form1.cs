@@ -28,6 +28,7 @@ namespace Aron_V3
 		private MainDisplayControl _mainDisplayControl;
 
 		private RuntimeFlowOrchestrator runtimeFlow;
+		private readonly List<RuntimeFlowLogEventArgs> _runtimeLogEntries = new List<RuntimeFlowLogEventArgs>();
 
 
 		#region Run State
@@ -258,6 +259,9 @@ namespace Aron_V3
 			BindTopBarDragEvents();
 
 			LoadDemoData();
+			InitRuntimeLogUi();
+			DataDisplayStore.ConfigChanged += DataDisplayStore_ConfigChanged;
+			GlobalVariableStore.VariablesChanged += DataDisplayStore_ConfigChanged;
 			//BuildCameraLayout(4);
 
 			SelectMainPage(MainPageType.Login, false);
@@ -269,6 +273,7 @@ namespace Aron_V3
 			CommunicationRuntimeManager.Instance.StartFromSavedConfig();
 
 			runtimeFlow = new RuntimeFlowOrchestrator();
+			AlgorithmRuntimeBridge.Provider = AlgorithmRuntimeSnapshotStore.Instance;
 			runtimeFlow.LogGenerated += RuntimeFlow_LogGenerated;
 			runtimeFlow.TaskFinished += RuntimeFlow_TaskFinished;
 			runtimeFlow.Start();
@@ -305,12 +310,65 @@ namespace Aron_V3
 				return;
 			}
 
-			lstLog.Items.Add(
-				e.Time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
-				"   [FLOW]  " +
-				e.Message);
+			_runtimeLogEntries.Add(e);
+			RefreshRuntimeLogView();
+		}
 
-			lstLog.TopIndex = lstLog.Items.Count - 1;
+		private void InitRuntimeLogUi()
+		{
+			cmbLogLevel.Items.Clear();
+			cmbLogLevel.Items.AddRange(new object[] { "全部信息", "通讯及Task运行", "报警信息" });
+			cmbLogLevel.SelectedIndex = 0;
+			cmbLogLevel.SelectedIndexChanged += delegate { RefreshRuntimeLogView(); };
+			btnClearLog.Click += delegate
+			{
+				_runtimeLogEntries.Clear();
+				lstLog.Items.Clear();
+			};
+			PositionLogButtons();
+			logPanel.Resize += delegate { PositionLogButtons(); };
+		}
+
+		private void PositionLogButtons()
+		{
+			if (logPanel == null || cmbLogLevel == null || btnClearLog == null)
+			{
+				return;
+			}
+			btnClearLog.Left = logPanel.ClientSize.Width - btnClearLog.Width - 12;
+			cmbLogLevel.Left = btnClearLog.Left - cmbLogLevel.Width - 10;
+		}
+
+		private void RefreshRuntimeLogView()
+		{
+			if (lstLog == null)
+			{
+				return;
+			}
+
+			string filter = Convert.ToString(cmbLogLevel.SelectedItem);
+			lstLog.BeginUpdate();
+			lstLog.Items.Clear();
+			foreach (RuntimeFlowLogEventArgs entry in _runtimeLogEntries)
+			{
+				if (filter == "报警信息" && entry.Category != RuntimeLogCategory.Alarm)
+				{
+					continue;
+				}
+				if (filter == "通讯及Task运行" && entry.Category != RuntimeLogCategory.Operation)
+				{
+					continue;
+				}
+				lstLog.Items.Add(
+					entry.Time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
+					"   [" + entry.Category.ToString().ToUpperInvariant() + "]  " +
+					entry.Message);
+			}
+			lstLog.EndUpdate();
+			if (lstLog.Items.Count > 0)
+			{
+				lstLog.TopIndex = lstLog.Items.Count - 1;
+			}
 		}
 
 		private void RuntimeFlow_TaskFinished(object sender, RuntimeTaskFinishedEventArgs e)
@@ -334,28 +392,45 @@ namespace Aron_V3
 				return;
 			}
 
-			string resultText = e.FinalResult != null && e.FinalResult.IsOK ? "OK" : "NG";
-			int rowIndex = dgvResults.Rows.Add(
-				e.TaskName,
-				"Task Result",
-				resultText,
-				DateTime.Now.ToString("HH:mm:ss"));
+			RefreshDataDisplayValues();
+		}
 
-			if (resultText == "OK")
+		private void DataDisplayStore_ConfigChanged(object sender, EventArgs e)
+		{
+			if (dgvResults == null || dgvResults.IsDisposed)
 			{
-				dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.FromArgb(65, 210, 70);
-			}
-			else
-			{
-				dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.FromArgb(235, 54, 65);
+				return;
 			}
 
-			if (_mainDisplayControl != null)
+			if (dgvResults.InvokeRequired)
 			{
-				// 这里先只刷新布局。
-				// 如果 MainDisplayControl 后续提供 SetImage(displayName, image) 方法，
-				// 可以在这里把 e.Context.Images 中的图像推到主界面。
-				_mainDisplayControl.ReloadLayout();
+				dgvResults.BeginInvoke(new MethodInvoker(delegate { RefreshDataDisplayValues(); }));
+				return;
+			}
+
+			RefreshDataDisplayValues();
+		}
+
+		private void RefreshDataDisplayValues()
+		{
+			dgvResults.Rows.Clear();
+			foreach (DataDisplayItem item in DataDisplayStore.LoadOrCreateDefault().Items)
+			{
+				if (item == null)
+				{
+					continue;
+				}
+
+				string value = GlobalVariableStore.GetValueText(item.GlobalVariableName);
+				int index = dgvResults.Rows.Add(item.GroupName, item.ItemName, value);
+				if (string.Equals(value, "OK", StringComparison.OrdinalIgnoreCase))
+				{
+					dgvResults.Rows[index].Cells[2].Style.ForeColor = Color.FromArgb(65, 210, 70);
+				}
+				else if (string.Equals(value, "NG", StringComparison.OrdinalIgnoreCase))
+				{
+					dgvResults.Rows[index].Cells[2].Style.ForeColor = Color.FromArgb(235, 54, 65);
+				}
 			}
 		}
 
@@ -592,6 +667,7 @@ namespace Aron_V3
 			if (_processConfigPage == null || _processConfigPage.IsDisposed)
 			{
 				_processConfigPage = new FlowConfigForm();
+				_processConfigPage.TaskTestExecutor = RunOfflineTaskTest;
 				_processConfigPage.TopLevel = false;
 				_processConfigPage.FormBorderStyle = FormBorderStyle.None;
 				_processConfigPage.Dock = DockStyle.Fill;
@@ -607,6 +683,16 @@ namespace Aron_V3
 			}
 
 			ShowCachedPage(_processConfigPage);
+		}
+
+		private bool RunOfflineTaskTest(string jobName, string taskName, TaskRunOptions options)
+		{
+			if (runtimeFlow == null)
+			{
+				throw new InvalidOperationException("Runtime flow is not initialized.");
+			}
+
+			return runtimeFlow.RunTaskTest(jobName, taskName, options);
 		}
 
 		private void ShowAlgorithmPage()
@@ -753,49 +839,8 @@ namespace Aron_V3
 
 		private void LoadDemoData()
 		{
-			dgvResults.Rows.Clear();
-
-			string[,] rows =
-			{
-				{ "Cam1", "读码结果", "OK", "09:31:16" },
-				{ "Cam1", "二维码内容", "SN-20542", "09:31:15" },
-				{ "Cam2", "定位X", "0.021 mm", "09:31:14" },
-				{ "Cam2", "定位Y", "0.018 mm", "09:31:13" },
-				{ "Cam2", "角度", "0.12°", "09:31:12" },
-				{ "Cam3", "表面检测", "NG", "09:31:11" },
-				{ "Cam3", "缺陷数量", "3", "09:31:10" },
-				{ "Cam3", "最大面积", "0.86 mm²", "09:31:09" },
-				{ "Cam4", "表面检测", "NG", "09:31:08" },
-				{ "Cam6", "读码结果", "OK", "09:31:07" },
-				{ "Cam7", "拔针检测", "OK", "09:31:06" },
-				{ "Cam8", "定位结果", "OK", "09:31:05" },
-				{ "Cam9", "表面检测", "OK", "09:31:04" }
-			};
-
-			for (int i = 0; i < rows.GetLength(0); i++)
-			{
-				int rowIndex = dgvResults.Rows.Add(rows[i, 0], rows[i, 1], rows[i, 2], rows[i, 3]);
-
-				if (rows[i, 2] == "OK")
-					dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.FromArgb(65, 210, 70);
-				else if (rows[i, 2] == "NG")
-					dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.FromArgb(235, 54, 65);
-				else
-					dgvResults.Rows[rowIndex].Cells[2].Style.ForeColor = Color.WhiteSmoke;
-			}
-
-			if (dgvResults.Rows.Count > 0)
-				dgvResults.Rows[0].Selected = true;
-
+			RefreshDataDisplayValues();
 			lstLog.Items.Clear();
-			lstLog.Items.Add("2025-05-24   09:31:16.121   [INFO]  系统启动完成");
-			lstLog.Items.Add("2025-05-24   09:31:16.132   [INFO]  打开项目: D:\\Projects\\DemoProject\\DemoProject.vision");
-			lstLog.Items.Add("2025-05-24   09:31:16.256   [INFO]  相机 Cam1 连接成功");
-			lstLog.Items.Add("2025-05-24   09:31:16.352   [INFO]  Task 1 图像采集与定位 执行完成 (10.00 ms)");
-			lstLog.Items.Add("2025-05-24   09:31:16.421   [INFO]  Task 2 检测分析 执行完成");
-			lstLog.Items.Add("2025-05-24   09:31:16.507   [OK]    Blob 分析: OK (数量: 0)");
-			lstLog.Items.Add("2025-05-24   09:31:16.612   [INFO]  Hough 直线检测: OK (长度: 64.4 ms)");
-			lstLog.Items.Add("2025-05-24   09:31:16.721   [NG]    Task 3 表面检测 发现缺陷 (数量: 3, 面积: 0.86 mm², 占比: 0.72%)");
 		}
 
 		#endregion
@@ -1075,6 +1120,9 @@ namespace Aron_V3
 				runtimeFlow.Dispose();
 				runtimeFlow = null;
 			}
+
+			DataDisplayStore.ConfigChanged -= DataDisplayStore_ConfigChanged;
+			GlobalVariableStore.VariablesChanged -= DataDisplayStore_ConfigChanged;
 
 			CommunicationRuntimeManager.Instance.Stop();
 
