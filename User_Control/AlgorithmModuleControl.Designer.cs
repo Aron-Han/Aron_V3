@@ -756,7 +756,6 @@ namespace Aron_V3
 			this.colGlobalVariable.MinimumWidth = 8;
 			this.colGlobalVariable.Name = "colGlobalVariable";
 			this.colGlobalVariable.Text = "选择...";
-			this.colGlobalVariable.UseColumnTextForButtonValue = false;
 			// 
 			// panelPinButtons
 			// 

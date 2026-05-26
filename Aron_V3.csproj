@@ -61,7 +61,6 @@
     <Reference Include="Cognex.VisionPro.Controls, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505" />
     <Reference Include="Cognex.VisionPro.Core, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505" />
     <Reference Include="Cognex.VisionPro.Database, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505" />
-    <Reference Include="Cognex.VisionPro.Display.Controls, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505, processorArchitecture=AMD64" />
     <Reference Include="Cognex.VisionPro.ImageFile, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505, processorArchitecture=AMD64" />
     <Reference Include="Cognex.VisionPro.ImageFile.Controls, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505, processorArchitecture=AMD64" />
     <Reference Include="Cognex.VisionPro.Inspection, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505" />
@@ -122,6 +121,10 @@
     <Compile Include="Hardware\HardwareConfigModels.cs" />
     <Compile Include="Display\MainDisplayControl.cs">
       <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Display\VisionProRecordBitmapRenderer.cs" />
+    <Compile Include="Display\ZoomableImageBox.cs">
+      <SubType>Component</SubType>
     </Compile>
     <Compile Include="Display\MainDisplayControl.Designer.cs">
       <DependentUpon>MainDisplayControl.cs</DependentUpon>

@@ -2,8 +2,6 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
-using Cognex.VisionPro;
-using Cognex.VisionPro.Display;
 
 namespace Aron_V3
 {
@@ -14,7 +12,7 @@ namespace Aron_V3
 		private readonly Color _text = Color.FromArgb(210, 230, 245);
 
 		private TableLayoutPanel _layout;
-		private Dictionary<string, PictureBox> _pictureBoxes;
+		private Dictionary<string, ZoomableImageBox> _imageBoxes;
 		private Dictionary<string, Label> _titleLabels;
 
 		public MainDisplayControl()
@@ -23,7 +21,7 @@ namespace Aron_V3
 			Dock = DockStyle.Fill;
 			BackColor = _back;
 
-			_pictureBoxes = new Dictionary<string, PictureBox>(StringComparer.OrdinalIgnoreCase);
+			_imageBoxes = new Dictionary<string, ZoomableImageBox>(StringComparer.OrdinalIgnoreCase);
 			_titleLabels = new Dictionary<string, Label>(StringComparer.OrdinalIgnoreCase);
 
 			BuildLayout(DisplayLayoutStore.LoadOrCreateDefault());
@@ -36,11 +34,10 @@ namespace Aron_V3
 		{
 			DisplayRuntimeManager.DisplayImageRequested -= DisplayRuntimeManager_DisplayImageRequested;
 
-			foreach (PictureBox box in _pictureBoxes.Values)
+			foreach (ZoomableImageBox box in _imageBoxes.Values)
 			{
 				if (box.Image != null)
 				{
-					box.Image.Dispose();
 					box.Image = null;
 				}
 			}
@@ -61,7 +58,7 @@ namespace Aron_V3
 			SuspendLayout();
 			ReleaseCurrentImages();
 			Controls.Clear();
-			_pictureBoxes.Clear();
+			_imageBoxes.Clear();
 			_titleLabels.Clear();
 
 			_layout = new TableLayoutPanel();
@@ -134,11 +131,10 @@ namespace Aron_V3
 
 		private void ReleaseCurrentImages()
 		{
-			foreach (PictureBox box in _pictureBoxes.Values)
+			foreach (ZoomableImageBox box in _imageBoxes.Values)
 			{
 				if (box.Image != null)
 				{
-					box.Image.Dispose();
 					box.Image = null;
 				}
 			}
@@ -170,11 +166,9 @@ namespace Aron_V3
 			title.TextAlign = ContentAlignment.MiddleLeft;
 			title.Padding = new Padding(8, 0, 0, 0);
 
-			PictureBox picture = new PictureBox();
+			ZoomableImageBox picture = new ZoomableImageBox();
 			picture.Dock = DockStyle.Fill;
 			picture.BackColor = Color.Black;
-			picture.SizeMode = PictureBoxSizeMode.Zoom;
-			picture.BorderStyle = BorderStyle.FixedSingle;
 
 			inner.Controls.Add(title, 0, 0);
 			inner.Controls.Add(picture, 0, 1);
@@ -183,7 +177,7 @@ namespace Aron_V3
 
 			if (!string.IsNullOrWhiteSpace(slot.SlotName))
 			{
-				_pictureBoxes[slot.SlotName] = picture;
+				_imageBoxes[slot.SlotName] = picture;
 				_titleLabels[slot.SlotName] = title;
 			}
 
@@ -203,9 +197,9 @@ namespace Aron_V3
 				return;
 			}
 
-			PictureBox box;
+			ZoomableImageBox box;
 
-			if (!_pictureBoxes.TryGetValue(e.DisplaySlotName, out box))
+			if (!_imageBoxes.TryGetValue(e.DisplaySlotName, out box))
 			{
 				e.Image.Dispose();
 				return;
@@ -215,16 +209,10 @@ namespace Aron_V3
 
 			try
 			{
-				newImage = TryRenderRecordBitmap(e) ?? new Bitmap(e.Image);
+				newImage = TryRenderRecordBitmap(e, box) ?? new Bitmap(e.Image);
 
-				Image old = box.Image;
 				box.Image = newImage;
 				newImage = null;
-
-				if (old != null)
-				{
-					old.Dispose();
-				}
 
 				ApplyDisplayMode(box, e.DisplayMode);
 
@@ -240,63 +228,19 @@ namespace Aron_V3
 			}
 		}
 
-		private Bitmap TryRenderRecordBitmap(DisplayImageEventArgs e)
+		private Bitmap TryRenderRecordBitmap(DisplayImageEventArgs e, ZoomableImageBox box)
 		{
-			ICogRecord record = e.Record as ICogRecord;
-			if (record == null || string.IsNullOrWhiteSpace(e.RecordKey))
-			{
-				return null;
-			}
-
-			try
-			{
-				using (CogRecordDisplay renderer = new CogRecordDisplay())
-				{
-					renderer.BackColor = Color.Black;
-					renderer.CreateControl();
-					renderer.Record = record;
-					renderer.AutoFit = true;
-					renderer.AutoFitWithGraphics = true;
-					renderer.Fit(true);
-					using (Image rendered = renderer.CreateContentBitmap(
-						CogDisplayContentBitmapConstants.Display,
-						null,
-						0))
-					{
-						renderer.Record = null;
-						return rendered == null ? null : new Bitmap(rendered);
-					}
-				}
-			}
-			catch
-			{
-				return null;
-			}
+			return VisionProRecordBitmapRenderer.TryRender(e.Record, e.RecordKey, box.ClientSize);
 		}
 
-		private void ApplyDisplayMode(PictureBox box, string displayMode)
+		private void ApplyDisplayMode(ZoomableImageBox box, string displayMode)
 		{
 			if (box == null)
 			{
 				return;
 			}
 
-			if (string.Equals(displayMode, "Center", StringComparison.OrdinalIgnoreCase))
-			{
-				box.SizeMode = PictureBoxSizeMode.CenterImage;
-			}
-			else if (string.Equals(displayMode, "Original", StringComparison.OrdinalIgnoreCase))
-			{
-				box.SizeMode = PictureBoxSizeMode.AutoSize;
-			}
-			else if (string.Equals(displayMode, "Stretch", StringComparison.OrdinalIgnoreCase))
-			{
-				box.SizeMode = PictureBoxSizeMode.StretchImage;
-			}
-			else
-			{
-				box.SizeMode = PictureBoxSizeMode.Zoom;
-			}
+			box.DisplayMode = displayMode;
 		}
 
 		private void CalculateGrid(int count, out int rows, out int columns)

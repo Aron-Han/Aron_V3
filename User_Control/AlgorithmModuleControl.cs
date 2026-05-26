@@ -2,12 +2,16 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Globalization;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using System.Xml.Serialization;
 using System.Windows.Forms;
 using Cognex.VisionPro;
@@ -118,15 +122,16 @@ namespace Aron_V3
 			}
 
 			ConfigureVppPinsGrid();
+			ApplyModuleConfigToUi();
 			EnableDoubleBuffer(this);
 			BindRuntimeEvents();
 			ApplyLibraryEnabledState();
 			LoadJobs();
 
-			AlgorithmLibraryType? firstEnabled = GetFirstEnabledLibrary();
-			if (firstEnabled.HasValue)
+			AlgorithmLibraryType? startupLibrary = GetStartupLibrary();
+			if (startupLibrary.HasValue)
 			{
-				SelectLibrary(firstEnabled.Value);
+				SelectLibrary(startupLibrary.Value);
 			}
 			else
 			{
@@ -252,6 +257,51 @@ namespace Aron_V3
 				btnLoadEditor.Click -= btnLoadEditor_Click;
 				btnLoadEditor.Click += btnLoadEditor_Click;
 			}
+
+			RuntimeStepResultStore.StepResultUpdated -= RuntimeStepResultStore_StepResultUpdated;
+			RuntimeStepResultStore.StepResultUpdated += RuntimeStepResultStore_StepResultUpdated;
+			this.HandleDestroyed -= AlgorithmModuleControl_HandleDestroyed;
+			this.HandleDestroyed += AlgorithmModuleControl_HandleDestroyed;
+		}
+
+		private void AlgorithmModuleControl_HandleDestroyed(object sender, EventArgs e)
+		{
+			RuntimeStepResultStore.StepResultUpdated -= RuntimeStepResultStore_StepResultUpdated;
+		}
+
+		private void RuntimeStepResultStore_StepResultUpdated(object sender, RuntimeStepResultUpdatedEventArgs e)
+		{
+			if (e == null || e.Result == null)
+			{
+				return;
+			}
+
+			if (this.IsDisposed)
+			{
+				return;
+			}
+
+			if (this.InvokeRequired)
+			{
+				try
+				{
+					this.BeginInvoke(new EventHandler<RuntimeStepResultUpdatedEventArgs>(RuntimeStepResultStore_StepResultUpdated), sender, e);
+				}
+				catch
+				{
+				}
+				return;
+			}
+
+			if (_currentLibrary != AlgorithmLibraryType.Hdev ||
+				!string.Equals(_currentJobName, e.JobName, StringComparison.OrdinalIgnoreCase) ||
+				!string.Equals(_currentTaskName, e.TaskName, StringComparison.OrdinalIgnoreCase) ||
+				!IsCurrentHdevRuntimeStep(e.StepName))
+			{
+				return;
+			}
+
+			ApplyHdevRunResultToGrid(e.Result);
 		}
 
 		private void btnVpp_Click(object sender, EventArgs e)
@@ -659,6 +709,32 @@ namespace Aron_V3
 			return null;
 		}
 
+		private AlgorithmLibraryType? GetStartupLibrary()
+		{
+			AlgorithmLibraryType configured;
+			if (_moduleConfig != null &&
+				Enum.TryParse(_moduleConfig.LastSelectedLibrary, true, out configured) &&
+				IsLibraryEnabled(configured))
+			{
+				return configured;
+			}
+
+			return GetFirstEnabledLibrary();
+		}
+
+		private void ApplyModuleConfigToUi()
+		{
+			if (_moduleConfig == null)
+			{
+				return;
+			}
+
+			if (chkEnableVpp != null) chkEnableVpp.Checked = _moduleConfig.EnableVpp;
+			if (chkEnableScript != null) chkEnableScript.Checked = _moduleConfig.EnableScript;
+			if (chkEnableHdev != null) chkEnableHdev.Checked = _moduleConfig.EnableHdev;
+			if (chkEnableVM != null) chkEnableVM.Checked = _moduleConfig.EnableVM;
+		}
+
 		private void ShowNoEnabledModuleMessage()
 		{
 			listJobs.Items.Clear();
@@ -751,6 +827,7 @@ namespace Aron_V3
 			}
 
 			_currentLibrary = library;
+			SaveCurrentLibrarySelection();
 			ApplyLibraryEnabledState();
 
 			if (library == AlgorithmLibraryType.Vpp)
@@ -758,6 +835,7 @@ namespace Aron_V3
 				grpFiles.Text = "所有 VPP";
 				grpPins.Text = "VPP 输入/输出引脚";
 				grpEditor.Text = "VPP 编辑器";
+				UpdateAlgorithmActionButtonsText();
 
 				if (lblEditorInfo != null)
 				{
@@ -777,6 +855,7 @@ namespace Aron_V3
 				grpFiles.Text = "所有 Script";
 				grpPins.Text = "C# Script 编辑器";
 				grpEditor.Text = "Script 编辑器";
+				UpdateAlgorithmActionButtonsText();
 
 				if (lblEditorInfo != null)
 				{
@@ -793,10 +872,11 @@ namespace Aron_V3
 				grpFiles.Text = "所有 Hdev";
 				grpPins.Text = "Hdev 参数";
 				grpEditor.Text = "HDevelop 编辑器";
+				UpdateAlgorithmActionButtonsText();
 
 				if (lblEditorInfo != null)
 				{
-					lblEditorInfo.Text = "Hdev 模式后续扩展。";
+					lblEditorInfo.Text = "请选择 Job、Task 和 Hdev。";
 				}
 
 				ShowVppPinPanel(true);
@@ -808,6 +888,7 @@ namespace Aron_V3
 			grpFiles.Text = "所有 VM";
 			grpPins.Text = "VM 参数";
 			grpEditor.Text = "VisionMaster 编辑器";
+			UpdateAlgorithmActionButtonsText();
 
 			if (lblEditorInfo != null)
 			{
@@ -817,6 +898,23 @@ namespace Aron_V3
 			ShowVppPinPanel(true);
 			ClearVppEditor();
 			LoadAlgorithmFilesForCurrentTask();
+		}
+
+		private void SaveCurrentLibrarySelection()
+		{
+			try
+			{
+				if (_moduleConfig == null)
+				{
+					_moduleConfig = AlgorithmModuleConfigStore.LoadOrCreateDefault();
+				}
+
+				_moduleConfig.LastSelectedLibrary = _currentLibrary.ToString();
+				AlgorithmModuleConfigStore.Save(_moduleConfig);
+			}
+			catch
+			{
+			}
 		}
 
 		private void ApplyLibraryButtonStyle(Button btn, bool selected)
@@ -997,6 +1095,10 @@ namespace Aron_V3
 				{
 					items = LoadScriptFilesFromFlowConfig(_currentJobName, _currentTaskName);
 				}
+				else if (_currentLibrary == AlgorithmLibraryType.Hdev)
+				{
+					items = LoadHdevFilesFromFlowConfig(_currentJobName, _currentTaskName);
+				}
 				else
 				{
 					if (lblEditorInfo != null)
@@ -1031,6 +1133,13 @@ namespace Aron_V3
 						if (lblEditorInfo != null)
 						{
 							lblEditorInfo.Text = "当前 Task 下没有 Script。";
+						}
+					}
+					else if (_currentLibrary == AlgorithmLibraryType.Hdev)
+					{
+						if (lblEditorInfo != null)
+						{
+							lblEditorInfo.Text = "当前 Task 下没有 Hdev。";
 						}
 					}
 				}
@@ -1139,6 +1248,50 @@ namespace Aron_V3
 			return result;
 		}
 
+		private List<AlgorithmFileItem> LoadHdevFilesFromFlowConfig(string jobName, string taskName)
+		{
+			List<AlgorithmFileItem> result = new List<AlgorithmFileItem>();
+
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+			JobConfig job = config.Jobs.FirstOrDefault(j =>
+				string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+
+			if (job == null || job.Tasks == null)
+			{
+				return result;
+			}
+
+			TaskConfig task = job.Tasks.FirstOrDefault(t =>
+				string.Equals(t.TaskName, taskName, StringComparison.OrdinalIgnoreCase));
+
+			if (task == null || task.Steps == null)
+			{
+				return result;
+			}
+
+			foreach (StepConfig step in task.Steps.OrderBy(s => s.RunOrder))
+			{
+				if (!IsHdevStep(step))
+				{
+					continue;
+				}
+
+				string name = GetStepHdevName(step);
+				string path = GetStepHdevPath(step, jobName, taskName);
+
+				result.Add(new AlgorithmFileItem
+				{
+					Name = name,
+					FilePath = path,
+					Step = step,
+					JobName = jobName,
+					TaskName = taskName
+				});
+			}
+
+			return result;
+		}
+
 		private bool IsScriptStep(StepConfig step)
 		{
 			if (step == null)
@@ -1179,6 +1332,132 @@ namespace Aron_V3
 				   text.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
 				   text.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) ||
 				   text.EndsWith(".script.xml", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool IsHdevStep(StepConfig step)
+		{
+			if (step == null)
+			{
+				return false;
+			}
+
+			if (step.StepType == StepType.Halcon)
+			{
+				return true;
+			}
+
+			string stepName = GetPropertyString(step, "StepName");
+			string sourceFile = GetPropertyString(step, "SourceFilePath");
+			string projectFile = GetPropertyString(step, "ProjectFilePath");
+
+			return EndsWithHdev(stepName) || EndsWithHdev(sourceFile) || EndsWithHdev(projectFile);
+		}
+
+		private bool EndsWithHdev(string text)
+		{
+			return !string.IsNullOrEmpty(text) &&
+				   text.EndsWith(".hdev", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private string GetStepHdevName(StepConfig step)
+		{
+			if (step == null)
+			{
+				return "Halcon.hdev";
+			}
+
+			string projectFile = GetPropertyString(step, "ProjectFilePath");
+
+			if (EndsWithHdev(projectFile))
+			{
+				return Path.GetFileName(projectFile);
+			}
+
+			string sourceFile = GetPropertyString(step, "SourceFilePath");
+
+			if (EndsWithHdev(sourceFile))
+			{
+				return Path.GetFileName(sourceFile);
+			}
+
+			if (!string.IsNullOrWhiteSpace(step.StepName))
+			{
+				if (EndsWithHdev(step.StepName))
+				{
+					return Path.GetFileName(step.StepName);
+				}
+
+				return step.StepName + ".hdev";
+			}
+
+			return "Halcon.hdev";
+		}
+
+		private string GetStepHdevPath(StepConfig step, string jobName, string taskName)
+		{
+			string fileName = GetStepHdevName(step);
+
+			if (string.IsNullOrWhiteSpace(fileName))
+			{
+				fileName = "Halcon.hdev";
+			}
+
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName);
+			string hdevFolder = Path.Combine(taskFolder, "Hdev");
+			string runtimePath = Path.Combine(hdevFolder, Path.GetFileName(fileName));
+
+			string projectFile = GetPropertyString(step, "ProjectFilePath");
+			if (!string.IsNullOrWhiteSpace(projectFile))
+			{
+				string projectPath = Path.IsPathRooted(projectFile)
+					? projectFile
+					: Path.Combine(taskFolder, projectFile);
+
+				if (File.Exists(projectPath) && IsPathUnderFolder(projectPath, taskFolder))
+				{
+					return projectPath;
+				}
+			}
+
+			if (File.Exists(runtimePath))
+			{
+				return runtimePath;
+			}
+
+			try
+			{
+				string sourceFile = GetPropertyString(step, "SourceFilePath");
+				if (File.Exists(sourceFile))
+				{
+					Directory.CreateDirectory(hdevFolder);
+					File.Copy(sourceFile, runtimePath, true);
+				}
+			}
+			catch
+			{
+			}
+
+			return runtimePath;
+		}
+
+		private bool IsPathUnderFolder(string path, string folder)
+		{
+			if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(folder))
+			{
+				return false;
+			}
+
+			try
+			{
+				string fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				string fullFolder = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				return fullPath.StartsWith(fullFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(fullPath, fullFolder, StringComparison.OrdinalIgnoreCase);
+			}
+			catch
+			{
+				return false;
+			}
 		}
 
 		private string GetStepScriptName(StepConfig step)
@@ -1495,6 +1774,10 @@ namespace Aron_V3
 			{
 				latestItems = LoadScriptFilesFromFlowConfig(_currentJobName, _currentTaskName);
 			}
+			else if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				latestItems = LoadHdevFilesFromFlowConfig(_currentJobName, _currentTaskName);
+			}
 			else
 			{
 				latestItems = LoadVppFilesFromFlowConfig(_currentJobName, _currentTaskName);
@@ -1553,6 +1836,12 @@ namespace Aron_V3
 				return;
 			}
 
+			if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				LoadHdevPinsFromFile(item);
+				return;
+			}
+
 			_currentProjectSavePath = GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, item.Name);
 
 			if (_currentLibrary == AlgorithmLibraryType.Vpp)
@@ -1569,6 +1858,296 @@ namespace Aron_V3
 
 				await LoadVppToEditorAsync(item);
 			}
+		}
+
+		private void LoadHdevPinsFromFile(AlgorithmFileItem item)
+		{
+			RestoreVppPinPanel();
+			_currentToolBlock = null;
+			_currentVisionProEditor = null;
+			dgvPins.Rows.Clear();
+
+			if (item == null || string.IsNullOrWhiteSpace(item.FilePath) || !File.Exists(item.FilePath))
+			{
+				SetEditorMessage("Hdev 文件不存在。");
+				return;
+			}
+
+			try
+			{
+				_loadingPins = true;
+				List<HdevPinDefinition> pins = ParseHdevPins(item.FilePath);
+
+				foreach (HdevPinDefinition pin in pins)
+				{
+					string globalVariableName = GetSavedPinGlobalVariable(pin.Direction, pin.Name);
+					int rowIndex = dgvPins.Rows.Add(pin.Direction, pin.Name, pin.DataType, pin.ValueText, GlobalVariableBindingUi.SelectText);
+					DataGridViewRow row = dgvPins.Rows[rowIndex];
+					row.Tag = pin;
+					GlobalVariableBindingUi.SetCellValue(row, "colGlobalVariable", globalVariableName);
+
+					if (string.Equals(pin.Direction, "Output", StringComparison.OrdinalIgnoreCase))
+					{
+						row.Cells["colValue"].ReadOnly = true;
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				SetEditorMessage("Hdev 参数解析失败：" + Environment.NewLine + GetRealExceptionMessage(ex));
+				return;
+			}
+			finally
+			{
+				_loadingPins = false;
+				SyncDisplayedPinsToCurrentStepConfig();
+				ApplyLatestHdevRunResultToGrid();
+			}
+
+			SetEditorMessage(
+				"已加载 Hdev 参数。" + Environment.NewLine +
+				"双击 Hdev 文件刷新输入/输出；点击“修改工具”打开 Hdev 算子编辑窗体。" + Environment.NewLine +
+				item.FilePath);
+		}
+
+		private List<HdevPinDefinition> ParseHdevPins(string filePath)
+		{
+			List<string> codeLines = ReadHdevCodeLines(filePath);
+			List<HdevPinDefinition> explicitPins = ParseExplicitHdevPins(codeLines);
+			if (explicitPins.Count > 0)
+			{
+				return explicitPins;
+			}
+
+			List<HdevPinDefinition> pins = new List<HdevPinDefinition>();
+			HashSet<string> inputNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			HashSet<string> outputNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (string line in codeLines)
+			{
+				if (line.IndexOf("read_image", StringComparison.OrdinalIgnoreCase) >= 0 ||
+					line.IndexOf("dev_open_window", StringComparison.OrdinalIgnoreCase) >= 0 ||
+					line.IndexOf("threshold", StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					break;
+				}
+
+				Match m = Regex.Match(line, @"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*(.+?)\s*$");
+				if (!m.Success)
+				{
+					continue;
+				}
+
+				string name = m.Groups[1].Value.Trim();
+				string value = CleanupHdevValue(m.Groups[2].Value);
+				if (string.IsNullOrWhiteSpace(name) || inputNames.Contains(name))
+				{
+					continue;
+				}
+
+				inputNames.Add(name);
+				pins.Add(new HdevPinDefinition
+				{
+					Direction = "Input",
+					Name = name,
+					DataType = InferHdevDataType(value),
+					ValueText = value
+				});
+			}
+
+			AddHdevOutputPin(pins, outputNames, inputNames, "ResultImage", "Image", string.Empty);
+			AddHdevOutputPin(pins, outputNames, inputNames, "ResultOK", "Bool", string.Empty);
+			AddHdevOutputPin(pins, outputNames, inputNames, "ResultMessage", "String", string.Empty);
+
+			return pins;
+		}
+
+		private List<HdevPinDefinition> ParseExplicitHdevPins(List<string> codeLines)
+		{
+			List<HdevPinDefinition> pins = new List<HdevPinDefinition>();
+			HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (string rawLine in codeLines)
+			{
+				string line = rawLine == null ? string.Empty : rawLine.Trim();
+				Match match = Regex.Match(
+					line,
+					@"^\s*\*\s*@(?<dir>input|in|output|out)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?<type>[A-Za-z0-9_]*)\s*(?<value>.*)$",
+					RegexOptions.IgnoreCase);
+
+				if (!match.Success)
+				{
+					continue;
+				}
+
+				string name = match.Groups["name"].Value.Trim();
+				if (names.Contains(name))
+				{
+					continue;
+				}
+
+				string dir = match.Groups["dir"].Value.Trim();
+				string type = NormalizeHdevPinType(match.Groups["type"].Value);
+				string value = CleanupHdevValue(match.Groups["value"].Value);
+				if (string.IsNullOrWhiteSpace(type))
+				{
+					type = InferHdevDataType(value);
+				}
+
+				pins.Add(new HdevPinDefinition
+				{
+					Direction = dir.StartsWith("in", StringComparison.OrdinalIgnoreCase) ? "Input" : "Output",
+					Name = name,
+					DataType = type,
+					ValueText = value
+				});
+				names.Add(name);
+			}
+
+			return pins;
+		}
+
+		private string NormalizeHdevPinType(string type)
+		{
+			if (string.IsNullOrWhiteSpace(type))
+			{
+				return string.Empty;
+			}
+
+			string t = type.Trim();
+			if (t.Equals("bool", StringComparison.OrdinalIgnoreCase)) return "Bool";
+			if (t.Equals("int", StringComparison.OrdinalIgnoreCase)) return "Int";
+			if (t.Equals("double", StringComparison.OrdinalIgnoreCase)) return "Double";
+			if (t.Equals("float", StringComparison.OrdinalIgnoreCase)) return "Double";
+			if (t.Equals("string", StringComparison.OrdinalIgnoreCase)) return "String";
+			if (t.Equals("image", StringComparison.OrdinalIgnoreCase)) return "Image";
+			if (t.Equals("hobject", StringComparison.OrdinalIgnoreCase)) return "Image";
+			return t;
+		}
+
+		private List<string> ReadHdevCodeLines(string filePath)
+		{
+			string text = File.ReadAllText(filePath, Encoding.UTF8);
+			List<string> lines = new List<string>();
+
+			foreach (Match match in Regex.Matches(text, "<l>(.*?)</l>", RegexOptions.Singleline | RegexOptions.IgnoreCase))
+			{
+				string line = match.Groups[1].Value;
+				line = line.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&amp;", "&").Replace("&apos;", "'").Replace("&quot;", "\"");
+				line = line.Replace("\r", " ").Replace("\n", " ").Trim();
+				if (!string.IsNullOrWhiteSpace(line))
+				{
+					lines.Add(line);
+				}
+			}
+
+			if (lines.Count > 0)
+			{
+				return lines;
+			}
+
+			return File.ReadAllLines(filePath, Encoding.UTF8)
+				.Select(x => x == null ? string.Empty : x.Trim())
+				.Where(x => !string.IsNullOrWhiteSpace(x))
+				.ToList();
+		}
+
+		private string CleanupHdevValue(string value)
+		{
+			if (value == null)
+			{
+				return string.Empty;
+			}
+
+			string v = value.Trim();
+			if (v.Length >= 2 && v[0] == '\'' && v[v.Length - 1] == '\'')
+			{
+				v = v.Substring(1, v.Length - 2);
+			}
+
+			return v;
+		}
+
+		private string InferHdevDataType(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return "String";
+			}
+
+			string v = value.Trim();
+			if (v.IndexOf("[", StringComparison.Ordinal) >= 0 ||
+				v.IndexOf("+", StringComparison.Ordinal) >= 0 ||
+				v.IndexOf("-", StringComparison.Ordinal) > 0 ||
+				v.IndexOf("*", StringComparison.Ordinal) >= 0 ||
+				v.IndexOf("/", StringComparison.Ordinal) >= 0)
+			{
+				return "String";
+			}
+
+			int intValue;
+			if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out intValue))
+			{
+				if (v == "0" || v == "1")
+				{
+					return "Bool";
+				}
+
+				return "Int";
+			}
+
+			double doubleValue;
+			if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out doubleValue))
+			{
+				return "Double";
+			}
+
+			return "String";
+		}
+
+		private bool LooksLikeHdevOutputName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return false;
+			}
+
+			string n = name.Trim();
+			return n.IndexOf("result", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("ok", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("ng", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("defect", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("width", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("height", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("score", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("offset", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.IndexOf("position", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				   n.StartsWith("Final", StringComparison.OrdinalIgnoreCase) ||
+				   n.StartsWith("Is", StringComparison.OrdinalIgnoreCase) ||
+				   n.StartsWith("Has", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private void AddHdevOutputPin(List<HdevPinDefinition> pins, HashSet<string> outputNames, HashSet<string> inputNames,
+			string name, string dataType, string valueText)
+		{
+			if (pins == null || outputNames == null || inputNames == null || string.IsNullOrWhiteSpace(name))
+			{
+				return;
+			}
+
+			if (inputNames.Contains(name) || outputNames.Contains(name))
+			{
+				return;
+			}
+
+			outputNames.Add(name);
+			pins.Add(new HdevPinDefinition
+			{
+				Direction = "Output",
+				Name = name,
+				DataType = string.IsNullOrWhiteSpace(dataType) ? "String" : dataType,
+				ValueText = valueText ?? string.Empty
+			});
 		}
 
 		private void RestoreVppPinPanel()
@@ -2410,6 +2989,22 @@ namespace Aron_V3
 
 		private void btnLoadEditor_Click(object sender, EventArgs e)
 		{
+			if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				if (string.IsNullOrWhiteSpace(_currentAlgorithmPath) || !File.Exists(_currentAlgorithmPath))
+				{
+					MessageBox.Show(
+						_isEnglish ? "Please double-click an Hdev file first." : "请先双击选择一个 Hdev 文件。",
+						_isEnglish ? "Edit Tool" : "修改工具",
+						MessageBoxButtons.OK,
+						MessageBoxIcon.Information);
+					return;
+				}
+
+				OpenHdevEditorDetached(_currentAlgorithmPath);
+				return;
+			}
+
 			if (_currentLibrary != AlgorithmLibraryType.Vpp)
 			{
 				return;
@@ -2429,6 +3024,186 @@ namespace Aron_V3
 				_currentToolBlock,
 				_currentAlgorithmPath,
 				GetRuntimeProjectVppPath(_currentJobName, _currentTaskName, _currentAlgorithmName));
+		}
+
+		private void OpenHdevEditorDetached(string filePath)
+		{
+			if (string.IsNullOrWhiteSpace(filePath))
+			{
+				return;
+			}
+
+			string editorKey = "hdev:" + filePath;
+
+			if (_openedDetachedEditors.ContainsKey(editorKey) && _openedDetachedEditors[editorKey])
+			{
+				return;
+			}
+
+			_openedDetachedEditors[editorKey] = true;
+
+			try
+			{
+				Process process = TryStartHdevelop(filePath);
+				if (process != null)
+				{
+					try
+					{
+						process.EnableRaisingEvents = true;
+						process.Exited += delegate
+						{
+							NotifyDetachedEditorClosed(editorKey);
+							NotifyHdevEditorSaved(filePath);
+							try
+							{
+								process.Dispose();
+							}
+							catch
+							{
+							}
+						};
+					}
+					catch
+					{
+						NotifyDetachedEditorClosed(editorKey);
+					}
+					return;
+				}
+
+				NotifyDetachedEditorClosed(editorKey);
+				MessageBox.Show(
+					_isEnglish
+						? "Failed to open HDevelop. Please check the .hdev file association or HALCON installation."
+						: "无法打开 HDevelop。请确认 .hdev 文件关联或 HALCON 安装是否正常。",
+					_isEnglish ? "Edit Hdev" : "修改 Hdev",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
+			}
+			catch (Exception ex)
+			{
+				NotifyDetachedEditorClosed(editorKey);
+				MessageBox.Show(
+					(_isEnglish ? "Open HDevelop failed: " : "打开 HDevelop 失败：") + GetRealExceptionMessage(ex),
+					_isEnglish ? "Edit Hdev" : "修改 Hdev",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
+			}
+		}
+
+		private Process TryStartHdevelop(string filePath)
+		{
+			string hdevelopPath = FindHdevelopExe();
+			if (!string.IsNullOrWhiteSpace(hdevelopPath) && File.Exists(hdevelopPath))
+			{
+				ProcessStartInfo info = new ProcessStartInfo();
+				info.FileName = hdevelopPath;
+				info.Arguments = QuoteCommandArgument(filePath);
+				info.WorkingDirectory = Path.GetDirectoryName(filePath);
+				info.UseShellExecute = false;
+				return Process.Start(info);
+			}
+
+			ProcessStartInfo shellInfo = new ProcessStartInfo();
+			shellInfo.FileName = filePath;
+			shellInfo.WorkingDirectory = Path.GetDirectoryName(filePath);
+			shellInfo.UseShellExecute = true;
+			return Process.Start(shellInfo);
+		}
+
+		private string FindHdevelopExe()
+		{
+			List<string> candidates = new List<string>();
+			AddHdevelopCandidates(candidates, Environment.GetEnvironmentVariable("HALCONROOT"));
+			AddHdevelopCandidates(candidates, Environment.GetEnvironmentVariable("HALCON_ROOT"));
+
+			string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+			string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+			AddHdevelopCandidates(candidates, Path.Combine(programFiles, "MVTec"));
+			AddHdevelopCandidates(candidates, Path.Combine(programFilesX86, "MVTec"));
+
+			foreach (string candidate in candidates)
+			{
+				if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
+				{
+					return candidate;
+				}
+			}
+
+			return string.Empty;
+		}
+
+		private void AddHdevelopCandidates(List<string> candidates, string root)
+		{
+			if (candidates == null || string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+			{
+				return;
+			}
+
+			string[] directNames = new string[]
+			{
+				Path.Combine(root, "bin", "x64-win64", "hdevelop.exe"),
+				Path.Combine(root, "bin", "x64-win64", "hdevelopxl.exe"),
+				Path.Combine(root, "bin", "hdevelop.exe"),
+				Path.Combine(root, "bin", "hdevelopxl.exe")
+			};
+
+			foreach (string path in directNames)
+			{
+				if (!candidates.Contains(path, StringComparer.OrdinalIgnoreCase))
+				{
+					candidates.Add(path);
+				}
+			}
+
+			try
+			{
+				foreach (string exe in Directory.GetFiles(root, "hdevelop*.exe", SearchOption.AllDirectories))
+				{
+					if (!candidates.Contains(exe, StringComparer.OrdinalIgnoreCase))
+					{
+						candidates.Add(exe);
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private string QuoteCommandArgument(string value)
+		{
+			if (value == null)
+			{
+				return "\"\"";
+			}
+
+			return "\"" + value.Replace("\"", "\\\"") + "\"";
+		}
+
+		private void NotifyHdevEditorSaved(string savedPath)
+		{
+			if (_uiContext == null)
+			{
+				return;
+			}
+
+			_uiContext.Post(delegate
+			{
+				try
+				{
+					_currentAlgorithmPath = savedPath;
+
+					if (_currentAlgorithmItem != null)
+					{
+						_currentAlgorithmItem.FilePath = savedPath;
+					}
+
+					LoadHdevPinsFromFile(_currentAlgorithmItem);
+				}
+				catch
+				{
+				}
+			}, null);
 		}
 
 		private void SetEditorLoadingMessage(string message)
@@ -2707,7 +3482,7 @@ namespace Aron_V3
 					pin.DataType = ConvertVppTypeTextToPinDataType(dataTypeText);
 					pin.SourceKey = step.StepName + "." + pin.PinName;
 					pin.TargetKey = step.StepName + "." + pin.PinName;
-					pin.Description = string.Empty;
+					pin.Description = GetPinGridCellString(row, "colValue");
 					pin.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable");
 
 					if (string.Equals(direction, "Input", StringComparison.OrdinalIgnoreCase))
@@ -3067,19 +3842,197 @@ namespace Aron_V3
 
 		private void btnApplyInputs_Click(object sender, EventArgs e)
 		{
+			if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				SyncDisplayedPinsToCurrentStepConfig();
+				MessageBox.Show(
+					_isEnglish ? "Hdev parameters have been applied to the current step config." : "Hdev 参数已应用到当前 Step 配置。",
+					"Algorithm Module",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				return;
+			}
+
 			ApplyAllInputRows(false);
 		}
 
 		private void btnRunReplay_Click(object sender, EventArgs e)
 		{
+			if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				SyncDisplayedPinsToCurrentStepConfig();
+				RunCurrentHdevAndRefresh();
+				return;
+			}
+
 			ApplyAllInputRows(false);
 			RunCurrentVppAndRefresh();
 		}
 
+		private void RunCurrentHdevAndRefresh()
+		{
+			StepConfig step = GetCurrentHdevStepConfig();
+			if (step == null)
+			{
+				MessageBox.Show(
+					_isEnglish ? "Please double-click an Hdev file first." : "请先双击选择一个 Hdev 文件。",
+					"Algorithm Module",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
+				return;
+			}
+
+			VisionRunContext context = new VisionRunContext();
+			context.JobName = _currentJobName;
+			context.TaskName = _currentTaskName;
+
+			StepResult result = new HalconStep(step).Execute(context);
+			RuntimeStepResultStore.SetLatest(_currentJobName, _currentTaskName, step.StepName, result);
+			ApplyHdevRunResultToGrid(result);
+
+			MessageBox.Show(
+				(result.IsOK ? "OK" : "NG") + Environment.NewLine + result.Message,
+				_isEnglish ? "Run Hdev" : "回放运行 Hdev",
+				MessageBoxButtons.OK,
+				result.IsOK ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+		}
+
+		private StepConfig GetCurrentHdevStepConfig()
+		{
+			try
+			{
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+				JobConfig job = config.Jobs.FirstOrDefault(j =>
+					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
+				TaskConfig task = job == null ? null : job.Tasks.FirstOrDefault(t =>
+					t != null && string.Equals(t.TaskName, _currentTaskName, StringComparison.OrdinalIgnoreCase));
+				return task == null ? null : task.Steps.FirstOrDefault(s =>
+					s != null &&
+					s.StepType == StepType.Halcon &&
+					(string.Equals(s.StepName, _currentAlgorithmName, StringComparison.OrdinalIgnoreCase) ||
+					 IsSameAlgorithmFileName(s, _currentAlgorithmName, _currentAlgorithmPath)));
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private void ApplyHdevRunResultToGrid(StepResult result)
+		{
+			if (result == null || dgvPins == null)
+			{
+				return;
+			}
+
+			foreach (DataGridViewRow row in dgvPins.Rows)
+			{
+				if (row == null || row.IsNewRow ||
+					!string.Equals(GetPinGridCellString(row, "colDirection"), "Output", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				string pinName = GetPinGridCellString(row, "colName");
+				if (string.IsNullOrWhiteSpace(pinName))
+				{
+					continue;
+				}
+
+				object value;
+				VisionImage image;
+				if (result.Outputs.TryGetValue(pinName, out value))
+				{
+					row.Cells["colValue"].Value = ValueToDisplayText(value);
+				}
+				else if (result.OutputImages.TryGetValue(pinName, out image) && image != null)
+				{
+					row.Cells["colValue"].Value = "[Image]";
+				}
+				else
+				{
+					row.Cells["colValue"].Value = string.Empty;
+				}
+			}
+		}
+
+		private void ApplyLatestHdevRunResultToGrid()
+		{
+			if (_currentLibrary != AlgorithmLibraryType.Hdev ||
+				string.IsNullOrWhiteSpace(_currentJobName) ||
+				string.IsNullOrWhiteSpace(_currentTaskName) ||
+				string.IsNullOrWhiteSpace(_currentAlgorithmName))
+			{
+				return;
+			}
+
+			string stepName = GetCurrentHdevRuntimeStepName();
+			if (string.IsNullOrWhiteSpace(stepName))
+			{
+				stepName = _currentAlgorithmName;
+			}
+
+			StepResult result;
+			if (RuntimeStepResultStore.TryGetLatest(_currentJobName, _currentTaskName, stepName, out result))
+			{
+				ApplyHdevRunResultToGrid(result);
+			}
+		}
+
+		private bool IsCurrentHdevRuntimeStep(string stepName)
+		{
+			if (string.IsNullOrWhiteSpace(stepName))
+			{
+				return false;
+			}
+
+			if (string.Equals(_currentAlgorithmName, stepName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			string currentStepName = GetCurrentHdevRuntimeStepName();
+			return !string.IsNullOrWhiteSpace(currentStepName) &&
+				string.Equals(currentStepName, stepName, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private string GetCurrentHdevRuntimeStepName()
+		{
+			StepConfig step = GetCurrentHdevStepConfig();
+			return step == null ? string.Empty : step.StepName;
+		}
+
 		private void btnSaveVpp_Click(object sender, EventArgs e)
 		{
+			if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				SaveCurrentHdevConfig();
+				return;
+			}
+
 			ApplyAllInputRows(true);
 			SaveCurrentVpp();
+		}
+
+		private void SaveCurrentHdevConfig()
+		{
+			if (string.IsNullOrWhiteSpace(_currentAlgorithmPath) || !File.Exists(_currentAlgorithmPath))
+			{
+				MessageBox.Show(
+					_isEnglish ? "Please double-click an Hdev file first." : "请先双击选择一个 Hdev 文件。",
+					"Algorithm Module",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
+				return;
+			}
+
+			SyncDisplayedPinsToCurrentStepConfig();
+
+			MessageBox.Show(
+				_isEnglish ? "Hdev step config saved." : "Hdev 配置已保存。",
+				_isEnglish ? "Save Hdev" : "保存 Hdev",
+				MessageBoxButtons.OK,
+				MessageBoxIcon.Information);
 		}
 
 		private void ApplyAllInputRows(bool silent)
@@ -3695,6 +4648,38 @@ namespace Aron_V3
 			SelectLibrary(_currentLibrary);
 		}
 
+		private void UpdateAlgorithmActionButtonsText()
+		{
+			if (btnApplyInputs != null)
+			{
+				btnApplyInputs.Text = _isEnglish ? "Apply" : "应用输入";
+			}
+
+			if (btnRunReplay != null)
+			{
+				btnRunReplay.Text = _isEnglish ? "Run" : "回放运行";
+			}
+
+			if (btnLoadEditor != null)
+			{
+				btnLoadEditor.Text = _isEnglish ? "Edit Tool" : "修改工具";
+			}
+
+			if (btnSaveVpp == null)
+			{
+				return;
+			}
+
+			if (_currentLibrary == AlgorithmLibraryType.Hdev)
+			{
+				btnSaveVpp.Text = _isEnglish ? "Save Hdev" : "保存 Hdev";
+			}
+			else
+			{
+				btnSaveVpp.Text = _isEnglish ? "Save VPP" : "保存 VPP";
+			}
+		}
+
 		private void SetVppColumnHeader(string columnName, string headerText)
 		{
 			if (dgvPins != null && dgvPins.Columns.Contains(columnName))
@@ -3715,6 +4700,14 @@ namespace Aron_V3
 			{
 				return Name;
 			}
+		}
+
+		private class HdevPinDefinition
+		{
+			public string Direction { get; set; }
+			public string Name { get; set; }
+			public string DataType { get; set; }
+			public string ValueText { get; set; }
 		}
 	}
 
@@ -3946,6 +4939,185 @@ namespace Aron_V3
 		}
 	}
 
+	public class IndependentHdevEditorForm : Form
+	{
+		private readonly string _filePath;
+		private readonly Action<string> _savedCallback;
+		private readonly Action<string> _closedCallback;
+		private TextBox _txtCode;
+		private Button _btnSave;
+		private Button _btnClose;
+		private Label _lblInfo;
+		private bool _dragging;
+		private Point _dragStartPoint;
+		private Point _formStartPoint;
+
+		public IndependentHdevEditorForm(string filePath, Action<string> savedCallback, Action<string> closedCallback)
+		{
+			_filePath = filePath;
+			_savedCallback = savedCallback;
+			_closedCallback = closedCallback;
+			InitializeEditorFormUi();
+		}
+
+		private void InitializeEditorFormUi()
+		{
+			this.Text = "Hdev Editor - " + Path.GetFileName(_filePath);
+			this.StartPosition = FormStartPosition.CenterScreen;
+			this.Size = new Size(1200, 800);
+			this.MinimumSize = new Size(900, 600);
+			this.FormBorderStyle = FormBorderStyle.None;
+			this.BackColor = Color.FromArgb(2, 10, 20);
+			this.Font = new Font("Microsoft YaHei UI", 9F);
+
+			TableLayoutPanel root = new TableLayoutPanel();
+			root.Dock = DockStyle.Fill;
+			root.ColumnCount = 1;
+			root.RowCount = 2;
+			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+			root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+			root.BackColor = Color.FromArgb(2, 10, 20);
+			root.Margin = new Padding(0);
+			root.Padding = new Padding(8);
+
+			Panel top = new Panel();
+			top.Dock = DockStyle.Fill;
+			top.BackColor = Color.FromArgb(3, 14, 27);
+			top.MouseDown += DragArea_MouseDown;
+			top.MouseMove += DragArea_MouseMove;
+			top.MouseUp += DragArea_MouseUp;
+
+			_lblInfo = new Label();
+			_lblInfo.Dock = DockStyle.Fill;
+			_lblInfo.TextAlign = ContentAlignment.MiddleLeft;
+			_lblInfo.ForeColor = Color.FromArgb(180, 210, 235);
+			_lblInfo.Text = "  Hdev Editor  |  Save To: " + _filePath;
+			_lblInfo.MouseDown += DragArea_MouseDown;
+			_lblInfo.MouseMove += DragArea_MouseMove;
+			_lblInfo.MouseUp += DragArea_MouseUp;
+
+			_btnSave = CreateTopButton("保存 Hdev", 110);
+			_btnSave.Dock = DockStyle.Right;
+			_btnSave.BackColor = Color.FromArgb(0, 95, 220);
+			_btnSave.Click += btnSave_Click;
+
+			_btnClose = CreateTopButton("关闭", 80);
+			_btnClose.Dock = DockStyle.Right;
+			_btnClose.Click += delegate { this.Close(); };
+
+			top.Controls.Add(_lblInfo);
+			top.Controls.Add(_btnClose);
+			top.Controls.Add(_btnSave);
+
+			_txtCode = new TextBox();
+			_txtCode.Dock = DockStyle.Fill;
+			_txtCode.Multiline = true;
+			_txtCode.ScrollBars = ScrollBars.Both;
+			_txtCode.WordWrap = false;
+			_txtCode.AcceptsTab = true;
+			_txtCode.BackColor = Color.FromArgb(1, 8, 16);
+			_txtCode.ForeColor = Color.FromArgb(220, 235, 245);
+			_txtCode.BorderStyle = BorderStyle.FixedSingle;
+			_txtCode.Font = new Font("Consolas", 10F, FontStyle.Regular);
+
+			root.Controls.Add(top, 0, 0);
+			root.Controls.Add(_txtCode, 0, 1);
+
+			this.Controls.Add(root);
+			this.Shown += IndependentHdevEditorForm_Shown;
+			this.FormClosed += IndependentHdevEditorForm_FormClosed;
+		}
+
+		private void IndependentHdevEditorForm_Shown(object sender, EventArgs e)
+		{
+			try
+			{
+				_txtCode.Text = File.Exists(_filePath) ? File.ReadAllText(_filePath, Encoding.UTF8) : string.Empty;
+			}
+			catch (Exception ex)
+			{
+				_txtCode.Text = "读取 Hdev 文件失败：" + Environment.NewLine + ex.Message;
+			}
+		}
+
+		private void IndependentHdevEditorForm_FormClosed(object sender, FormClosedEventArgs e)
+		{
+			if (_closedCallback != null)
+			{
+				_closedCallback(_filePath);
+			}
+		}
+
+		private void DragArea_MouseDown(object sender, MouseEventArgs e)
+		{
+			if (e.Button != MouseButtons.Left)
+			{
+				return;
+			}
+
+			_dragging = true;
+			_dragStartPoint = Control.MousePosition;
+			_formStartPoint = this.Location;
+		}
+
+		private void DragArea_MouseMove(object sender, MouseEventArgs e)
+		{
+			if (!_dragging)
+			{
+				return;
+			}
+
+			Point current = Control.MousePosition;
+			this.Location = new Point(
+				_formStartPoint.X + current.X - _dragStartPoint.X,
+				_formStartPoint.Y + current.Y - _dragStartPoint.Y);
+		}
+
+		private void DragArea_MouseUp(object sender, MouseEventArgs e)
+		{
+			_dragging = false;
+		}
+
+		private Button CreateTopButton(string text, int width)
+		{
+			Button btn = new Button();
+			btn.Text = text;
+			btn.Width = width;
+			btn.FlatStyle = FlatStyle.Flat;
+			btn.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			btn.BackColor = Color.FromArgb(3, 14, 27);
+			btn.ForeColor = Color.White;
+			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			btn.UseVisualStyleBackColor = false;
+			return btn;
+		}
+
+		private void btnSave_Click(object sender, EventArgs e)
+		{
+			try
+			{
+				string folder = Path.GetDirectoryName(_filePath);
+				if (!string.IsNullOrEmpty(folder) && !Directory.Exists(folder))
+				{
+					Directory.CreateDirectory(folder);
+				}
+
+				File.WriteAllText(_filePath, _txtCode.Text ?? string.Empty, new UTF8Encoding(false));
+
+				if (_savedCallback != null)
+				{
+					_savedCallback(_filePath);
+				}
+
+				MessageBox.Show(this, "Hdev saved successfully." + Environment.NewLine + _filePath, "Save Hdev", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show(this, "Save Hdev failed: " + ex.Message, "Save Hdev", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			}
+		}
+	}
+
 
 	public class AlgorithmModuleConfig
 	{
@@ -3953,6 +5125,7 @@ namespace Aron_V3
 		public bool EnableScript { get; set; }
 		public bool EnableHdev { get; set; }
 		public bool EnableVM { get; set; }
+		public string LastSelectedLibrary { get; set; }
 
 		public AlgorithmModuleConfig()
 		{
@@ -3960,6 +5133,7 @@ namespace Aron_V3
 			EnableScript = false;
 			EnableHdev = false;
 			EnableVM = false;
+			LastSelectedLibrary = string.Empty;
 		}
 	}
 

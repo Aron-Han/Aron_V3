@@ -343,8 +343,11 @@ namespace Aron_V3
 		private OpenFileDialog CreateStepFileDialog(bool multiSelect)
 		{
 			OpenFileDialog dialog = new OpenFileDialog();
-			dialog.Title = multiSelect ? "Select VPP or Script Files" : "Select VPP or Script File";
-			dialog.Filter = "Vision Step Files (*.vpp;*.cs;*.csx;*.txt)|*.vpp;*.cs;*.csx;*.txt|VPP Files (*.vpp)|*.vpp|Script Files (*.cs;*.csx;*.txt)|*.cs;*.csx;*.txt|All Files (*.*)|*.*";
+			bool hdevEnabled = IsHdevModuleEnabled();
+			dialog.Title = multiSelect ? "Select Vision Step Files" : "Select Vision Step File";
+			dialog.Filter = hdevEnabled
+				? "Vision Step Files (*.vpp;*.hdev;*.cs;*.csx;*.txt)|*.vpp;*.hdev;*.cs;*.csx;*.txt|VPP Files (*.vpp)|*.vpp|Hdev Files (*.hdev)|*.hdev|Script Files (*.cs;*.csx;*.txt)|*.cs;*.csx;*.txt|All Files (*.*)|*.*"
+				: "Vision Step Files (*.vpp;*.cs;*.csx;*.txt)|*.vpp;*.cs;*.csx;*.txt|VPP Files (*.vpp)|*.vpp|Script Files (*.cs;*.csx;*.txt)|*.cs;*.csx;*.txt|All Files (*.*)|*.*";
 			dialog.Multiselect = multiSelect;
 			dialog.CheckFileExists = true;
 			dialog.CheckPathExists = true;
@@ -368,10 +371,20 @@ namespace Aron_V3
 			if (stepType == StepType.Unknown)
 			{
 				MessageBox.Show(
-					"Unsupported file type.\r\n\r\nOnly .vpp, .cs, .csx, .txt are supported now.\r\n\r\nFile: " + sourceFilePath,
+					"Unsupported file type.\r\n\r\nOnly .vpp, .hdev, .cs, .csx, .txt are supported now.\r\n\r\nFile: " + sourceFilePath,
 					"Add Step Error",
 					MessageBoxButtons.OK,
 					MessageBoxIcon.Warning);
+				return;
+			}
+
+			if (stepType == StepType.Halcon && !IsHdevModuleEnabled())
+			{
+				MessageBox.Show(
+					"Hdev module is not enabled.\r\n\r\nPlease enable Hdev in Algorithm Module first.",
+					"Add Step Error",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Information);
 				return;
 			}
 
@@ -438,6 +451,11 @@ namespace Aron_V3
 			else if (stepType == StepType.Script)
 			{
 				step.ScriptFiles.Clear();
+				step.InputImageKey = string.Empty;
+				step.OutputImageKey = string.Empty;
+			}
+			else if (stepType == StepType.Halcon)
+			{
 				step.InputImageKey = string.Empty;
 				step.OutputImageKey = string.Empty;
 			}
@@ -562,7 +580,7 @@ namespace Aron_V3
 			{
 				item.DisplayOutputKey = step.StepType == StepType.Vpp
 					? "LastRun.CogIPOneImageTool1.OutputImage"
-					: "Not Use";
+					: (step.StepType == StepType.Halcon ? "ResultImage" : "Not Use");
 				item.DisplaySlotName = "Not Show";
 				item.DisplayMode = "Fit";
 			}
@@ -613,7 +631,9 @@ namespace Aron_V3
 
 				row.Tag = item;
 				row.Cells["colStep"].Value = item.StepName;
-				row.Cells["colImageSource"].Value = item.InputImageKey;
+				row.Cells["colImageSource"].Value = IsTaskImageSourceDisabled(task)
+					? string.Empty
+					: item.InputImageKey;
 				row.Cells["colRunOrder"].Value = item.RunOrder.ToString();
 				row.Cells["colRemark"].Value = item.Remark;
 
@@ -767,7 +787,9 @@ namespace Aron_V3
 
 				StepFlowItem item = new StepFlowItem();
 				item.StepName = stepName;
-				item.InputImageKey = GetCellString(row, "colImageSource");
+				item.InputImageKey = IsTaskImageSourceDisabled(task)
+					? string.Empty
+					: GetCellString(row, "colImageSource");
 				item.RunOrder = GetCellInt(row, "colRunOrder", fallbackOrder);
 				item.Enabled = true;
 				item.Remark = GetCellString(row, "colRemark");
@@ -870,9 +892,10 @@ namespace Aron_V3
 
 			// 新目录结构：
 			// Project\Job\<JobName>\Task\<TaskName>\VPP\xxx.vpp
+			// Project\Job\<JobName>\Task\<TaskName>\Hdev\xxx.hdev
 			// Project\Job\<JobName>\Task\<TaskName>\Scripts\xxx.csx
 			string taskFolder = FlowConfigStore.PathManager.GetStepFolder(jobName, taskName, step.StepName);
-			string subFolderName = step.StepType == StepType.Vpp ? "VPP" : "Scripts";
+			string subFolderName = GetStepProjectSubFolderName(step.StepType);
 			string targetFolder = Path.Combine(taskFolder, subFolderName);
 
 			Directory.CreateDirectory(targetFolder);
@@ -919,6 +942,21 @@ namespace Aron_V3
 			step.StepFolder = Path.Combine("Job", jobName, "Task", taskName);
 
 			return true;
+		}
+
+		private string GetStepProjectSubFolderName(StepType stepType)
+		{
+			if (stepType == StepType.Vpp)
+			{
+				return "VPP";
+			}
+
+			if (stepType == StepType.Halcon)
+			{
+				return "Hdev";
+			}
+
+			return "Scripts";
 		}
 
 
@@ -993,6 +1031,17 @@ namespace Aron_V3
 				if (step.ScriptFiles.Count > 0)
 				{
 					remark += " | Script: " + step.ScriptFiles[0];
+				}
+				else if (!string.IsNullOrEmpty(step.SourceFilePath))
+				{
+					remark += " | Source: " + step.SourceFilePath;
+				}
+			}
+			else if (step.StepType == StepType.Halcon)
+			{
+				if (!string.IsNullOrEmpty(step.ProjectFilePath))
+				{
+					remark += " | Hdev: " + step.ProjectFilePath;
 				}
 				else if (!string.IsNullOrEmpty(step.SourceFilePath))
 				{
@@ -1346,9 +1395,16 @@ namespace Aron_V3
 			Color normalBack = Color.FromArgb(1, 8, 16);
 			Color normalFore = Color.White;
 
-			SetOptionalCellState(row, "colImageSource", !isScript, isScript ? string.Empty : null, disabledBack, disabledFore, normalBack, normalFore);
+			bool imageSourceEnabled = !isScript && !IsTaskImageSourceDisabled(task);
+
+			SetOptionalCellState(row, "colImageSource", imageSourceEnabled, imageSourceEnabled ? null : string.Empty, disabledBack, disabledFore, normalBack, normalFore);
 			SetOptionalCellState(row, COL_DISPLAY_OUTPUT, !isScript, isScript ? "Not Use" : null, disabledBack, disabledFore, normalBack, normalFore);
 			SetOptionalCellState(row, COL_DISPLAY_SLOT, !isScript, isScript ? "Not Show" : null, disabledBack, disabledFore, normalBack, normalFore);
+
+			if (dgvSteps.Columns.Contains("colImageSource"))
+			{
+				row.Cells["colImageSource"].ReadOnly = true;
+			}
 		}
 
 		private void SetOptionalCellState(DataGridViewRow row, string columnName, bool enabled, string forcedValue,
@@ -1387,6 +1443,12 @@ namespace Aron_V3
 			if (IsScriptRow(row, task))
 			{
 				MessageBox.Show("Script step does not use image source.", "Image Source", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			if (IsTaskImageSourceDisabled(task))
+			{
+				row.Cells["colImageSource"].Value = string.Empty;
 				return;
 			}
 
@@ -1504,37 +1566,34 @@ namespace Aron_V3
 				return result;
 			}
 
+			if (IsTaskImageSourceDisabled(task))
+			{
+				return result;
+			}
+
 			foreach (string key in task.ImageSourceKeyList)
 			{
 				AddUniqueKey(result, key);
 			}
 
-			// 兜底：如果 Task 没有配置图像源，也允许从当前 Task 的 VPP Step 中选择。
+			return result;
+		}
 
-			if (result.Count <= 0 && task.Steps != null)
+		private bool IsTaskImageSourceDisabled(TaskConfig task)
+		{
+			return task == null || IsImageSourceNotUse(task.ImageSourceKey);
+		}
+
+		private bool IsImageSourceNotUse(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
 			{
-				foreach (StepConfig step in task.Steps)
-				{
-					if (step == null || step.StepType != StepType.Vpp)
-					{
-						continue;
-					}
-
-					if (step.VppFiles != null && step.VppFiles.Count > 0)
-					{
-						foreach (string file in step.VppFiles)
-						{
-							AddUniqueKey(result, Path.GetFileName(file));
-						}
-					}
-					else if (!string.IsNullOrWhiteSpace(step.StepName))
-					{
-						AddUniqueKey(result, step.StepName);
-					}
-				}
+				return true;
 			}
 
-			return result;
+			string clean = value.Trim();
+			return clean.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				clean.Equals("None", StringComparison.OrdinalIgnoreCase);
 		}
 
 		private void AddUniqueKey(List<string> list, string key)
@@ -1583,6 +1642,19 @@ namespace Aron_V3
 			}
 
 			return string.Join(";", keys.ToArray());
+		}
+
+		private bool IsHdevModuleEnabled()
+		{
+			try
+			{
+				AlgorithmModuleConfig config = AlgorithmModuleConfigStore.LoadOrCreateDefault();
+				return config != null && config.EnableHdev;
+			}
+			catch
+			{
+				return false;
+			}
 		}
 
 		private string GetRowScriptInputStepKeys(DataGridViewRow row)
@@ -1659,7 +1731,9 @@ namespace Aron_V3
 				return;
 			}
 
-			if (dgvSteps.Columns[e.ColumnIndex].Name == "colStep")
+			string columnName = dgvSteps.Columns[e.ColumnIndex].Name;
+
+			if (columnName == "colStep" || columnName == "colImageSource")
 			{
 				e.Cancel = true;
 			}
@@ -1894,6 +1968,11 @@ namespace Aron_V3
 				fileName = Path.GetFileName(step.ScriptFiles[0]);
 			}
 
+			if (string.IsNullOrEmpty(fileName) && !string.IsNullOrEmpty(step.ProjectFilePath))
+			{
+				fileName = Path.GetFileName(step.ProjectFilePath);
+			}
+
 			// 4. 兜底：如果没有文件路径，则根据 StepType 添加后缀提示
 			if (string.IsNullOrEmpty(fileName))
 			{
@@ -1905,6 +1984,11 @@ namespace Aron_V3
 				if (step.StepType == StepType.Script)
 				{
 					return step.StepName + ".csx";
+				}
+
+				if (step.StepType == StepType.Halcon)
+				{
+					return step.StepName + ".hdev";
 				}
 
 				return step.StepName;

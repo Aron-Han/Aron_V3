@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -153,6 +154,7 @@ namespace Aron_V3
 			Directory.CreateDirectory(taskFolder);
 			Directory.CreateDirectory(Path.Combine(taskFolder, "VPP"));
 			Directory.CreateDirectory(Path.Combine(taskFolder, "Scripts"));
+			Directory.CreateDirectory(Path.Combine(taskFolder, "Hdev"));
 		}
 
 		public string MakeSafeName(string name)
@@ -226,6 +228,70 @@ namespace Aron_V3
 		public static StepResult NG(string message)
 		{
 			return new StepResult { IsOK = false, Message = message };
+		}
+	}
+
+	public class RuntimeStepResultUpdatedEventArgs : EventArgs
+	{
+		public string JobName { get; private set; }
+		public string TaskName { get; private set; }
+		public string StepName { get; private set; }
+		public StepResult Result { get; private set; }
+
+		public RuntimeStepResultUpdatedEventArgs(string jobName, string taskName, string stepName, StepResult result)
+		{
+			JobName = jobName ?? string.Empty;
+			TaskName = taskName ?? string.Empty;
+			StepName = stepName ?? string.Empty;
+			Result = result;
+		}
+	}
+
+	public static class RuntimeStepResultStore
+	{
+		private static readonly ConcurrentDictionary<string, StepResult> LatestResults =
+			new ConcurrentDictionary<string, StepResult>(StringComparer.OrdinalIgnoreCase);
+
+		public static event EventHandler<RuntimeStepResultUpdatedEventArgs> StepResultUpdated;
+
+		public static void SetLatest(string jobName, string taskName, string stepName, StepResult result)
+		{
+			if (string.IsNullOrWhiteSpace(jobName) ||
+				string.IsNullOrWhiteSpace(taskName) ||
+				string.IsNullOrWhiteSpace(stepName) ||
+				result == null)
+			{
+				return;
+			}
+
+			string key = BuildKey(jobName, taskName, stepName);
+			LatestResults[key] = result;
+
+			EventHandler<RuntimeStepResultUpdatedEventArgs> handler = StepResultUpdated;
+			if (handler != null)
+			{
+				handler(null, new RuntimeStepResultUpdatedEventArgs(jobName, taskName, stepName, result));
+			}
+		}
+
+		public static bool TryGetLatest(string jobName, string taskName, string stepName, out StepResult result)
+		{
+			result = null;
+			if (string.IsNullOrWhiteSpace(jobName) ||
+				string.IsNullOrWhiteSpace(taskName) ||
+				string.IsNullOrWhiteSpace(stepName))
+			{
+				return false;
+			}
+
+			return LatestResults.TryGetValue(BuildKey(jobName, taskName, stepName), out result);
+		}
+
+		private static string BuildKey(string jobName, string taskName, string stepName)
+		{
+			return (jobName ?? string.Empty).Trim() + "|" +
+				(taskName ?? string.Empty).Trim() + "|" +
+				(stepName ?? string.Empty).Trim();
 		}
 	}
 
@@ -1328,11 +1394,12 @@ namespace Aron_V3
 				return null;
 			}
 
+			object rootRecord = record;
 			string relativeKey = outputKey.Substring("LastRun.".Length);
 			object imageRecord = FindRecordByKey(record, relativeKey);
 			if (imageRecord != null)
 			{
-				displayRecord = imageRecord;
+				displayRecord = rootRecord;
 				object imageContent = GetPropertyValue(imageRecord, "Content");
 				return imageContent ?? GetPropertyValue(imageRecord, "Image");
 			}
@@ -1349,7 +1416,7 @@ namespace Aron_V3
 				}
 			}
 
-			displayRecord = record;
+			displayRecord = rootRecord;
 			object content = GetPropertyValue(record, "Content");
 			return content ?? GetPropertyValue(record, "Image");
 		}
@@ -1613,6 +1680,614 @@ namespace Aron_V3
 		}
 	}
 
+	public class HalconStep : IVisionStep
+	{
+		private readonly StepConfig _config;
+		private static bool _halconAssembliesLoaded;
+		private static string _halconAssemblyLoadMessage = string.Empty;
+
+		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+		private static extern bool SetDllDirectory(string lpPathName);
+
+		public string StepName { get { return _config.StepName; } }
+		public StepType StepType { get { return StepType.Halcon; } }
+
+		public HalconStep(StepConfig config)
+		{
+			_config = config;
+		}
+
+		public StepResult Execute(VisionRunContext context)
+		{
+			Stopwatch sw = Stopwatch.StartNew();
+			StepResult result = new StepResult();
+
+			try
+			{
+				string filePath = ResolveHdevPath(context);
+				if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+				{
+					throw new Exception("Hdev file was not found: " + filePath);
+				}
+
+				Type programType = FindHalconType("HalconDotNet.HDevProgram");
+				Type callType = FindHalconType("HalconDotNet.HDevProgramCall");
+				if (programType == null || callType == null)
+				{
+					throw new Exception("HALCON .NET runtime was not found. Please check halcondotnet.dll and hdevenginedotnet.dll. " + _halconAssemblyLoadMessage);
+				}
+
+				object program = Activator.CreateInstance(programType, new object[] { filePath });
+				object call = Activator.CreateInstance(callType, new object[] { program });
+
+				ApplyInputPinValues(call);
+				ApplyGlobalInputs(call);
+				InvokeNoArg(call, "Execute");
+				List<string> missingOutputs = ReadConfiguredOutputs(call, result);
+				EnsureResultStatus(result);
+
+				result.Message = BuildSuccessMessage(result, missingOutputs);
+			}
+			catch (Exception ex)
+			{
+				result.IsOK = false;
+				TargetInvocationException targetException = ex as TargetInvocationException;
+				result.Message = targetException != null && targetException.InnerException != null
+					? targetException.InnerException.Message
+					: ex.Message;
+			}
+			finally
+			{
+				sw.Stop();
+				result.CostMs = sw.Elapsed.TotalMilliseconds;
+			}
+
+			return result;
+		}
+
+		private string ResolveHdevPath(VisionRunContext context)
+		{
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(context.JobName, context.TaskName);
+			List<string> candidates = new List<string>();
+			AddFileCandidate(candidates, _config.ProjectFilePath, taskFolder);
+
+			if (string.IsNullOrWhiteSpace(_config.ProjectFilePath) && !string.IsNullOrWhiteSpace(_config.StepName))
+			{
+				AddFileCandidate(candidates, Path.Combine("Hdev", _config.StepName + ".hdev"), taskFolder);
+			}
+
+			AddFileCandidate(candidates, _config.SourceFilePath, taskFolder);
+			return candidates.FirstOrDefault(File.Exists) ?? (candidates.Count > 0 ? candidates[0] : string.Empty);
+		}
+
+		private void AddFileCandidate(List<string> candidates, string file, string taskFolder)
+		{
+			if (string.IsNullOrWhiteSpace(file))
+			{
+				return;
+			}
+
+			string candidate = Path.IsPathRooted(file) ? file : Path.Combine(taskFolder, file);
+			if (!candidates.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+			{
+				candidates.Add(candidate);
+			}
+		}
+
+		private Type FindHalconType(string typeName)
+		{
+			Type type = FindLoadedHalconType(typeName);
+			if (type != null)
+			{
+				return type;
+			}
+
+			LoadHalconAssemblies();
+			type = FindLoadedHalconType(typeName);
+			if (type != null)
+			{
+				return type;
+			}
+
+			string[] assemblyNames = new string[]
+			{
+				"HalconDotNet",
+				"halcondotnet",
+				"HDevEngineDotNet",
+				"hdevenginedotnet"
+			};
+
+			foreach (string assemblyName in assemblyNames)
+			{
+				try
+				{
+					type = Type.GetType(typeName + ", " + assemblyName, false, true);
+					if (type != null)
+					{
+						return type;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			return null;
+		}
+
+		private Type FindLoadedHalconType(string typeName)
+		{
+			foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+			{
+				try
+				{
+					Type type = assembly.GetType(typeName, false, true);
+					if (type != null)
+					{
+						return type;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			return null;
+		}
+
+		private void LoadHalconAssemblies()
+		{
+			if (_halconAssembliesLoaded)
+			{
+				return;
+			}
+
+			List<string> messages = new List<string>();
+			ConfigureHalconNativeSearchPath(messages);
+			TryLoadAssemblyByName("HalconDotNet", messages);
+			TryLoadAssemblyByName("hdevenginedotnet", messages);
+
+			foreach (string file in GetHalconAssemblyCandidates("halcondotnet.dll"))
+			{
+				TryLoadAssemblyFromFile(file, messages);
+			}
+
+			foreach (string file in GetHalconAssemblyCandidates("hdevenginedotnet.dll"))
+			{
+				TryLoadAssemblyFromFile(file, messages);
+			}
+
+			_halconAssembliesLoaded = true;
+			_halconAssemblyLoadMessage = string.Join(" ", messages.ToArray());
+		}
+
+		private void ConfigureHalconNativeSearchPath(List<string> messages)
+		{
+			foreach (string root in GetHalconRoots())
+			{
+				foreach (string nativeDir in GetHalconNativeDirs(root))
+				{
+					if (!Directory.Exists(nativeDir))
+					{
+						continue;
+					}
+
+					try
+					{
+						if (SetDllDirectory(nativeDir))
+						{
+							messages.Add("NativePath=" + nativeDir);
+							return;
+						}
+					}
+					catch
+					{
+					}
+				}
+			}
+		}
+
+		private bool TryLoadAssemblyByName(string assemblyName, List<string> messages)
+		{
+			try
+			{
+				Assembly.Load(assemblyName);
+				messages.Add("Loaded=" + assemblyName);
+				return true;
+			}
+			catch (Exception ex)
+			{
+				messages.Add("NameLoadFailed=" + assemblyName + "(" + ex.GetType().Name + ")");
+				return false;
+			}
+		}
+
+		private bool TryLoadAssemblyFromFile(string filePath, List<string> messages)
+		{
+			if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+			{
+				return false;
+			}
+
+			try
+			{
+				Assembly.LoadFrom(filePath);
+				messages.Add("LoadedFrom=" + filePath);
+				return true;
+			}
+			catch (Exception ex)
+			{
+				messages.Add("FileLoadFailed=" + filePath + "(" + ex.GetType().Name + ")");
+				return false;
+			}
+		}
+
+		private IEnumerable<string> GetHalconAssemblyCandidates(string fileName)
+		{
+			HashSet<string> candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+			AddHalconAssemblyCandidate(candidates, baseDir, fileName);
+
+			foreach (string root in GetHalconRoots())
+			{
+				AddHalconAssemblyCandidate(candidates, Path.Combine(root, "bin", "dotnet35"), fileName);
+				AddHalconAssemblyCandidate(candidates, Path.Combine(root, "bin", "dotnet20"), fileName);
+				AddHalconAssemblyCandidate(candidates, Path.Combine(root, "bin"), fileName);
+			}
+
+			return candidates;
+		}
+
+		private void AddHalconAssemblyCandidate(HashSet<string> candidates, string folder, string fileName)
+		{
+			if (string.IsNullOrWhiteSpace(folder))
+			{
+				return;
+			}
+
+			candidates.Add(Path.Combine(folder, fileName));
+		}
+
+		private IEnumerable<string> GetHalconRoots()
+		{
+			HashSet<string> roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			AddHalconRoot(roots, Environment.GetEnvironmentVariable("HALCONROOT"));
+			AddHalconRoot(roots, Environment.GetEnvironmentVariable("HALCON_ROOT"));
+			AddHalconRoot(roots, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "MVTec", "HALCON-25.05-Progress"));
+			return roots;
+		}
+
+		private void AddHalconRoot(HashSet<string> roots, string root)
+		{
+			if (!string.IsNullOrWhiteSpace(root))
+			{
+				roots.Add(root);
+			}
+		}
+
+		private IEnumerable<string> GetHalconNativeDirs(string root)
+		{
+			string arch = Environment.GetEnvironmentVariable("HALCONARCH");
+			if (!string.IsNullOrWhiteSpace(arch))
+			{
+				yield return Path.Combine(root, "bin", arch);
+			}
+
+			yield return Path.Combine(root, "bin", "x64-win64");
+			yield return Path.Combine(root, "bin");
+		}
+
+		private void ApplyInputPinValues(object call)
+		{
+			if (_config.InputPins == null)
+			{
+				return;
+			}
+
+			foreach (PinConfig pin in _config.InputPins)
+			{
+				if (pin == null || pin.DataType == PinDataType.Image)
+				{
+					continue;
+				}
+
+				object value = null;
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+				{
+					GlobalVariableStore.TryGetValue(pin.GlobalVariableName, out value);
+				}
+
+				if (value == null)
+				{
+					value = ConvertPinDefaultValue(pin);
+				}
+
+				if (value != null)
+				{
+					TryInvokeByName(call, new string[] { "SetInputCtrlParamTuple", "SetCtrlVarTuple" }, pin.PinName, value);
+				}
+			}
+		}
+
+		private object ConvertPinDefaultValue(PinConfig pin)
+		{
+			if (pin == null || string.IsNullOrWhiteSpace(pin.Description))
+			{
+				return null;
+			}
+
+			string text = pin.Description.Trim();
+			try
+			{
+				if (pin.DataType == PinDataType.Bool)
+				{
+					return text == "1" || text.Equals("true", StringComparison.OrdinalIgnoreCase);
+				}
+
+				if (pin.DataType == PinDataType.Int)
+				{
+					int value;
+					return int.TryParse(text, out value) ? (object)value : null;
+				}
+
+				if (pin.DataType == PinDataType.Double || pin.DataType == PinDataType.Float)
+				{
+					double value;
+					return double.TryParse(text, out value) ? (object)value : null;
+				}
+
+				return text;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private void ApplyGlobalInputs(object call)
+		{
+			if (_config.InputPins == null)
+			{
+				return;
+			}
+
+			foreach (PinConfig pin in _config.InputPins)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.GlobalVariableName) || pin.DataType == PinDataType.Image)
+				{
+					continue;
+				}
+
+				object value;
+				if (GlobalVariableStore.TryGetValue(pin.GlobalVariableName, out value))
+				{
+					TryInvokeByName(call, new string[] { "SetInputCtrlParamTuple", "SetCtrlVarTuple" }, pin.PinName, value);
+				}
+			}
+		}
+
+		private List<string> ReadConfiguredOutputs(object call, StepResult result)
+		{
+			List<string> missingOutputs = new List<string>();
+
+			if (_config.OutputPins == null)
+			{
+				return missingOutputs;
+			}
+
+			foreach (PinConfig pin in _config.OutputPins)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.PinName))
+				{
+					continue;
+				}
+
+				if (pin.DataType == PinDataType.Image)
+				{
+					object imageValue = TryGetHalconOutput(call, pin.PinName, true);
+					if (imageValue != null)
+					{
+						VisionImage image = new VisionImage();
+						image.ImageName = pin.PinName;
+						image.ImageType = "Halcon";
+						image.SourceStep = _config.StepName;
+						image.RawImage = imageValue;
+						result.OutputImages[pin.PinName] = image;
+					}
+					else
+					{
+						missingOutputs.Add(pin.PinName);
+					}
+					continue;
+				}
+
+				object value = TryGetHalconOutput(call, pin.PinName, false);
+				if (value == null)
+				{
+					missingOutputs.Add(pin.PinName);
+					continue;
+				}
+
+				object normalized = NormalizeHalconValue(value, pin.DataType);
+				result.Outputs[pin.PinName] = normalized;
+
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+				{
+					GlobalVariableStore.SetValue(pin.GlobalVariableName, normalized);
+				}
+			}
+
+			return missingOutputs;
+		}
+
+		private string BuildSuccessMessage(StepResult result, List<string> missingOutputs)
+		{
+			int valueCount = result == null || result.Outputs == null ? 0 : result.Outputs.Count;
+			int imageCount = result == null || result.OutputImages == null ? 0 : result.OutputImages.Count;
+			string message = "Hdev step executed. Outputs=" + valueCount + ", Images=" + imageCount;
+
+			if (missingOutputs != null && missingOutputs.Count > 0)
+			{
+				message += ", Missing=" + string.Join(",", missingOutputs);
+			}
+
+			return message;
+		}
+
+		private object TryGetHalconOutput(object call, string name, bool iconic)
+		{
+			string[] methods = iconic
+				? new string[] { "GetOutputIconicParamObject", "GetIconicVarObject" }
+				: new string[] { "GetOutputCtrlParamTuple", "GetCtrlVarTuple" };
+
+			foreach (string methodName in methods)
+			{
+				try
+				{
+					MethodInfo method = call.GetType().GetMethod(methodName, new Type[] { typeof(string) });
+					if (method == null)
+					{
+						continue;
+					}
+
+					return method.Invoke(call, new object[] { name });
+				}
+				catch
+				{
+				}
+			}
+
+			return null;
+		}
+
+		private object NormalizeHalconValue(object value, PinDataType dataType)
+		{
+			if (value == null)
+			{
+				return null;
+			}
+
+			Type type = value.GetType();
+			string typeName = type.FullName ?? string.Empty;
+			if (typeName.IndexOf("HTuple", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				return value;
+			}
+
+			return ConvertTupleText(value.ToString(), dataType);
+		}
+
+		private object ConvertTupleText(string text, PinDataType dataType)
+		{
+			string value = text == null ? string.Empty : text.Trim();
+
+			if (dataType == PinDataType.Bool)
+			{
+				return value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
+			}
+
+			if (dataType == PinDataType.Int)
+			{
+				int intValue;
+				return int.TryParse(value, out intValue) ? (object)intValue : value;
+			}
+
+			if (dataType == PinDataType.Double || dataType == PinDataType.Float)
+			{
+				double doubleValue;
+				return double.TryParse(value, out doubleValue) ? (object)doubleValue : value;
+			}
+
+			return value;
+		}
+
+		private void EnsureResultStatus(StepResult result)
+		{
+			object value;
+			if (result.Outputs.TryGetValue("ResultOK", out value) && value != null)
+			{
+				try
+				{
+					result.IsOK = Convert.ToBoolean(value);
+				}
+				catch
+				{
+				}
+			}
+		}
+
+		private void InvokeNoArg(object target, string methodName)
+		{
+			MethodInfo method = target.GetType().GetMethod(methodName, Type.EmptyTypes);
+			if (method == null)
+			{
+				throw new Exception("HALCON call object does not provide " + methodName + "().");
+			}
+
+			method.Invoke(target, null);
+		}
+
+		private bool TryInvokeByName(object target, string[] methodNames, string name, object value)
+		{
+			foreach (string methodName in methodNames)
+			{
+				try
+				{
+					MethodInfo method = target.GetType().GetMethod(methodName, new Type[] { typeof(string), value == null ? typeof(object) : value.GetType() });
+					if (method == null)
+					{
+						method = target.GetType().GetMethods().FirstOrDefault(m =>
+							string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase) &&
+							m.GetParameters().Length == 2);
+					}
+
+					if (method == null)
+					{
+						continue;
+					}
+
+					ParameterInfo[] parameters = method.GetParameters();
+					object convertedValue = ConvertForHalconParameter(value, parameters[1].ParameterType);
+					method.Invoke(target, new object[] { name, convertedValue });
+					return true;
+				}
+				catch
+				{
+				}
+			}
+
+			return false;
+		}
+
+		private object ConvertForHalconParameter(object value, Type targetType)
+		{
+			if (targetType == null || value == null || targetType.IsInstanceOfType(value))
+			{
+				return value;
+			}
+
+			if ((targetType.FullName ?? string.Empty).IndexOf("HTuple", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				try
+				{
+					return Activator.CreateInstance(targetType, new object[] { value });
+				}
+				catch
+				{
+				}
+			}
+
+			try
+			{
+				return Convert.ChangeType(value, targetType);
+			}
+			catch
+			{
+				return value;
+			}
+		}
+	}
+
 	public static class StepFactory
 	{
 		public static IVisionStep Create(StepConfig config)
@@ -1626,6 +2301,9 @@ namespace Aron_V3
 
 				case StepType.Script:
 					return new CSharpScriptRuntimeStepRunner(config);
+
+				case StepType.Halcon:
+					return new HalconStep(config);
 
 				default:
 					throw new NotSupportedException("Unsupported step type: " + config.StepType);
@@ -1770,6 +2448,12 @@ namespace Aron_V3
 					{
 						context.SetImage(stepConfig.StepName + "." + image.Key, image.Value);
 					}
+
+					RuntimeStepResultStore.SetLatest(
+						context.JobName,
+						context.TaskName,
+						stepConfig.StepName,
+						stepResult);
 
 					StepDisplayBindingRunner.TryPublishStepImage(
 						context.JobName,

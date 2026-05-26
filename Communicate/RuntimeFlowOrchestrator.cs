@@ -111,6 +111,7 @@ namespace Aron_V3
 				WriteLog("Task offline test finished. Job=" + jobName +
 					", Task=" + taskName +
 					", OK=" + finalResult.IsOK +
+					", Message=" + finalResult.Message +
 					", CommunicationOutput=" + options.EnableCommunicationOutput +
 					", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
 			}
@@ -441,7 +442,7 @@ namespace Aron_V3
 				// 3. Task 最后一个 Step 执行完成后，把输出结果映射到通讯输出地址并反馈。
 				_outputService.SendTaskOutput(protocolName, target.Task, context, finalResult);
 
-				WriteLog("Task finished. Job=" + jobName + ", Task=" + taskName + ", OK=" + finalResult.IsOK + ", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
+				WriteLog("Task finished. Job=" + jobName + ", Task=" + taskName + ", OK=" + finalResult.IsOK + ", Message=" + finalResult.Message + ", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
 			}
 			catch (Exception ex)
 			{
