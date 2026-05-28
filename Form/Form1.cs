@@ -29,6 +29,7 @@ namespace Aron_V3
 
 		private RuntimeFlowOrchestrator runtimeFlow;
 		private readonly List<RuntimeFlowLogEventArgs> _runtimeLogEntries = new List<RuntimeFlowLogEventArgs>();
+		private readonly object _runtimeLogSyncRoot = new object();
 
 
 		#region Run State
@@ -45,31 +46,31 @@ namespace Aron_V3
 		// 这个变量代表“通讯是否已建立”。
 		// 后续需要和真实 PLC / TCP / Profinet / S7 连接状态绑定。
 		private bool _communicationConnected = false;
+		private const int WM_SETREDRAW = 0x000B;
+		private const int WM_SIZE = 0x0005;
+		private const int WM_SYSCOMMAND = 0x0112;
+		private const int SIZE_RESTORED = 0;
+		private const int SIZE_MINIMIZED = 1;
+		private const int SIZE_MAXIMIZED = 2;
+		private const int SC_MINIMIZE = 0xF020;
+		private const int SC_RESTORE = 0xF120;
+		private const int SW_SHOWMAXIMIZED = 3;
+		private const int WS_EX_COMPOSITED = 0x02000000;
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
 		// 定时刷新运行按钮状态。
 		private Timer _runStatusTimer;
+		private bool _wasMinimized;
+		private bool _restoreRedrawPending;
+		private FormWindowState _lastNonMinimizedWindowState = FormWindowState.Maximized;
 
 		private void InitRunStatusButton()
 		{
-			// 顶部导航中的 btnStop 不再显示，避免和右上角 lblRunStatus 重复。
-			if (panelNavStop != null)
-			{
-				panelNavStop.Visible = false;
-				panelNavStop.Width = 0;
-			}
-
-			if (btnStop != null)
-			{
-				btnStop.Visible = false;
-				btnStop.Enabled = false;
-				btnStop.Click -= btnRunStatus_Click;
-			}
-
-			if (underlineStop != null)
-			{
-				underlineStop.Visible = false;
-			}
-
 			// 右上角运行状态作为唯一运行/离线状态按钮。
 			lblRunStatus.Cursor = Cursors.Hand;
 			lblRunStatus.Click -= lblRunStatus_Click;
@@ -148,38 +149,6 @@ namespace Aron_V3
 		private void SetRunState(RunState state)
 		{
 			_runState = state;
-
-			if (btnStop.InvokeRequired)
-			{
-				btnStop.BeginInvoke(new Action(delegate
-				{
-					ApplyRunStateStyle(state);
-				}));
-			}
-			else
-			{
-				ApplyRunStateStyle(state);
-			}
-		}
-
-		private string GetRunButtonText(RunState state)
-		{
-			if (state == RunState.Offline)
-			{
-				return _isEnglish ? "● Offline" : "● 离线";
-			}
-
-			return _isEnglish ? "● Running" : "● 运行";
-		}
-
-		private string GetRunStatusText(RunState state)
-		{
-			if (state == RunState.Offline)
-			{
-				return _isEnglish ? "● Offline" : "● 离线";
-			}
-
-			return _isEnglish ? "● Running" : "● 运行中";
 		}
 
 		private void ApplyRunStateStyle(RunState state)
@@ -249,6 +218,7 @@ namespace Aron_V3
 		{
 			InitializeComponent();
 
+			EnableTopLevelSmoothPainting();
 			InitMainDisplayArea();
 
 			EnableDoubleBuffer(this);
@@ -268,13 +238,15 @@ namespace Aron_V3
 
 			InitLoginSystem();
 			InitRunStatusButton();
+			ApplyVersionText();
 			PreCreateAlgorithmPageIfEnabled();
 
+			WarmUpScriptRuntime();
+			WarmUpHalconRuntime();
 			CommunicationRuntimeManager.Instance.StartFromSavedConfig();
 
 			runtimeFlow = new RuntimeFlowOrchestrator();
 			AlgorithmRuntimeBridge.Provider = AlgorithmRuntimeSnapshotStore.Instance;
-			runtimeFlow.LogGenerated += RuntimeFlow_LogGenerated;
 			runtimeFlow.TaskFinished += RuntimeFlow_TaskFinished;
 			runtimeFlow.Start();
 		}
@@ -282,7 +254,83 @@ namespace Aron_V3
 		private void Form1_Load(object sender, EventArgs e)
 		{
 			this.WindowState = FormWindowState.Maximized;
+			_lastNonMinimizedWindowState = FormWindowState.Maximized;
 			ShowRuntimePage();
+		}
+
+		protected override CreateParams CreateParams
+		{
+			get
+			{
+				CreateParams cp = base.CreateParams;
+				cp.ExStyle |= WS_EX_COMPOSITED;
+				return cp;
+			}
+		}
+
+		private void WarmUpScriptRuntime()
+		{
+			try
+			{
+				ProjectFlowConfig flowConfig = FlowConfigStore.LoadOrCreateDefault();
+				CSharpScriptWarmupResult result = CSharpScriptWarmupService.WarmUp(flowConfig);
+
+				RuntimeLogStore.Append(
+					DateTime.Now,
+					RuntimeLogCategory.Step,
+					"Script runtime warmup finished. Total=" + result.TotalScripts +
+					", Loaded=" + result.LoadedScripts +
+					", Failed=" + result.FailedScripts +
+					", Cost=" + result.Cost.TotalMilliseconds.ToString("0.0") + " ms",
+					result.FailedScripts > 0);
+
+				if (result.Warnings != null)
+				{
+					foreach (string warning in result.Warnings)
+					{
+						RuntimeLogStore.Append(DateTime.Now, RuntimeLogCategory.Step, "Script warmup warning. " + warning, true);
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				RuntimeLogStore.Append(DateTime.Now, RuntimeLogCategory.Step, "Script runtime warmup failed. Error=" + ex.Message, true);
+			}
+		}
+
+		private void WarmUpHalconRuntime()
+		{
+			try
+			{
+				ProjectFlowConfig flowConfig = FlowConfigStore.LoadOrCreateDefault();
+				HalconWarmupResult result = HalconWarmupService.WarmUp(flowConfig);
+
+				if (result.TotalPrograms <= 0)
+				{
+					return;
+				}
+
+				RuntimeLogStore.Append(
+					DateTime.Now,
+					RuntimeLogCategory.Step,
+					"Hdev runtime warmup finished. Total=" + result.TotalPrograms +
+					", Loaded=" + result.LoadedPrograms +
+					", Failed=" + result.FailedPrograms +
+					", Cost=" + result.Cost.TotalMilliseconds.ToString("0.0") + " ms",
+					result.FailedPrograms > 0);
+
+				if (result.Warnings != null)
+				{
+					foreach (string warning in result.Warnings)
+					{
+						RuntimeLogStore.Append(DateTime.Now, RuntimeLogCategory.Step, "Hdev warmup warning. " + warning, true);
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				RuntimeLogStore.Append(DateTime.Now, RuntimeLogCategory.Step, "Hdev runtime warmup failed. Error=" + ex.Message, true);
+			}
 		}
 
 
@@ -310,19 +358,34 @@ namespace Aron_V3
 				return;
 			}
 
-			_runtimeLogEntries.Add(e);
+			lock (_runtimeLogSyncRoot)
+			{
+				_runtimeLogEntries.Add(e);
+			}
 			RefreshRuntimeLogView();
 		}
 
 		private void InitRuntimeLogUi()
 		{
+			RuntimeLogStore.LogAppended -= RuntimeFlow_LogGenerated;
+			RuntimeLogStore.LogAppended += RuntimeFlow_LogGenerated;
+
 			cmbLogLevel.Items.Clear();
-			cmbLogLevel.Items.AddRange(new object[] { "全部信息", "通讯及Task运行", "报警信息" });
+			cmbLogLevel.Items.AddRange(new object[] { "全部信息", "Error", "Task", "Step", "Communication" });
 			cmbLogLevel.SelectedIndex = 0;
 			cmbLogLevel.SelectedIndexChanged += delegate { RefreshRuntimeLogView(); };
+			cmbLogLevel.Width = 150;
+
+			lstLog.DrawMode = DrawMode.OwnerDrawFixed;
+			lstLog.DrawItem -= lstLog_DrawItem;
+			lstLog.DrawItem += lstLog_DrawItem;
+
 			btnClearLog.Click += delegate
 			{
-				_runtimeLogEntries.Clear();
+				lock (_runtimeLogSyncRoot)
+				{
+					_runtimeLogEntries.Clear();
+				}
 				lstLog.Items.Clear();
 			};
 			PositionLogButtons();
@@ -347,27 +410,117 @@ namespace Aron_V3
 			}
 
 			string filter = Convert.ToString(cmbLogLevel.SelectedItem);
-			lstLog.BeginUpdate();
-			lstLog.Items.Clear();
-			foreach (RuntimeFlowLogEventArgs entry in _runtimeLogEntries)
+			List<RuntimeFlowLogEventArgs> snapshot;
+			lock (_runtimeLogSyncRoot)
 			{
-				if (filter == "报警信息" && entry.Category != RuntimeLogCategory.Alarm)
-				{
-					continue;
-				}
-				if (filter == "通讯及Task运行" && entry.Category != RuntimeLogCategory.Operation)
-				{
-					continue;
-				}
-				lstLog.Items.Add(
-					entry.Time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
-					"   [" + entry.Category.ToString().ToUpperInvariant() + "]  " +
-					entry.Message);
+				snapshot = new List<RuntimeFlowLogEventArgs>(_runtimeLogEntries);
 			}
-			lstLog.EndUpdate();
+			snapshot.Sort(delegate(RuntimeFlowLogEventArgs left, RuntimeFlowLogEventArgs right)
+			{
+				DateTime leftTime = left == null ? DateTime.MinValue : left.Time;
+				DateTime rightTime = right == null ? DateTime.MinValue : right.Time;
+				return DateTime.Compare(leftTime, rightTime);
+			});
+
+			lstLog.BeginUpdate();
+			try
+			{
+				lstLog.Items.Clear();
+				foreach (RuntimeFlowLogEventArgs entry in snapshot)
+				{
+					if (!IsRuntimeLogMatched(filter, entry))
+					{
+						continue;
+					}
+					lstLog.Items.Add(new RuntimeLogListItem(
+						entry,
+						entry.Time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
+						"   [" + RuntimeLogStore.GetCategoryText(entry.Category) + "]  " +
+						entry.Message));
+				}
+			}
+			finally
+			{
+				lstLog.EndUpdate();
+			}
+
 			if (lstLog.Items.Count > 0)
 			{
 				lstLog.TopIndex = lstLog.Items.Count - 1;
+			}
+		}
+
+		private bool IsRuntimeLogMatched(string filter, RuntimeFlowLogEventArgs entry)
+		{
+			if (entry == null || string.IsNullOrWhiteSpace(filter) || filter == "全部信息")
+			{
+				return true;
+			}
+
+			if (filter == "Error")
+			{
+				return entry.IsError;
+			}
+
+			return string.Equals(filter, RuntimeLogStore.GetCategoryText(entry.Category), StringComparison.OrdinalIgnoreCase);
+		}
+
+		private void lstLog_DrawItem(object sender, DrawItemEventArgs e)
+		{
+			if (e.Index < 0 || e.Index >= lstLog.Items.Count)
+			{
+				return;
+			}
+
+			RuntimeLogListItem item = lstLog.Items[e.Index] as RuntimeLogListItem;
+			string text = item == null ? lstLog.Items[e.Index].ToString() : item.Text;
+			bool isError = item != null && item.IsError;
+			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+
+			Color backColor = selected ? Color.FromArgb(0, 120, 200) : lstLog.BackColor;
+			Color foreColor = isError
+				? Color.FromArgb(255, 95, 95)
+				: (selected ? Color.White : lstLog.ForeColor);
+
+			using (SolidBrush brush = new SolidBrush(backColor))
+			{
+				e.Graphics.FillRectangle(brush, e.Bounds);
+			}
+
+			Rectangle bounds = new Rectangle(e.Bounds.Left + 4, e.Bounds.Top, e.Bounds.Width - 8, e.Bounds.Height);
+			TextRenderer.DrawText(
+				e.Graphics,
+				text,
+				e.Font,
+				bounds,
+				foreColor,
+				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+			e.DrawFocusRectangle();
+		}
+
+		private class RuntimeLogListItem
+		{
+			public RuntimeFlowLogEventArgs Entry { get; private set; }
+			public string Text { get; private set; }
+			public RuntimeLogCategory Category
+			{
+				get { return Entry == null ? RuntimeLogCategory.Task : Entry.Category; }
+			}
+			public bool IsError
+			{
+				get { return Entry != null && Entry.IsError; }
+			}
+
+			public RuntimeLogListItem(RuntimeFlowLogEventArgs entry, string text)
+			{
+				Entry = entry;
+				Text = text ?? string.Empty;
+			}
+
+			public override string ToString()
+			{
+				return Text;
 			}
 		}
 
@@ -504,6 +657,8 @@ namespace Aron_V3
 
 		private void btnMinimize_Click(object sender, EventArgs e)
 		{
+			TrackLastNonMinimizedWindowState();
+			PrepareStableFrameForMinimize();
 			this.WindowState = FormWindowState.Minimized;
 		}
 
@@ -525,6 +680,59 @@ namespace Aron_V3
 		}
 
 		#endregion
+
+		protected override void OnResize(EventArgs e)
+		{
+			base.OnResize(e);
+
+			if (WindowState != FormWindowState.Minimized && !_restoreRedrawPending)
+			{
+				_lastNonMinimizedWindowState = WindowState;
+			}
+		}
+
+		protected override void WndProc(ref Message m)
+		{
+			if (m.Msg == WM_SYSCOMMAND)
+			{
+				int command = m.WParam.ToInt32() & 0xFFF0;
+				if (command == SC_RESTORE &&
+					WindowState == FormWindowState.Minimized &&
+					_lastNonMinimizedWindowState == FormWindowState.Maximized)
+				{
+					_wasMinimized = false;
+					BeginRestoreRedraw();
+					ShowWindow(Handle, SW_SHOWMAXIMIZED);
+					QueueRestoreRedraw();
+					return;
+				}
+
+				if (command == SC_MINIMIZE)
+				{
+					TrackLastNonMinimizedWindowState();
+					PrepareStableFrameForMinimize();
+				}
+			}
+
+			if (m.Msg == WM_SIZE)
+			{
+				int sizeType = m.WParam.ToInt32();
+				if (sizeType == SIZE_MINIMIZED)
+				{
+					_wasMinimized = true;
+				}
+				else if (_wasMinimized && (sizeType == SIZE_RESTORED || sizeType == SIZE_MAXIMIZED))
+				{
+					_wasMinimized = false;
+					BeginRestoreRedraw();
+					base.WndProc(ref m);
+					QueueRestoreRedraw();
+					return;
+				}
+			}
+
+			base.WndProc(ref m);
+		}
 
 		#region Smooth Page Switch
 
@@ -618,29 +826,193 @@ namespace Aron_V3
 			pageHost.ResumeLayout(false);
 		}
 
-		private void ShowCachedPage(Control page)
+		private void TrackLastNonMinimizedWindowState()
 		{
-			if (page == null)
+			if (WindowState != FormWindowState.Minimized)
+			{
+				_lastNonMinimizedWindowState = WindowState;
+			}
+		}
+
+		private void PrepareStableFrameForMinimize()
+		{
+			if (pageHost == null || pageHost.IsDisposed)
+			{
 				return;
+			}
 
 			pageHost.SuspendLayout();
+			try
+			{
+				EnsureOnlyCurrentPageVisible();
+			}
+			finally
+			{
+				pageHost.ResumeLayout(true);
+			}
 
-			HideAllPages();
+			try
+			{
+				Invalidate(true);
+				Update();
+			}
+			catch
+			{
+			}
+		}
 
-			if (page.Parent != pageHost)
-				pageHost.Controls.Add(page);
+		private void BeginRestoreRedraw()
+		{
+			if (_restoreRedrawPending)
+			{
+				return;
+			}
+
+			_restoreRedrawPending = true;
+			SuspendControlRedraw(this);
+			SuspendControlRedraw(rootLayout);
+			SuspendControlRedraw(pageHost);
+		}
+
+		private void QueueRestoreRedraw()
+		{
+			try
+			{
+				BeginInvoke(new MethodInvoker(CompleteRestoreRedraw));
+			}
+			catch
+			{
+				CompleteRestoreRedraw();
+			}
+		}
+
+		private void CompleteRestoreRedraw()
+		{
+			try
+			{
+				if (_lastNonMinimizedWindowState == FormWindowState.Maximized &&
+					WindowState == FormWindowState.Normal)
+				{
+					WindowState = FormWindowState.Maximized;
+				}
+
+				SuspendLayout();
+				pageHost.SuspendLayout();
+				EnsureOnlyCurrentPageVisible();
+				if (_currentPage == MainPageType.Login && _mainDisplayControl != null)
+				{
+					_mainDisplayControl.RefreshAfterWindowRestore();
+				}
+			}
+			finally
+			{
+				pageHost.ResumeLayout(true);
+				ResumeLayout(true);
+				ResumeControlRedraw(pageHost);
+				ResumeControlRedraw(rootLayout);
+				ResumeControlRedraw(this);
+				_restoreRedrawPending = false;
+
+				if (WindowState != FormWindowState.Minimized)
+				{
+					_lastNonMinimizedWindowState = WindowState;
+				}
+			}
+		}
+
+		private Control GetCurrentPageControl()
+		{
+			switch (_currentPage)
+			{
+				case MainPageType.Login:
+					return _runtimePage;
+				case MainPageType.HardwareConfig:
+					return _hardwareConfigPage;
+				case MainPageType.AlgorithmConfig:
+					return _algorithmPage;
+				case MainPageType.ProcessConfig:
+					return _processConfigPage;
+				case MainPageType.CommunicationConfig:
+					return _communicationPage;
+				case MainPageType.Database:
+					return _databasePage;
+				case MainPageType.SystemSetting:
+					return _systemPage;
+				default:
+					return null;
+			}
+		}
+
+		private void EnsureOnlyCurrentPageVisible()
+		{
+			Control page = GetCurrentPageControl();
+			if (page == null || pageHost == null || page.Parent != pageHost)
+			{
+				return;
+			}
 
 			page.Dock = DockStyle.Fill;
 			page.Visible = true;
 			page.BringToFront();
 
-			pageHost.ResumeLayout(true);
+			foreach (Control ctrl in pageHost.Controls)
+			{
+				if (!object.ReferenceEquals(ctrl, page))
+				{
+					ctrl.Visible = false;
+				}
+			}
+		}
+
+		private void ShowCachedPage(Control page)
+		{
+			ShowCachedPage(page, null);
+		}
+
+		private void ShowCachedPage(Control page, Action beforeShow)
+		{
+			if (page == null)
+				return;
+
+			SuspendControlRedraw(pageHost);
+			pageHost.SuspendLayout();
+
+			try
+			{
+				if (beforeShow != null)
+				{
+					beforeShow();
+				}
+
+				if (page.Parent != pageHost)
+				{
+					page.Visible = false;
+					EnableDoubleBuffer(page);
+					pageHost.Controls.Add(page);
+				}
+
+				page.Dock = DockStyle.Fill;
+				page.Visible = true;
+				page.BringToFront();
+
+				foreach (Control ctrl in pageHost.Controls)
+				{
+					if (!object.ReferenceEquals(ctrl, page))
+					{
+						ctrl.Visible = false;
+					}
+				}
+			}
+			finally
+			{
+				pageHost.ResumeLayout(true);
+				ResumeControlRedraw(pageHost);
+			}
 		}
 
 		private void ShowRuntimePage()
 		{
-			ReloadMainDisplayLayout();
-			ShowCachedPage(_runtimePage);
+			ShowCachedPage(_runtimePage, ReloadMainDisplayLayout);
 		}
 
 		private void ReloadMainDisplayLayout()
@@ -761,6 +1133,56 @@ namespace Aron_V3
 		#endregion
 
 		#region Double Buffer
+
+		private void EnableTopLevelSmoothPainting()
+		{
+			try
+			{
+				SetStyle(
+					ControlStyles.AllPaintingInWmPaint |
+					ControlStyles.OptimizedDoubleBuffer |
+					ControlStyles.ResizeRedraw,
+					true);
+				UpdateStyles();
+			}
+			catch
+			{
+			}
+		}
+
+		private void SuspendControlRedraw(Control control)
+		{
+			if (control == null || control.IsDisposed || !control.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+			}
+			catch
+			{
+			}
+		}
+
+		private void ResumeControlRedraw(Control control)
+		{
+			if (control == null || control.IsDisposed || !control.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(control.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+				control.Invalidate(true);
+				control.Update();
+			}
+			catch
+			{
+			}
+		}
 
 		private void EnableDoubleBuffer(Control control)
 		{
@@ -885,7 +1307,6 @@ namespace Aron_V3
 				lblLogTitle.Text = "Log";
 				lblCameraStatus.Text = "▣  Camera: Connected";
 				lblPlcStatus.Text = "▦  PLC: Connected";
-				lblVersion.Text = "Version: 1.0.0.0";
 			}
 			else
 			{
@@ -902,8 +1323,9 @@ namespace Aron_V3
 				lblLogTitle.Text = "Log日志";
 				lblCameraStatus.Text = "▣  相机:  已连接";
 				lblPlcStatus.Text = "▦  PLC:  已连接";
-				lblVersion.Text = "版本号:  1.0.0.0";
 			}
+
+			ApplyVersionText();
 
 			// 不要在语言切换里直接写 btnStop.Text / lblRunStatus.Text。
 			// 运行状态按钮必须由当前 _runState 统一刷新，否则会出现颜色和文字不匹配。
@@ -940,6 +1362,23 @@ namespace Aron_V3
 		}
 
 		#endregion
+
+		private void ApplyVersionText()
+		{
+			if (lblVersion == null)
+			{
+				return;
+			}
+
+			string version = GetApplicationVersion();
+			lblVersion.Text = _isEnglish ? "Version: " + version : "版本号:  " + version;
+		}
+
+		private string GetApplicationVersion()
+		{
+			Version version = Assembly.GetExecutingAssembly().GetName().Version;
+			return version == null ? "1.0.0.0" : version.ToString();
+		}
 
 
 		#region Login System
@@ -1115,11 +1554,12 @@ namespace Aron_V3
 			if (runtimeFlow != null)
 			{
 				runtimeFlow.Stop();
-				runtimeFlow.LogGenerated -= RuntimeFlow_LogGenerated;
 				runtimeFlow.TaskFinished -= RuntimeFlow_TaskFinished;
 				runtimeFlow.Dispose();
 				runtimeFlow = null;
 			}
+
+			RuntimeLogStore.LogAppended -= RuntimeFlow_LogGenerated;
 
 			DataDisplayStore.ConfigChanged -= DataDisplayStore_ConfigChanged;
 			GlobalVariableStore.VariablesChanged -= DataDisplayStore_ConfigChanged;

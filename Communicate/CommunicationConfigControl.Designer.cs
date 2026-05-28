@@ -58,6 +58,8 @@
 			this.colInputLength = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.colInputRemark = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.panelInputButtons = new System.Windows.Forms.Panel();
+			this.btnMoveDownInput = new System.Windows.Forms.Button();
+			this.btnMoveUpInput = new System.Windows.Forms.Button();
 			this.btnDeleteInput = new System.Windows.Forms.Button();
 			this.btnAddInput = new System.Windows.Forms.Button();
 			this.lblInputTitle = new System.Windows.Forms.Label();
@@ -71,6 +73,8 @@
 			this.colOutputRemark = new System.Windows.Forms.DataGridViewTextBoxColumn();
 			this.panelOutputButtons = new System.Windows.Forms.Panel();
 			this.btnSave = new System.Windows.Forms.Button();
+			this.btnMoveDownOutput = new System.Windows.Forms.Button();
+			this.btnMoveUpOutput = new System.Windows.Forms.Button();
 			this.btnDeleteOutput = new System.Windows.Forms.Button();
 			this.btnAddOutput = new System.Windows.Forms.Button();
 			this.lblOutputTitle = new System.Windows.Forms.Label();
@@ -584,12 +588,40 @@
 			// 
 			this.panelInputButtons.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
+			this.panelInputButtons.Controls.Add(this.btnMoveDownInput);
+			this.panelInputButtons.Controls.Add(this.btnMoveUpInput);
 			this.panelInputButtons.Controls.Add(this.btnDeleteInput);
 			this.panelInputButtons.Controls.Add(this.btnAddInput);
 			this.panelInputButtons.Location = new System.Drawing.Point(18, 294);
 			this.panelInputButtons.Name = "panelInputButtons";
 			this.panelInputButtons.Size = new System.Drawing.Size(544, 38);
 			this.panelInputButtons.TabIndex = 1;
+			// 
+			// btnMoveDownInput
+			// 
+			this.btnMoveDownInput.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(150)))), ((int)(((byte)(220)))));
+			this.btnMoveDownInput.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnMoveDownInput.ForeColor = System.Drawing.Color.White;
+			this.btnMoveDownInput.Location = new System.Drawing.Point(372, 4);
+			this.btnMoveDownInput.Name = "btnMoveDownInput";
+			this.btnMoveDownInput.Size = new System.Drawing.Size(110, 30);
+			this.btnMoveDownInput.TabIndex = 3;
+			this.btnMoveDownInput.Text = "下移选中";
+			this.btnMoveDownInput.UseVisualStyleBackColor = true;
+			this.btnMoveDownInput.Click += new System.EventHandler(this.btnMoveDownInput_Click);
+			// 
+			// btnMoveUpInput
+			// 
+			this.btnMoveUpInput.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(150)))), ((int)(((byte)(220)))));
+			this.btnMoveUpInput.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnMoveUpInput.ForeColor = System.Drawing.Color.White;
+			this.btnMoveUpInput.Location = new System.Drawing.Point(248, 4);
+			this.btnMoveUpInput.Name = "btnMoveUpInput";
+			this.btnMoveUpInput.Size = new System.Drawing.Size(110, 30);
+			this.btnMoveUpInput.TabIndex = 2;
+			this.btnMoveUpInput.Text = "上移选中";
+			this.btnMoveUpInput.UseVisualStyleBackColor = true;
+			this.btnMoveUpInput.Click += new System.EventHandler(this.btnMoveUpInput_Click);
 			// 
 			// btnDeleteInput
 			// 
@@ -710,6 +742,8 @@
 			this.panelOutputButtons.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
 			this.panelOutputButtons.Controls.Add(this.btnSave);
+			this.panelOutputButtons.Controls.Add(this.btnMoveDownOutput);
+			this.panelOutputButtons.Controls.Add(this.btnMoveUpOutput);
 			this.panelOutputButtons.Controls.Add(this.btnDeleteOutput);
 			this.panelOutputButtons.Controls.Add(this.btnAddOutput);
 			this.panelOutputButtons.Location = new System.Drawing.Point(18, 294);
@@ -731,6 +765,32 @@
 			this.btnSave.Text = "保存";
 			this.btnSave.UseVisualStyleBackColor = false;
 			this.btnSave.Click += new System.EventHandler(this.btnSave_Click);
+			// 
+			// btnMoveDownOutput
+			// 
+			this.btnMoveDownOutput.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(150)))), ((int)(((byte)(220)))));
+			this.btnMoveDownOutput.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnMoveDownOutput.ForeColor = System.Drawing.Color.White;
+			this.btnMoveDownOutput.Location = new System.Drawing.Point(342, 4);
+			this.btnMoveDownOutput.Name = "btnMoveDownOutput";
+			this.btnMoveDownOutput.Size = new System.Drawing.Size(80, 30);
+			this.btnMoveDownOutput.TabIndex = 4;
+			this.btnMoveDownOutput.Text = "下移选中";
+			this.btnMoveDownOutput.UseVisualStyleBackColor = true;
+			this.btnMoveDownOutput.Click += new System.EventHandler(this.btnMoveDownOutput_Click);
+			// 
+			// btnMoveUpOutput
+			// 
+			this.btnMoveUpOutput.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(150)))), ((int)(((byte)(220)))));
+			this.btnMoveUpOutput.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+			this.btnMoveUpOutput.ForeColor = System.Drawing.Color.White;
+			this.btnMoveUpOutput.Location = new System.Drawing.Point(248, 4);
+			this.btnMoveUpOutput.Name = "btnMoveUpOutput";
+			this.btnMoveUpOutput.Size = new System.Drawing.Size(80, 30);
+			this.btnMoveUpOutput.TabIndex = 3;
+			this.btnMoveUpOutput.Text = "上移选中";
+			this.btnMoveUpOutput.UseVisualStyleBackColor = true;
+			this.btnMoveUpOutput.Click += new System.EventHandler(this.btnMoveUpOutput_Click);
 			// 
 			// btnDeleteOutput
 			// 
@@ -844,6 +904,8 @@
 		private System.Windows.Forms.DataGridViewTextBoxColumn colInputLength;
 		private System.Windows.Forms.DataGridViewTextBoxColumn colInputRemark;
 		private System.Windows.Forms.Panel panelInputButtons;
+		private System.Windows.Forms.Button btnMoveDownInput;
+		private System.Windows.Forms.Button btnMoveUpInput;
 		private System.Windows.Forms.Button btnDeleteInput;
 		private System.Windows.Forms.Button btnAddInput;
 		private System.Windows.Forms.Label lblInputTitle;
@@ -857,6 +919,8 @@
 		private System.Windows.Forms.DataGridViewTextBoxColumn colOutputRemark;
 		private System.Windows.Forms.Panel panelOutputButtons;
 		private System.Windows.Forms.Button btnSave;
+		private System.Windows.Forms.Button btnMoveDownOutput;
+		private System.Windows.Forms.Button btnMoveUpOutput;
 		private System.Windows.Forms.Button btnDeleteOutput;
 		private System.Windows.Forms.Button btnAddOutput;
 		private System.Windows.Forms.Label lblOutputTitle;

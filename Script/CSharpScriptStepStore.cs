@@ -7,6 +7,9 @@ namespace Aron_V3
 {
 	public static class CSharpScriptStepStore
 	{
+		public const string PreviousStepsOkInputName = "PreviousStepsOK";
+		public const string PreviousStepsOkDescription = "Fixed input. True when all previous task steps finished OK.";
+
 		public static CSharpScriptStepConfig Load(string configPath)
 		{
 			if (string.IsNullOrWhiteSpace(configPath) || !File.Exists(configPath))
@@ -68,21 +71,24 @@ namespace Aron_V3
 
 		public static string GetScriptFolder(string jobName, string taskName)
 		{
-			string safeJob = NormalizeFileName(jobName, "Job_001");
-			string safeTask = NormalizeFileName(taskName, "Task_New_01");
+			return GetScriptFolder("TCP/IP", "Channel01", jobName, taskName);
+		}
 
+		public static string GetScriptFolder(string protocolName, string channelName, string jobName, string taskName)
+		{
 			return Path.Combine(
-				ProjectPathStore.ProjectRoot,
-				"Job",
-				safeJob,
-				"Task",
-				safeTask,
-				"Scripts");
+				FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, jobName, taskName),
+				"Script");
 		}
 
 		public static string GetConfigPath(string jobName, string taskName, string stepName)
 		{
-			string folder = GetScriptFolder(jobName, taskName);
+			return GetConfigPath("TCP/IP", "Channel01", jobName, taskName, stepName);
+		}
+
+		public static string GetConfigPath(string protocolName, string channelName, string jobName, string taskName, string stepName)
+		{
+			string folder = GetScriptFolder(protocolName, channelName, jobName, taskName);
 			string safeStep = NormalizeFileName(stepName, "CS_Script");
 
 			return Path.Combine(folder, safeStep + ".script.xml");
@@ -90,7 +96,12 @@ namespace Aron_V3
 
 		public static string GetScriptPath(string jobName, string taskName, string stepName)
 		{
-			string folder = GetScriptFolder(jobName, taskName);
+			return GetScriptPath("TCP/IP", "Channel01", jobName, taskName, stepName);
+		}
+
+		public static string GetScriptPath(string protocolName, string channelName, string jobName, string taskName, string stepName)
+		{
+			string folder = GetScriptFolder(protocolName, channelName, jobName, taskName);
 			string safeStep = NormalizeFileName(stepName, "CS_Script");
 
 			return Path.Combine(folder, safeStep + ".csx");
@@ -129,11 +140,10 @@ namespace Aron_V3
 			config.LastCompileStatus = string.Empty;
 			config.LastErrorMessage = string.Empty;
 
-			// 默认不再创建 JobID / Measure1 / Barcode 示例输入。
-			// 输入由流程管理中 Script 绑定的前序模块自动生成。
 			config.References = new List<ScriptReferenceConfig>();
 			config.Inputs = new List<ScriptPinConfig>();
 			config.Outputs = new List<ScriptPinConfig>();
+			EnsureRequiredInputs(config);
 
 			return config;
 		}
@@ -148,6 +158,8 @@ public class ScriptMain : IScriptMain
 {
 	public void Execute(IScriptContext context)
 	{
+		bool previousStepsOK = context.GetInputBool(""PreviousStepsOK"");
+
 		// 输入示例：
 		// double value = context.GetInputDouble(""InputName"");
 
@@ -158,6 +170,65 @@ public class ScriptMain : IScriptMain
 		context.SetOutput(""ResultSum"", result);
 	}
 }";
+		}
+
+		public static void EnsureRequiredInputs(CSharpScriptStepConfig config)
+		{
+			if (config == null)
+			{
+				return;
+			}
+
+			if (config.Inputs == null)
+			{
+				config.Inputs = new List<ScriptPinConfig>();
+			}
+
+			ScriptPinConfig required = null;
+			foreach (ScriptPinConfig pin in config.Inputs)
+			{
+				if (pin != null &&
+					string.Equals(pin.Name, PreviousStepsOkInputName, StringComparison.OrdinalIgnoreCase))
+				{
+					required = pin;
+					break;
+				}
+			}
+
+			if (required == null)
+			{
+				required = new ScriptPinConfig();
+				config.Inputs.Insert(0, required);
+			}
+
+			required.Name = PreviousStepsOkInputName;
+			required.DataType = ScriptPinDataType.Bool;
+			required.BindingPath = PreviousStepsOkInputName;
+			required.GlobalVariableName = string.Empty;
+			required.DefaultValue = "True";
+			required.Description = PreviousStepsOkDescription;
+
+			int firstIndex = config.Inputs.IndexOf(required);
+			for (int i = config.Inputs.Count - 1; i >= 0; i--)
+			{
+				if (i == firstIndex)
+				{
+					continue;
+				}
+
+				ScriptPinConfig pin = config.Inputs[i];
+				if (pin != null &&
+					string.Equals(pin.Name, PreviousStepsOkInputName, StringComparison.OrdinalIgnoreCase))
+				{
+					config.Inputs.RemoveAt(i);
+				}
+			}
+
+			if (firstIndex > 0)
+			{
+				config.Inputs.Remove(required);
+				config.Inputs.Insert(0, required);
+			}
 		}
 
 		private static void EnsureConfigNotNull(CSharpScriptStepConfig config)
@@ -209,6 +280,7 @@ public class ScriptMain : IScriptMain
 
 			NormalizePins(config.Inputs);
 			NormalizePins(config.Outputs);
+			EnsureRequiredInputs(config);
 		}
 
 		private static void NormalizePins(List<ScriptPinConfig> pins)

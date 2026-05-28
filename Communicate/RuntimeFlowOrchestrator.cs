@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Serialization;
 
 namespace Aron_V3
 {
@@ -15,8 +17,11 @@ namespace Aron_V3
 	/// </summary>
 	public sealed class RuntimeFlowOrchestrator : IDisposable
 	{
+		private const int ImageAcquireTimeoutMs = 10000;
+
 		private readonly object _syncRoot = new object();
 		private readonly HashSet<string> _runningTaskKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		private readonly HashSet<string> _runningImageAcquireKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 		private readonly RuntimeImageAcquireService _imageAcquireService;
 		private readonly RuntimeCommunicationOutputService _outputService;
@@ -51,7 +56,7 @@ namespace Aron_V3
 			CommunicationRuntimeManager.Instance.StatusChanged += CommunicationRuntime_StatusChanged;
 			CommunicationRuntimeManager.Instance.ErrorOccurred += CommunicationRuntime_ErrorOccurred;
 
-			WriteLog("Runtime flow orchestrator started.");
+			WriteLog(RuntimeLogCategory.Task, "Runtime flow orchestrator started.");
 		}
 
 		public bool RunTaskTest(string jobName, string taskName, TaskRunOptions options)
@@ -90,7 +95,7 @@ namespace Aron_V3
 
 			try
 			{
-				WriteLog("Task offline test started. Job=" + jobName + ", Task=" + taskName);
+				WriteLog(RuntimeLogCategory.Task, "Task offline test started. Job=" + jobName + ", Task=" + taskName);
 
 				using (TaskRunContext.Begin(options))
 				{
@@ -98,27 +103,21 @@ namespace Aron_V3
 
 					TaskRunner runner = new TaskRunner();
 					finalResult = runner.Run(task, context);
-
-					if (options.EnableCommunicationOutput &&
-						!string.IsNullOrWhiteSpace(task.CommunicationProtocol) &&
-						!task.CommunicationProtocol.Equals("Not Use", StringComparison.OrdinalIgnoreCase) &&
-						!task.CommunicationProtocol.Equals("None", StringComparison.OrdinalIgnoreCase))
-					{
-						_outputService.SendTaskOutput(task.CommunicationProtocol, task, context, finalResult);
-					}
 				}
 
-				WriteLog("Task offline test finished. Job=" + jobName +
+				WriteLog(RuntimeLogCategory.Task, "Task offline test finished. Job=" + jobName +
 					", Task=" + taskName +
-					", OK=" + finalResult.IsOK +
-					", Message=" + finalResult.Message +
 					", CommunicationOutput=" + options.EnableCommunicationOutput +
 					", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
 			}
 			catch (Exception ex)
 			{
 				finalResult = StepResult.NG(ex.Message);
-				WriteLog("Task offline test failed. Job=" + jobName + ", Task=" + taskName + ", Error=" + ex.Message);
+				WriteLog(RuntimeLogCategory.Task, "Task offline test failed. Job=" + jobName +
+					", Task=" + taskName +
+					", Error=" + ex.Message +
+					", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms",
+					true);
 				throw;
 			}
 			finally
@@ -173,7 +172,7 @@ namespace Aron_V3
 			CommunicationRuntimeManager.Instance.StatusChanged -= CommunicationRuntime_StatusChanged;
 			CommunicationRuntimeManager.Instance.ErrorOccurred -= CommunicationRuntime_ErrorOccurred;
 
-			WriteLog("Runtime flow orchestrator stopped.");
+			WriteLog(RuntimeLogCategory.Task, "Runtime flow orchestrator stopped.");
 		}
 
 		private void CommunicationRuntime_StatusChanged(object sender, CommunicationStatusChangedEventArgs e)
@@ -183,7 +182,12 @@ namespace Aron_V3
 				return;
 			}
 
-			WriteLog("Communication status: " + e.CommunicationType + " / " + e.State + " / " + e.Message);
+			WriteLog(
+				RuntimeLogCategory.Communication,
+				"Communication status. Communication=" +
+				CommunicationRuntimeNaming.FormatCommunicationName(e.CommunicationType, e.InstanceName) +
+				", State=" + e.State +
+				", Message=" + e.Message);
 		}
 
 		private void CommunicationRuntime_ErrorOccurred(object sender, Exception e)
@@ -193,7 +197,12 @@ namespace Aron_V3
 				return;
 			}
 
-			WriteLog("Communication error: " + e.Message);
+			ICommunicationRuntime runtime = sender as ICommunicationRuntime;
+			string communicationName = runtime == null
+				? "Communication"
+				: CommunicationRuntimeNaming.FormatCommunicationName(runtime.CommunicationType, runtime.InstanceName);
+
+			WriteLog(RuntimeLogCategory.Communication, "Communication error. Communication=" + communicationName + ", Error=" + e.Message, true);
 		}
 
 		private void CommunicationRuntime_DataReceived(object sender, CommunicationDataReceivedEventArgs e)
@@ -217,6 +226,9 @@ namespace Aron_V3
 			try
 			{
 				string protocolName = GetProtocolName(e.CommunicationType);
+				CommunicationConfig communicationConfig = CommunicationConfigStore.LoadOrCreateDefault();
+				string instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, e.InstanceName, communicationConfig);
+				string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
 
 				// 关键修复：
 				// TCP/IP 接收到 Raw="11" 这种定长字符串时，底层 e.Values 可能是空的。
@@ -230,23 +242,25 @@ namespace Aron_V3
 				RuntimeCommunicationValueProvider valueProvider =
 					new RuntimeCommunicationValueProvider(protocolName, parsedValues);
 
-				WriteLog("Communication received. Protocol=" + protocolName +
+				string parsedText = FormatCommunicationLogValues(parsedValues);
+				WriteLog(RuntimeLogCategory.Communication, "Communication received. Communication=" + communicationName +
 					", Raw=" + e.RawText +
-					", Parsed=" + RuntimeCommunicationInputParser.FormatValues(parsedValues));
+					", Parsed=" + parsedText);
 
 				ProjectFlowConfig flowConfig = FlowConfigStore.LoadOrCreateDefault();
+				UpdateActiveProgramByCommunication(flowConfig, protocolName, instanceName, valueProvider, communicationConfig);
 
 				if (flowConfig == null || flowConfig.Jobs == null || flowConfig.Jobs.Count <= 0)
 				{
-					WriteLog("No flow config was found.");
+					WriteLog(RuntimeLogCategory.Task, "No flow config was found.");
 					return;
 				}
 
-				List<RuntimeTaskTarget> matchedTasks = FindMatchedTasks(flowConfig, protocolName, valueProvider);
+				List<RuntimeTaskTarget> matchedTasks = FindMatchedTasks(flowConfig, protocolName, instanceName, valueProvider, communicationConfig);
 
 				if (matchedTasks.Count <= 0)
 				{
-					WriteLog("No task matched. Protocol=" + protocolName + ", Raw=" + e.RawText + ", Parsed=" + RuntimeCommunicationInputParser.FormatValues(parsedValues));
+					WriteLog(RuntimeLogCategory.Task, "No task matched. Communication=" + communicationName + ", Raw=" + e.RawText + ", Parsed=" + parsedText);
 					return;
 				}
 
@@ -264,14 +278,16 @@ namespace Aron_V3
 			}
 			catch (Exception ex)
 			{
-				WriteLog("Process communication data failed: " + ex.Message);
+				WriteLog(RuntimeLogCategory.Communication, "Process communication data failed: " + ex.Message, true);
 			}
 		}
 
 		private List<RuntimeTaskTarget> FindMatchedTasks(
 			ProjectFlowConfig flowConfig,
 			string protocolName,
-			RuntimeCommunicationValueProvider valueProvider)
+			string instanceName,
+			RuntimeCommunicationValueProvider valueProvider,
+			CommunicationConfig communicationConfig)
 		{
 			List<RuntimeTaskTarget> result = new List<RuntimeTaskTarget>();
 
@@ -294,6 +310,16 @@ namespace Aron_V3
 						continue;
 					}
 
+					if (!IsTaskInstanceMatched(task, instanceName))
+					{
+						continue;
+					}
+
+					if (!IsJobActiveForChannel(flowConfig, job, task, protocolName))
+					{
+						continue;
+					}
+
 					if (!IsTaskHasTrigger(task))
 					{
 						continue;
@@ -303,7 +329,7 @@ namespace Aron_V3
 
 					try
 					{
-						canRun = TriggerConditionEvaluator.CanRunTask(task, valueProvider);
+						canRun = CanRunTaskByChannel(task, protocolName, instanceName, valueProvider, communicationConfig);
 					}
 					catch
 					{
@@ -334,6 +360,22 @@ namespace Aron_V3
 				return false;
 			}
 
+			if (task.CommunicationTriggerBindings != null)
+			{
+				foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+				{
+					if (binding == null)
+					{
+						continue;
+					}
+
+					if (IsProtocolNameMatched(binding.CommunicationProtocol, protocolName))
+					{
+						return true;
+					}
+				}
+			}
+
 			string taskProtocol = task.CommunicationProtocol == null ? string.Empty : task.CommunicationProtocol.Trim();
 
 			if (taskProtocol.Length <= 0 ||
@@ -347,6 +389,202 @@ namespace Aron_V3
 				   taskProtocol.Replace("/", string.Empty).Equals(protocolName.Replace("/", string.Empty), StringComparison.OrdinalIgnoreCase);
 		}
 
+		private bool IsProtocolNameMatched(string configuredProtocol, string runtimeProtocol)
+		{
+			if (string.IsNullOrWhiteSpace(configuredProtocol) || string.IsNullOrWhiteSpace(runtimeProtocol))
+			{
+				return false;
+			}
+
+			configuredProtocol = configuredProtocol.Trim();
+			runtimeProtocol = runtimeProtocol.Trim();
+
+			if (configuredProtocol.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				configuredProtocol.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			return configuredProtocol.Equals(runtimeProtocol, StringComparison.OrdinalIgnoreCase) ||
+				configuredProtocol.Replace("/", string.Empty).Equals(runtimeProtocol.Replace("/", string.Empty), StringComparison.OrdinalIgnoreCase);
+		}
+
+		private TaskCommunicationTriggerBinding FindTriggerBinding(TaskConfig task, string protocolName, string instanceName)
+		{
+			if (task == null || task.CommunicationTriggerBindings == null)
+			{
+				return null;
+			}
+
+			foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+			{
+				if (binding == null || !IsProtocolNameMatched(binding.CommunicationProtocol, protocolName))
+				{
+					continue;
+				}
+
+				if (IsBindingInstanceMatched(binding, instanceName))
+				{
+					return binding;
+				}
+			}
+
+			return null;
+		}
+
+		private bool IsBindingInstanceMatched(TaskCommunicationTriggerBinding binding, string instanceName)
+		{
+			if (binding == null)
+			{
+				return false;
+			}
+
+			string bindingInstance = binding.CommunicationInstanceName == null ? string.Empty : binding.CommunicationInstanceName.Trim();
+			if (bindingInstance.Length <= 0 ||
+				bindingInstance.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				bindingInstance.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			if (string.IsNullOrWhiteSpace(instanceName))
+			{
+				return true;
+			}
+
+			return string.Equals(bindingInstance, instanceName.Trim(), StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool IsTaskInstanceMatched(TaskConfig task, string instanceName)
+		{
+			if (task == null)
+			{
+				return false;
+			}
+
+			if (task.CommunicationTriggerBindings != null && task.CommunicationTriggerBindings.Count > 0)
+			{
+				foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+				{
+					if (binding != null && IsBindingInstanceMatched(binding, instanceName))
+					{
+						return true;
+					}
+				}
+
+				return false;
+			}
+
+			string taskInstance = task.CommunicationInstanceName == null ? string.Empty : task.CommunicationInstanceName.Trim();
+			if (taskInstance.Length <= 0 ||
+				taskInstance.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				taskInstance.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			if (string.IsNullOrWhiteSpace(instanceName))
+			{
+				return true;
+			}
+
+			return string.Equals(taskInstance, instanceName.Trim(), StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool IsJobActiveForChannel(ProjectFlowConfig flowConfig, JobConfig job, TaskConfig task, string protocolName)
+		{
+			if (job == null)
+			{
+				return false;
+			}
+
+			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, string.Empty);
+			string channelName = binding == null ? (task == null ? string.Empty : task.CommunicationChannel) : binding.CommunicationChannel;
+			if (string.IsNullOrWhiteSpace(channelName))
+			{
+				channelName = job.ChannelName;
+			}
+
+			ChannelFlowConfig channel = FlowConfigStore.GetChannel(flowConfig, protocolName, channelName);
+			if (channel == null)
+			{
+				return true;
+			}
+
+			string activeProgramNo = string.IsNullOrWhiteSpace(channel.ActiveProgramNo) ? "1" : channel.ActiveProgramNo;
+			string jobProgramNo = string.IsNullOrWhiteSpace(job.ProgramNo) ? "1" : job.ProgramNo;
+			return string.Equals(activeProgramNo, jobProgramNo, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private void UpdateActiveProgramByCommunication(
+			ProjectFlowConfig flowConfig,
+			string protocolName,
+			string instanceName,
+			RuntimeCommunicationValueProvider valueProvider,
+			CommunicationConfig communicationConfig)
+		{
+			List<CommunicationChannelConfig> channels = GetChannels(communicationConfig, protocolName, instanceName);
+			string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
+			bool changed = false;
+
+			foreach (CommunicationChannelConfig channelConfig in channels)
+			{
+				if (channelConfig == null || !channelConfig.Enabled)
+				{
+					continue;
+				}
+
+				string switchValue = ResolveOneCommunicationDisplayValue(
+					protocolName,
+					valueProvider,
+					channelConfig.ProgramSwitchEnableName);
+
+				if (!IsSwitchOn(switchValue))
+				{
+					continue;
+				}
+
+				string programNo = ResolveOneCommunicationDisplayValue(
+					protocolName,
+					valueProvider,
+					channelConfig.ProgramNoAddressName);
+
+				if (string.IsNullOrWhiteSpace(programNo))
+				{
+					continue;
+				}
+
+				ChannelFlowConfig channel = FlowConfigStore.GetOrCreateChannel(
+					flowConfig,
+					protocolName,
+					channelConfig.ChannelName);
+
+				if (!string.Equals(channel.ActiveProgramNo, programNo, StringComparison.OrdinalIgnoreCase))
+				{
+					channel.ActiveProgramNo = programNo;
+					changed = true;
+					WriteLog(RuntimeLogCategory.Communication, "Program switched. Communication=" + communicationName + ", Channel=" + channel.ChannelName + ", ProgramNo=" + programNo);
+				}
+			}
+
+			if (changed)
+			{
+				FlowConfigStore.Save(flowConfig);
+			}
+		}
+
+		private bool IsSwitchOn(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return false;
+			}
+
+			return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+				value.Equals("True", StringComparison.OrdinalIgnoreCase) ||
+				value.Equals("OK", StringComparison.OrdinalIgnoreCase);
+		}
+
 		private bool IsTaskHasTrigger(TaskConfig task)
 		{
 			if (task == null)
@@ -354,13 +592,23 @@ namespace Aron_V3
 				return false;
 			}
 
-			if (string.IsNullOrWhiteSpace(task.TriggerName))
+			if (task.CommunicationTriggerBindings != null)
 			{
-				return false;
+				foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+				{
+					if (binding == null || string.IsNullOrWhiteSpace(binding.TriggerName))
+					{
+						continue;
+					}
+
+					if (!string.IsNullOrWhiteSpace(NormalizeConfiguredCommunicationValue(binding.TriggerName)))
+					{
+						return true;
+					}
+				}
 			}
 
-			if (task.TriggerName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				task.TriggerName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			if (string.IsNullOrWhiteSpace(NormalizeConfiguredCommunicationValue(task.TriggerName)))
 			{
 				return false;
 			}
@@ -368,29 +616,273 @@ namespace Aron_V3
 			return true;
 		}
 
+		private string NormalizeConfiguredCommunicationValue(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return string.Empty;
+			}
+
+			string text = value.Trim();
+			if (text.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("None", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("Select", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("Select...", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("选择", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("选择...", StringComparison.OrdinalIgnoreCase))
+			{
+				return string.Empty;
+			}
+
+			return text;
+		}
+
+		private bool CanRunTaskByChannel(
+			TaskConfig task,
+			string protocolName,
+			string instanceName,
+			RuntimeCommunicationValueProvider valueProvider,
+			CommunicationConfig communicationConfig)
+		{
+			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, instanceName);
+			string channelName = binding == null
+				? (task == null ? string.Empty : task.CommunicationChannel)
+				: binding.CommunicationChannel;
+
+			CommunicationChannelConfig channel = FindChannelConfig(
+				communicationConfig,
+				protocolName,
+				instanceName,
+				channelName);
+
+			if (channel == null)
+			{
+				return TriggerConditionEvaluator.CanRunTask(task, valueProvider);
+			}
+
+			if (!channel.Enabled)
+			{
+				return false;
+			}
+
+			string selectedTriggerName = binding == null
+				? (task == null ? string.Empty : task.TriggerName)
+				: binding.TriggerName;
+			string selectedTrigger = NormalizeConfiguredCommunicationValue(selectedTriggerName);
+			string triggerGlobalVariableName = NormalizeConfiguredCommunicationValue(channel.TriggerGlobalVariableName);
+			string triggerSourceName = NormalizeConfiguredCommunicationValue(channel.TriggerName);
+			string triggerExpectedValue = channel.TriggerExpectedValue;
+			string customTriggerGlobalVariableName = NormalizeConfiguredCommunicationValue(channel.CustomTriggerGlobalVariableName);
+
+			if (string.IsNullOrWhiteSpace(selectedTrigger))
+			{
+				return false;
+			}
+
+			if (selectedTrigger.Equals("Trigger", StringComparison.OrdinalIgnoreCase) &&
+				string.IsNullOrWhiteSpace(triggerGlobalVariableName) &&
+				string.IsNullOrWhiteSpace(customTriggerGlobalVariableName))
+			{
+				return false;
+			}
+
+			if (!string.IsNullOrWhiteSpace(customTriggerGlobalVariableName) &&
+				string.Equals(selectedTrigger, customTriggerGlobalVariableName, StringComparison.OrdinalIgnoreCase))
+			{
+				triggerGlobalVariableName = customTriggerGlobalVariableName;
+				triggerSourceName = customTriggerGlobalVariableName;
+				triggerExpectedValue = channel.CustomTriggerExpectedValue;
+			}
+			else if (!string.IsNullOrWhiteSpace(selectedTrigger) &&
+				!string.Equals(selectedTrigger, triggerGlobalVariableName, StringComparison.OrdinalIgnoreCase) &&
+				!string.Equals(selectedTrigger, triggerSourceName, StringComparison.OrdinalIgnoreCase))
+			{
+				triggerGlobalVariableName = string.Empty;
+				triggerSourceName = selectedTrigger;
+				string configuredTriggerValue = binding == null
+					? (task == null ? string.Empty : task.TriggerValue)
+					: binding.TriggerValue;
+				triggerExpectedValue = string.IsNullOrWhiteSpace(configuredTriggerValue) ? "1" : configuredTriggerValue;
+			}
+
+			string triggerActual = GetChannelRuntimeValue(protocolName, triggerSourceName, triggerGlobalVariableName, valueProvider);
+			bool triggerOk = TriggerConditionEvaluator.CompareValue(
+				triggerActual,
+				triggerExpectedValue,
+				TriggerCompareType.Equal);
+
+			if (!triggerOk)
+			{
+				return false;
+			}
+
+			string optionName = binding == null
+				? (task == null ? string.Empty : task.PositionOptionName)
+				: binding.PositionName;
+			if (string.IsNullOrWhiteSpace(optionName))
+			{
+				optionName = task == null ? string.Empty : task.PositionName;
+			}
+
+			if (string.IsNullOrWhiteSpace(optionName) ||
+				optionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				optionName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			string positionSource = optionName;
+			string positionGlobalVariableName = string.Empty;
+			string expectedPositionValue = binding == null
+				? (task == null ? string.Empty : task.PositionValue)
+				: binding.PositionValue;
+
+			if (!string.IsNullOrWhiteSpace(channel.PositionGlobalVariableName) &&
+				string.Equals(optionName, channel.PositionGlobalVariableName, StringComparison.OrdinalIgnoreCase))
+			{
+				positionSource = channel.PositionGlobalVariableName;
+				positionGlobalVariableName = channel.PositionGlobalVariableName;
+			}
+			else if (!string.IsNullOrWhiteSpace(channel.PositionSourceName) &&
+				string.Equals(optionName, channel.PositionSourceName, StringComparison.OrdinalIgnoreCase))
+			{
+				positionSource = channel.PositionSourceName;
+				positionGlobalVariableName = channel.PositionGlobalVariableName;
+			}
+			else
+			{
+				CommunicationPositionOption option = channel.PositionOptions == null
+					? null
+					: channel.PositionOptions.FirstOrDefault(x =>
+						x != null && string.Equals(x.Name, optionName, StringComparison.OrdinalIgnoreCase));
+
+				if (option != null && string.IsNullOrWhiteSpace(expectedPositionValue))
+				{
+					expectedPositionValue = option.ExpectedValue;
+				}
+			}
+
+			if (string.IsNullOrWhiteSpace(positionSource) ||
+				positionSource.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				string.IsNullOrWhiteSpace(expectedPositionValue))
+			{
+				return false;
+			}
+
+			string positionActual = GetChannelRuntimeValue(protocolName, positionSource, positionGlobalVariableName, valueProvider);
+			return TriggerConditionEvaluator.CompareValue(
+				positionActual,
+				expectedPositionValue,
+				TriggerCompareType.Equal);
+		}
+
+		private string GetChannelRuntimeValue(
+			string protocolName,
+			string sourceName,
+			string globalVariableName,
+			RuntimeCommunicationValueProvider valueProvider)
+		{
+			if (!string.IsNullOrWhiteSpace(globalVariableName))
+			{
+				return GlobalVariableStore.GetValueText(globalVariableName);
+			}
+
+			return valueProvider.GetInputValue(protocolName, sourceName);
+		}
+
+		private CommunicationChannelConfig FindChannelConfig(
+			CommunicationConfig config,
+			string protocolName,
+			string instanceName,
+			string channelName)
+		{
+			List<CommunicationChannelConfig> channels = GetChannels(config, protocolName, instanceName);
+			if (channels == null || channels.Count <= 0)
+			{
+				return null;
+			}
+
+			if (string.IsNullOrWhiteSpace(channelName))
+			{
+				channelName = "Channel01";
+			}
+
+			CommunicationChannelConfig channel = channels.FirstOrDefault(x =>
+				x != null && string.Equals(x.ChannelName, channelName, StringComparison.OrdinalIgnoreCase));
+
+			return channel ?? channels.FirstOrDefault(x => x != null && x.Enabled);
+		}
+
+		private List<CommunicationChannelConfig> GetChannels(CommunicationConfig config, string protocolName, string instanceName)
+		{
+			if (config == null)
+			{
+				return new List<CommunicationChannelConfig>();
+			}
+
+			CommunicationInstanceConfig instance =
+				CommunicationRuntimeNaming.FindInstance(config, protocolName, instanceName);
+
+			if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				protocolName.Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
+			{
+				if (instance != null && instance.TcpIp != null && instance.TcpIp.Channels != null)
+				{
+					return instance.TcpIp.Channels;
+				}
+
+				return config.TcpIp == null ? new List<CommunicationChannelConfig>() : config.TcpIp.Channels;
+			}
+
+			if (protocolName.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.Profinet == null ? new List<CommunicationChannelConfig>() : config.Profinet.Channels;
+			}
+
+			if (protocolName.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				if (instance != null && instance.S7 != null && instance.S7.Channels != null)
+				{
+					return instance.S7.Channels;
+				}
+
+				return config.S7 == null ? new List<CommunicationChannelConfig>() : config.S7.Channels;
+			}
+
+			return new List<CommunicationChannelConfig>();
+		}
+
 		private bool ManualCompareTaskCondition(
 			TaskConfig task,
 			string protocolName,
 			RuntimeCommunicationValueProvider valueProvider)
 		{
-			string triggerActual = valueProvider.GetInputValue(protocolName, task.TriggerName);
+			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, string.Empty);
+			string triggerName = binding == null ? task.TriggerName : binding.TriggerName;
+			string triggerValue = binding == null ? task.TriggerValue : binding.TriggerValue;
+			TriggerCompareType triggerCompare = binding == null ? task.TriggerCompare : binding.TriggerCompare;
+			string positionName = binding == null ? task.PositionName : binding.PositionName;
+			string positionValue = binding == null ? task.PositionValue : binding.PositionValue;
+			TriggerCompareType positionCompare = binding == null ? task.PositionCompare : binding.PositionCompare;
+
+			string triggerActual = valueProvider.GetInputValue(protocolName, triggerName);
 			bool triggerOk = TriggerConditionEvaluator.CompareValue(
 				triggerActual,
-				task.TriggerValue,
-				task.TriggerCompare);
+				triggerValue,
+				triggerCompare);
 
-			if (string.IsNullOrWhiteSpace(task.PositionName) ||
-				task.PositionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				task.PositionName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			if (string.IsNullOrWhiteSpace(positionName) ||
+				positionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				positionName.Equals("None", StringComparison.OrdinalIgnoreCase))
 			{
 				return triggerOk;
 			}
 
-			string positionActual = valueProvider.GetInputValue(protocolName, task.PositionName);
+			string positionActual = valueProvider.GetInputValue(protocolName, positionName);
 			bool positionOk = TriggerConditionEvaluator.CompareValue(
 				positionActual,
-				task.PositionValue,
-				task.PositionCompare);
+				positionValue,
+				positionCompare);
 
 			return triggerOk && positionOk;
 		}
@@ -409,26 +901,41 @@ namespace Aron_V3
 			string jobName = target.Job.JobName;
 			string taskName = target.Task.TaskName;
 			string taskKey = jobName + "/" + taskName;
+			TaskCommunicationTriggerBinding binding = FindTriggerBinding(
+				target.Task,
+				protocolName,
+				commEvent == null ? string.Empty : commEvent.InstanceName);
+			string triggerName = binding == null ? target.Task.TriggerName : binding.TriggerName;
+			string channelName = binding == null ? target.Task.CommunicationChannel : binding.CommunicationChannel;
+			string positionOptionName = binding == null ? target.Task.PositionOptionName : binding.PositionName;
+			string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(
+				protocolName,
+				commEvent == null ? target.Task.CommunicationInstanceName : commEvent.InstanceName);
 
 			if (!EnterTask(taskKey))
 			{
-				WriteLog("Task is already running, ignored duplicate trigger. " + taskKey);
+				WriteLog(RuntimeLogCategory.Task, "Task is already running, ignored duplicate trigger. " + taskKey + ", Communication=" + communicationName);
 				return;
 			}
 
 			DateTime startTime = DateTime.Now;
 			StepResult finalResult = StepResult.NG("Task was not executed.");
-			VisionRunContext context = new VisionRunContext();
+				VisionRunContext context = new VisionRunContext();
 
 			try
 			{
 				context.JobName = jobName;
 				context.TaskName = taskName;
-				context.TriggerName = target.Task.TriggerName;
+				context.TriggerName = triggerName;
+				context.SetData("Comm.Channel", channelName);
+				context.SetData("ProgramNo", target.Job.ProgramNo);
+				context.SetData("JobID", target.Job.ProgramNo);
+				context.SetData("Task.PositionOptionName", positionOptionName);
 
-				WriteLog("Task started. Job=" + jobName + ", Task=" + taskName);
+				WriteLog(RuntimeLogCategory.Task, "Task started. Job=" + jobName + ", Task=" + taskName + ", Communication=" + communicationName);
 
 				FillCommunicationInputToContext(context, protocolName, commEvent, valueProvider.Values);
+				PublishTaskDisplayInfo(jobName, target.Task, protocolName, valueProvider);
 
 				// 1. 根据 Task 的图像源先并行取像。
 				AcquireTaskImages(jobName, target.Task, context);
@@ -439,24 +946,21 @@ namespace Aron_V3
 				TaskRunner runner = new TaskRunner();
 				finalResult = runner.Run(target.Task, context);
 
-				// 3. Task 最后一个 Step 执行完成后，把输出结果映射到通讯输出地址并反馈。
-				_outputService.SendTaskOutput(protocolName, target.Task, context, finalResult);
-
-				WriteLog("Task finished. Job=" + jobName + ", Task=" + taskName + ", OK=" + finalResult.IsOK + ", Message=" + finalResult.Message + ", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
+				WriteLog(RuntimeLogCategory.Task, "Task finished. Job=" + jobName +
+					", Task=" + taskName +
+					", Communication=" + communicationName +
+					", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms");
 			}
 			catch (Exception ex)
 			{
 				finalResult = StepResult.NG(ex.Message);
 
-				try
-				{
-					_outputService.SendTaskOutput(protocolName, target.Task, context, finalResult);
-				}
-				catch
-				{
-				}
-
-				WriteLog("Task failed. Job=" + jobName + ", Task=" + taskName + ", Error=" + ex.Message);
+				WriteLog(RuntimeLogCategory.Task, "Task failed. Job=" + jobName +
+					", Task=" + taskName +
+					", Communication=" + communicationName +
+					", Error=" + ex.Message +
+					", Cost=" + (DateTime.Now - startTime).TotalMilliseconds.ToString("0.0") + " ms",
+					true);
 			}
 			finally
 			{
@@ -498,6 +1002,31 @@ namespace Aron_V3
 			}
 		}
 
+		private bool EnterImageAcquire(string acquireKey)
+		{
+			lock (_syncRoot)
+			{
+				if (_runningImageAcquireKeys.Contains(acquireKey))
+				{
+					return false;
+				}
+
+				_runningImageAcquireKeys.Add(acquireKey);
+				return true;
+			}
+		}
+
+		private void LeaveImageAcquire(string acquireKey)
+		{
+			lock (_syncRoot)
+			{
+				if (_runningImageAcquireKeys.Contains(acquireKey))
+				{
+					_runningImageAcquireKeys.Remove(acquireKey);
+				}
+			}
+		}
+
 		private void FillCommunicationInputToContext(
 			VisionRunContext context,
 			string protocolName,
@@ -510,7 +1039,11 @@ namespace Aron_V3
 			}
 
 			context.SetData("Comm.Protocol", protocolName);
+			context.SetData("Comm.InstanceName", commEvent.InstanceName);
+			context.SetData("Comm.Name", CommunicationRuntimeNaming.FormatCommunicationName(protocolName, commEvent.InstanceName));
 			context.SetData("Comm.RawText", commEvent.RawText);
+			context.SetData("Comm.RawBytes", commEvent.RawBytes);
+			context.SetData("Comm.RawHex", TcpIpPayloadCodec.ToHexString(commEvent.RawBytes));
 			context.SetData("Comm.ReceiveTime", commEvent.ReceiveTime);
 
 			if (parsedValues == null)
@@ -526,32 +1059,211 @@ namespace Aron_V3
 			}
 		}
 
+		private void PublishTaskDisplayInfo(
+			string jobName,
+			TaskConfig task,
+			string protocolName,
+			RuntimeCommunicationValueProvider valueProvider)
+		{
+			if (task == null || task.StepFlow == null)
+			{
+				return;
+			}
+
+			List<string> displaySlots = task.StepFlow
+				.Where(x => x != null &&
+					!string.IsNullOrWhiteSpace(x.DisplaySlotName) &&
+					!x.DisplaySlotName.Equals("Not Show", StringComparison.OrdinalIgnoreCase))
+				.Select(x => x.DisplaySlotName)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToList();
+
+			if (displaySlots.Count <= 0)
+			{
+				return;
+			}
+
+			CommunicationConfig communicationConfig = CommunicationConfigStore.LoadOrCreateDefault();
+			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, string.Empty);
+			string channelNameForDisplay = binding == null ? task.CommunicationChannel : binding.CommunicationChannel;
+			CommunicationChannelConfig channel = FindChannelConfig(
+				communicationConfig,
+				protocolName,
+				task == null ? string.Empty : task.CommunicationInstanceName,
+				channelNameForDisplay);
+
+			string programNo = ResolveCommunicationDisplayValue(
+				protocolName,
+				valueProvider,
+				channel == null ? string.Empty : channel.ProgramNoAddressName,
+				"JobID",
+				"JobID0",
+				"JobID_0",
+				"ProgramNo",
+				"ProgramID");
+
+			string positionNo = ResolveCommunicationDisplayValue(
+				protocolName,
+				valueProvider,
+				channel == null ? string.Empty : channel.PositionGlobalVariableName,
+				channel == null ? string.Empty : channel.PositionSourceName,
+				task.PositionName,
+				task.PositionOptionName,
+				"PosID",
+				"PosID0",
+				"PosID_0",
+				"PositionCode");
+
+			string channelName = channelNameForDisplay;
+			if (string.IsNullOrWhiteSpace(channelName) && channel != null)
+			{
+				channelName = channel.ChannelName;
+			}
+
+			foreach (string displaySlot in displaySlots)
+			{
+				DisplayRuntimeManager.UpdateInfo(
+					displaySlot,
+					jobName,
+					programNo,
+					positionNo,
+					channelName);
+			}
+		}
+
+		private string ResolveCommunicationDisplayValue(
+			string protocolName,
+			RuntimeCommunicationValueProvider valueProvider,
+			params string[] candidates)
+		{
+			if (candidates == null)
+			{
+				return string.Empty;
+			}
+
+			foreach (string candidate in candidates)
+			{
+				string value = ResolveOneCommunicationDisplayValue(protocolName, valueProvider, candidate);
+				if (!string.IsNullOrWhiteSpace(value))
+				{
+					return value;
+				}
+			}
+
+			return string.Empty;
+		}
+
+		private string ResolveOneCommunicationDisplayValue(
+			string protocolName,
+			RuntimeCommunicationValueProvider valueProvider,
+			string candidate)
+		{
+			if (string.IsNullOrWhiteSpace(candidate))
+			{
+				return string.Empty;
+			}
+
+			string value = GlobalVariableStore.GetValueText(candidate);
+			if (!string.IsNullOrWhiteSpace(value))
+			{
+				return value;
+			}
+
+			if (valueProvider != null)
+			{
+				value = valueProvider.GetInputValue(protocolName, candidate);
+				if (!string.IsNullOrWhiteSpace(value))
+				{
+					return value;
+				}
+			}
+
+			return string.Empty;
+		}
+
 		private void AcquireTaskImages(string jobName, TaskConfig taskConfig, VisionRunContext context)
 		{
 			List<string> imageSourceKeys = RuntimeImageSourceParser.SplitImageSources(taskConfig.ImageSourceKey);
 
 			if (imageSourceKeys.Count <= 0)
 			{
-				WriteLog("No image source configured. Task=" + taskConfig.TaskName);
+				WriteLog(RuntimeLogCategory.Step, "No image source configured. Task=" + taskConfig.TaskName);
 				return;
 			}
 
 			List<Task<RuntimeImageAcquireResult>> acquireTasks = new List<Task<RuntimeImageAcquireResult>>();
+			List<string> acquireSourceKeys = new List<string>();
 
 			foreach (string sourceKey in imageSourceKeys)
 			{
 				string localSourceKey = sourceKey;
+				string acquireKey = jobName + "/" + localSourceKey;
+
+				RuntimeImageAcquireResult precheck = _imageAcquireService.Precheck(jobName, localSourceKey);
+				if (precheck != null && !precheck.Success)
+				{
+					WriteLog(RuntimeLogCategory.Step, "Image acquire skipped. Source=" + localSourceKey + ", Reason=" + precheck.Message, true);
+					throw new Exception("Image acquire skipped. Source=" + localSourceKey + ", Error=" + precheck.Message);
+				}
+
+				if (!EnterImageAcquire(acquireKey))
+				{
+					string busyMessage = "Previous image acquire is still running. Source=" + localSourceKey;
+					WriteLog(RuntimeLogCategory.Step, busyMessage, true);
+					throw new TimeoutException(busyMessage);
+				}
+
+				WriteLog(RuntimeLogCategory.Step, "Image acquire started. Source=" + localSourceKey);
 
 				Task<RuntimeImageAcquireResult> task = Task<RuntimeImageAcquireResult>.Factory.StartNew(
 					delegate
 					{
-						return _imageAcquireService.Acquire(jobName, localSourceKey);
-					});
+						try
+						{
+							return _imageAcquireService.Acquire(jobName, localSourceKey);
+						}
+						finally
+						{
+							LeaveImageAcquire(acquireKey);
+						}
+					},
+					System.Threading.CancellationToken.None,
+					TaskCreationOptions.LongRunning,
+					TaskScheduler.Default);
 
 				acquireTasks.Add(task);
+				acquireSourceKeys.Add(localSourceKey);
 			}
 
-			Task.WaitAll(acquireTasks.ToArray());
+			bool allCompleted;
+			try
+			{
+				allCompleted = Task.WaitAll(acquireTasks.ToArray(), ImageAcquireTimeoutMs);
+			}
+			catch (AggregateException ex)
+			{
+				Exception inner = ex.Flatten().InnerExceptions.FirstOrDefault();
+				string message = inner == null ? ex.Message : inner.Message;
+				WriteLog(RuntimeLogCategory.Step, "Image acquire failed: " + message, true);
+				throw new Exception("Image acquire failed: " + message);
+			}
+
+			if (!allCompleted)
+			{
+				List<string> timeoutSources = new List<string>();
+
+				for (int i = 0; i < acquireTasks.Count; i++)
+				{
+					if (!acquireTasks[i].IsCompleted)
+					{
+						timeoutSources.Add(acquireSourceKeys[i]);
+					}
+				}
+
+				string timeoutMessage = "Image acquire timeout after " + ImageAcquireTimeoutMs + " ms. Source=" + string.Join(";", timeoutSources.ToArray());
+				WriteLog(RuntimeLogCategory.Step, timeoutMessage, true);
+				throw new TimeoutException(timeoutMessage);
+			}
 
 			foreach (Task<RuntimeImageAcquireResult> acquireTask in acquireTasks)
 			{
@@ -580,40 +1292,59 @@ namespace Aron_V3
 					}
 				}
 
-				WriteLog("Image acquired. Source=" + result.SourceKey);
+				WriteLog(RuntimeLogCategory.Step, "Image acquired. Source=" + result.SourceKey);
 			}
 		}
 
 		private string GetProtocolName(CommunicationType type)
 		{
-			if (type == CommunicationType.TcpIp)
-			{
-				return "TCP/IP";
-			}
-
-			if (type == CommunicationType.Profinet)
-			{
-				return "Profinet";
-			}
-
-			if (type == CommunicationType.S7)
-			{
-				return "S7";
-			}
-
-			return type.ToString();
+			return CommunicationRuntimeNaming.GetProtocolName(type);
 		}
 
 		private void WriteLog(string message)
 		{
-			RuntimeFlowLogEventArgs args = new RuntimeFlowLogEventArgs(message);
-			RuntimeLogStore.Append(args.Time, args.Category, args.Message);
+			WriteLog(RuntimeLogStore.Classify(message), message);
+		}
+
+		private void WriteLog(RuntimeLogCategory category, string message)
+		{
+			WriteLog(category, message, RuntimeLogStore.IsErrorMessage(message));
+		}
+
+		private void WriteLog(RuntimeLogCategory category, string message, bool isError)
+		{
+			RuntimeFlowLogEventArgs args = new RuntimeFlowLogEventArgs(DateTime.Now, category, message, isError);
+			RuntimeLogStore.Append(args.Time, args.Category, args.Message, args.IsError);
 			EventHandler<RuntimeFlowLogEventArgs> handler = LogGenerated;
 
 			if (handler != null)
 			{
 				handler(this, args);
 			}
+		}
+
+		private string FormatCommunicationLogValues(Dictionary<string, string> values)
+		{
+			if (values == null || values.Count <= 0)
+			{
+				return "{}";
+			}
+
+			Dictionary<string, string> filtered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (KeyValuePair<string, string> pair in values)
+			{
+				if (string.Equals(pair.Key, "Raw", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(pair.Key, "RawText", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(pair.Key, "RawHex", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				filtered[pair.Key] = pair.Value;
+			}
+
+			return RuntimeCommunicationInputParser.FormatValues(filtered);
 		}
 
 		private void OnTaskFinished(RuntimeTaskFinishedEventArgs e)
@@ -649,12 +1380,27 @@ namespace Aron_V3
 		public string Message { get; private set; }
 		public DateTime Time { get; private set; }
 		public RuntimeLogCategory Category { get; private set; }
+		public bool IsError { get; private set; }
 
 		public RuntimeFlowLogEventArgs(string message)
 		{
 			Message = message ?? string.Empty;
 			Time = DateTime.Now;
 			Category = RuntimeLogStore.Classify(Message);
+			IsError = RuntimeLogStore.IsErrorMessage(Message);
+		}
+
+		public RuntimeFlowLogEventArgs(DateTime time, RuntimeLogCategory category, string message)
+			: this(time, category, message, RuntimeLogStore.IsErrorMessage(message))
+		{
+		}
+
+		public RuntimeFlowLogEventArgs(DateTime time, RuntimeLogCategory category, string message, bool isError)
+		{
+			Time = time;
+			Category = category;
+			Message = message ?? string.Empty;
+			IsError = isError;
 		}
 	}
 
@@ -712,6 +1458,7 @@ namespace Aron_V3
 			}
 
 			string rawText = e.RawText == null ? string.Empty : e.RawText;
+			string rawHex = TcpIpPayloadCodec.ToHexString(e.RawBytes);
 
 			if (!result.ContainsKey("Raw"))
 			{
@@ -723,8 +1470,14 @@ namespace Aron_V3
 				result.Add("RawText", rawText);
 			}
 
+			if (!result.ContainsKey("RawHex"))
+			{
+				result.Add("RawHex", rawHex);
+			}
+
 			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
-			List<CommInputVariable> variables = GetInputVariables(protocolName, config);
+			string instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, e.InstanceName, config);
+			List<CommInputVariable> variables = GetInputVariables(protocolName, instanceName, config);
 
 			foreach (CommInputVariable item in variables)
 			{
@@ -733,7 +1486,7 @@ namespace Aron_V3
 					continue;
 				}
 
-				string parsedValue = ParseInputVariable(rawText, item);
+				string parsedValue = ParseInputVariable(protocolName, instanceName, e, item, config);
 
 				if (!result.ContainsKey(item.Name))
 				{
@@ -755,6 +1508,7 @@ namespace Aron_V3
 
 		private static List<CommInputVariable> GetInputVariables(
 			string protocolName,
+			string instanceName,
 			CommunicationConfig config)
 		{
 			if (config == null)
@@ -762,9 +1516,17 @@ namespace Aron_V3
 				return new List<CommInputVariable>();
 			}
 
+			CommunicationInstanceConfig instance =
+				CommunicationRuntimeNaming.FindInstance(config, protocolName, instanceName);
+
 			if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
 				protocolName.Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
 			{
+				if (instance != null && instance.TcpIp != null && instance.TcpIp.InputVariables != null)
+				{
+					return instance.TcpIp.InputVariables;
+				}
+
 				return config.TcpIp == null || config.TcpIp.InputVariables == null
 					? new List<CommInputVariable>()
 					: config.TcpIp.InputVariables;
@@ -779,6 +1541,11 @@ namespace Aron_V3
 
 			if (protocolName.Equals("S7", StringComparison.OrdinalIgnoreCase))
 			{
+				if (instance != null && instance.S7 != null && instance.S7.InputVariables != null)
+				{
+					return instance.S7.InputVariables;
+				}
+
 				return config.S7 == null || config.S7.InputVariables == null
 					? new List<CommInputVariable>()
 					: config.S7.InputVariables;
@@ -787,25 +1554,38 @@ namespace Aron_V3
 			return new List<CommInputVariable>();
 		}
 
-		private static string ParseInputVariable(string rawText, CommInputVariable item)
+		private static string ParseInputVariable(
+			string protocolName,
+			string instanceName,
+			CommunicationDataReceivedEventArgs e,
+			CommInputVariable item,
+			CommunicationConfig config)
 		{
+			CommunicationInstanceConfig instance =
+				CommunicationRuntimeNaming.FindInstance(config, protocolName, instanceName);
+			TcpIpConfig tcpConfig = instance != null && instance.TcpIp != null
+				? instance.TcpIp
+				: config == null ? null : config.TcpIp;
+
+			if (protocolName != null &&
+				(protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				 protocolName.Equals("TcpIp", StringComparison.OrdinalIgnoreCase)) &&
+				TcpIpPayloadCodec.IsByteMode(tcpConfig))
+			{
+				return TcpIpPayloadCodec.ParseInputVariableFromBytes(
+					e == null ? null : e.RawBytes,
+					item,
+					tcpConfig.ByteOrder);
+			}
+
+			string rawText = e == null || e.RawText == null ? string.Empty : e.RawText;
+
 			if (rawText == null)
 			{
 				rawText = string.Empty;
 			}
 
-			int offset = item.ByteOffset < 0 ? 0 : item.ByteOffset;
-			int length = item.Length <= 0 ? 1 : item.Length;
-
-			if (offset >= rawText.Length)
-			{
-				return string.Empty;
-			}
-
-			int realLength = Math.Min(length, rawText.Length - offset);
-			string value = rawText.Substring(offset, realLength);
-
-			return value.Trim();
+			return TcpIpPayloadCodec.ParseInputVariableFromString(rawText, item);
 		}
 
 		public static string FormatValues(Dictionary<string, string> values)
@@ -936,6 +1716,54 @@ namespace Aron_V3
 
 	public class RuntimeImageAcquireService
 	{
+		private const int MaxVisionProAcquireTimeoutMs = 10000;
+
+		public RuntimeImageAcquireResult Precheck(string jobName, string sourceKey)
+		{
+			RuntimeImageAcquireResult result = new RuntimeImageAcquireResult();
+			result.SourceKey = sourceKey;
+			result.Success = true;
+
+			string filePath = ResolveImageSourceFile(jobName, sourceKey);
+			if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+			{
+				result.Success = false;
+				result.Message = "Image source file was not found.";
+				return result;
+			}
+
+			string ext = Path.GetExtension(filePath);
+			if (!ext.Equals(".vpp", StringComparison.OrdinalIgnoreCase) &&
+				!ext.Equals(".xml", StringComparison.OrdinalIgnoreCase))
+			{
+				return result;
+			}
+
+			string cameraName = ResolveCameraName(sourceKey, filePath);
+			CameraDeviceConfig camera = FindCameraConfig(jobName, cameraName);
+
+			if (camera == null)
+			{
+				return result;
+			}
+
+			if (!camera.Enable)
+			{
+				result.Success = false;
+				result.Message = "Camera is disabled. Camera=" + camera.CameraName;
+				return result;
+			}
+
+			if (!string.Equals(camera.Status, "Connected", StringComparison.OrdinalIgnoreCase))
+			{
+				result.Success = false;
+				result.Message = "Camera is not connected. Camera=" + camera.CameraName;
+				return result;
+			}
+
+			return result;
+		}
+
 		public RuntimeImageAcquireResult Acquire(string jobName, string sourceKey)
 		{
 			RuntimeImageAcquireResult result = new RuntimeImageAcquireResult();
@@ -989,6 +1817,41 @@ namespace Aron_V3
 		}
 
 		private RuntimeVisionImage AcquireByVisionPro(string vppPath, string sourceKey)
+		{
+			RuntimeVisionImage image = null;
+			Exception runException = null;
+			int timeoutMs = ResolveVisionProAcquireTimeout(vppPath, sourceKey);
+
+			Thread thread = new Thread(new ThreadStart(delegate
+			{
+				try
+				{
+					image = AcquireByVisionProCore(vppPath, sourceKey);
+				}
+				catch (Exception ex)
+				{
+					runException = ex;
+				}
+			}));
+			thread.IsBackground = true;
+			thread.Name = "VisionProAcquire-" + (sourceKey ?? string.Empty);
+			thread.SetApartmentState(ApartmentState.STA);
+			thread.Start();
+
+			if (!thread.Join(timeoutMs))
+			{
+				throw new TimeoutException("VisionPro acquire timeout after " + timeoutMs.ToString() + " ms. Source=" + sourceKey);
+			}
+
+			if (runException != null)
+			{
+				throw runException;
+			}
+
+			return image;
+		}
+
+		private RuntimeVisionImage AcquireByVisionProCore(string vppPath, string sourceKey)
 		{
 			object tool = VisionProReflectionHelper.LoadObjectFromFile(vppPath);
 
@@ -1170,6 +2033,130 @@ namespace Aron_V3
 			return string.Empty;
 		}
 
+		private string ResolveCameraName(string sourceKey, string filePath)
+		{
+			if (!string.IsNullOrWhiteSpace(sourceKey))
+			{
+				int dotIndex = sourceKey.IndexOf('.');
+				if (dotIndex > 0)
+				{
+					return sourceKey.Substring(0, dotIndex);
+				}
+			}
+
+			if (!string.IsNullOrWhiteSpace(filePath))
+			{
+				DirectoryInfo directory = Directory.GetParent(filePath);
+				if (directory != null && !string.IsNullOrWhiteSpace(directory.Name))
+				{
+					return directory.Name;
+				}
+			}
+
+			return string.Empty;
+		}
+
+		private CameraDeviceConfig FindCameraConfig(string jobName, string cameraName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName) || string.IsNullOrWhiteSpace(cameraName))
+			{
+				return null;
+			}
+
+			try
+			{
+				string configPath = Path.Combine(
+					ProjectPathStore.ProjectRoot,
+					"Job",
+					ProjectPathStore.MakeSafeName(jobName),
+					"Hardware",
+					"HardwareConfig.xml");
+
+				if (!File.Exists(configPath))
+				{
+					return null;
+				}
+
+				XmlSerializer serializer = new XmlSerializer(typeof(HardwareProjectConfig));
+				using (FileStream fs = new FileStream(configPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+				{
+					HardwareProjectConfig config = serializer.Deserialize(fs) as HardwareProjectConfig;
+					if (config == null || config.Cameras == null)
+					{
+						return null;
+					}
+
+					return config.Cameras.FirstOrDefault(x =>
+						x != null &&
+						string.Equals(x.CameraName, cameraName, StringComparison.OrdinalIgnoreCase));
+				}
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private int ResolveVisionProAcquireTimeout(string vppPath, string sourceKey)
+		{
+			int timeoutMs = 3000;
+
+			try
+			{
+				string jobName = ResolveJobNameFromVppPath(vppPath);
+				string cameraName = ResolveCameraName(sourceKey, vppPath);
+				CameraDeviceConfig camera = FindCameraConfig(jobName, cameraName);
+
+				if (camera != null && camera.VisionPro != null && camera.VisionPro.TimeoutMs > 0)
+				{
+					timeoutMs = camera.VisionPro.TimeoutMs;
+				}
+			}
+			catch
+			{
+			}
+
+			if (timeoutMs < 500)
+			{
+				timeoutMs = 500;
+			}
+
+			if (timeoutMs > MaxVisionProAcquireTimeoutMs)
+			{
+				timeoutMs = MaxVisionProAcquireTimeoutMs;
+			}
+
+			return timeoutMs;
+		}
+
+		private string ResolveJobNameFromVppPath(string vppPath)
+		{
+			if (string.IsNullOrWhiteSpace(vppPath))
+			{
+				return string.Empty;
+			}
+
+			try
+			{
+				string jobRoot = Path.Combine(ProjectPathStore.ProjectRoot, "Job");
+				string fullPath = Path.GetFullPath(vppPath);
+				string fullJobRoot = Path.GetFullPath(jobRoot);
+
+				if (!fullPath.StartsWith(fullJobRoot, StringComparison.OrdinalIgnoreCase))
+				{
+					return string.Empty;
+				}
+
+				string relative = fullPath.Substring(fullJobRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				int separator = relative.IndexOfAny(new char[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar });
+				return separator > 0 ? relative.Substring(0, separator) : string.Empty;
+			}
+			catch
+			{
+				return string.Empty;
+			}
+		}
+
 		private void InvokeIfExists(object obj, string methodName)
 		{
 			if (obj == null || string.IsNullOrWhiteSpace(methodName))
@@ -1212,6 +2199,36 @@ namespace Aron_V3
 
 	public class RuntimeCommunicationOutputService
 	{
+		private static readonly object OutputCacheSyncRoot = new object();
+		private static readonly object OutboundSendSyncRoot = new object();
+		private static readonly Dictionary<string, Dictionary<string, object>> LatestOutputValuesByProtocol =
+			new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+
+		public static event EventHandler<RuntimeCommunicationOutputValuesChangedEventArgs> OutputValuesChanged;
+
+		public static bool TryGetLatestOutputValue(string protocolName, string outputName, out object value)
+		{
+			value = null;
+
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return false;
+			}
+
+			string key = NormalizeProtocolKey(protocolName);
+
+			lock (OutputCacheSyncRoot)
+			{
+				Dictionary<string, object> latest;
+				if (!LatestOutputValuesByProtocol.TryGetValue(key, out latest) || latest == null)
+				{
+					return false;
+				}
+
+				return latest.TryGetValue(outputName.Trim(), out value);
+			}
+		}
+
 		public void SendTaskOutput(
 			string protocolName,
 			TaskConfig task,
@@ -1219,13 +2236,146 @@ namespace Aron_V3
 			StepResult finalResult)
 		{
 			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			string instanceName = ResolveOutputInstanceName(protocolName, task, config);
+			string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
 
-			Dictionary<string, object> values = BuildOutputValues(protocolName, task, context, finalResult, config);
-			SendByProtocol(protocolName, values, config);
+			Dictionary<string, object> values = BuildOutputValues(protocolName, instanceName, task, context, finalResult, config);
+			lock (OutboundSendSyncRoot)
+			{
+				bool sent = SendByProtocol(protocolName, instanceName, values, config);
+				if (sent)
+				{
+					RememberOutputValues(protocolName, values);
+				}
+
+				RuntimeLogStore.Append(
+					DateTime.Now,
+					RuntimeLogCategory.Communication,
+					"Task communication output " + (sent ? "sent" : "failed") +
+					". Communication=" + communicationName +
+					", Values=" + FormatValueMap(values),
+					!sent);
+			}
+		}
+
+		public bool SendPartialTaskOutput(
+			string protocolName,
+			TaskConfig task,
+			VisionRunContext context,
+			StepResult stepResult)
+		{
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			string instanceName = ResolveOutputInstanceName(protocolName, task, config);
+			return SendPartialTaskOutput(protocolName, instanceName, task, context, stepResult);
+		}
+
+		public bool SendPartialTaskOutput(
+			string protocolName,
+			string instanceName,
+			TaskConfig task,
+			VisionRunContext context,
+			StepResult stepResult)
+		{
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, config);
+			string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
+			Dictionary<string, object> changedValues = BuildChangedOutputValues(protocolName, instanceName, context, stepResult, config);
+
+			if (changedValues.Count <= 0)
+			{
+				RuntimeLogStore.Append(
+					DateTime.Now,
+					RuntimeLogCategory.Communication,
+					"Step communication output skipped. Communication=" + communicationName + ", Reason=No matched output values.");
+				return true;
+			}
+
+			bool sent;
+			lock (OutboundSendSyncRoot)
+			{
+				Dictionary<string, object> mergedValues = BuildMergedOutputValues(protocolName, changedValues);
+				sent = SendByProtocol(protocolName, instanceName, mergedValues, config);
+				if (sent)
+				{
+					RememberOutputValues(protocolName, mergedValues);
+				}
+			}
+
+			RuntimeLogStore.Append(
+				DateTime.Now,
+				RuntimeLogCategory.Communication,
+				"Step communication output " + (sent ? "sent" : "failed") +
+				". Communication=" + communicationName +
+				", Values=" + FormatValueMap(changedValues),
+				!sent);
+			return sent;
+		}
+
+		public bool SendHeartbeatOutput(string protocolName, string outputName, string heartbeatText)
+		{
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return false;
+			}
+
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			string instanceName = CommunicationRuntimeNaming.GetDefaultInstanceName(protocolName, config);
+			Dictionary<string, object> changedValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+			changedValues[outputName.Trim()] = heartbeatText ?? string.Empty;
+
+			lock (OutboundSendSyncRoot)
+			{
+				Dictionary<string, object> mergedValues = BuildMergedOutputValues(protocolName, changedValues);
+				bool sent = SendByProtocol(protocolName, instanceName, mergedValues, config);
+				if (sent)
+				{
+					RememberOutputValues(protocolName, mergedValues);
+				}
+
+				return sent;
+			}
+		}
+
+		public bool SendConfiguredSignalOutput(
+			string protocolName,
+			string instanceName,
+			Dictionary<string, object> changedValues)
+		{
+			if (changedValues == null || changedValues.Count <= 0)
+			{
+				return true;
+			}
+
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			protocolName = CommunicationRuntimeNaming.NormalizeProtocolName(protocolName);
+			instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, config);
+			string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
+
+			bool sent;
+			lock (OutboundSendSyncRoot)
+			{
+				Dictionary<string, object> mergedValues = BuildMergedOutputValues(protocolName, changedValues);
+				sent = SendByProtocol(protocolName, instanceName, mergedValues, config);
+				if (sent)
+				{
+					RememberOutputValues(protocolName, mergedValues);
+				}
+			}
+
+			RuntimeLogStore.Append(
+				DateTime.Now,
+				RuntimeLogCategory.Communication,
+				"Signal flow output " + (sent ? "sent" : "failed") +
+				". Communication=" + communicationName +
+				", Values=" + FormatValueMap(changedValues),
+				!sent);
+
+			return sent;
 		}
 
 		private Dictionary<string, object> BuildOutputValues(
 			string protocolName,
+			string instanceName,
 			TaskConfig task,
 			VisionRunContext context,
 			StepResult finalResult,
@@ -1259,20 +2409,12 @@ namespace Aron_V3
 			}
 
 			// 根据通讯输出变量名再做一次短名映射。
-			List<CommOutputVariable> outputVariables = GetOutputVariables(protocolName, config);
+			List<CommOutputVariable> outputVariables = GetOutputVariables(protocolName, instanceName, config);
 
 			foreach (CommOutputVariable variable in outputVariables)
 			{
 				if (variable == null || string.IsNullOrWhiteSpace(variable.Name))
 				{
-					continue;
-				}
-
-				object globalValue;
-				if (!string.IsNullOrWhiteSpace(variable.GlobalVariableName) &&
-					GlobalVariableStore.TryGetValue(variable.GlobalVariableName, out globalValue))
-				{
-					result[variable.Name] = globalValue;
 					continue;
 				}
 
@@ -1285,6 +2427,14 @@ namespace Aron_V3
 				if (TryFindValueByOutputName(result, variable.Name, out value))
 				{
 					result[variable.Name] = value;
+					continue;
+				}
+
+				object globalValue;
+				if (!string.IsNullOrWhiteSpace(variable.GlobalVariableName) &&
+					GlobalVariableStore.TryGetValue(variable.GlobalVariableName, out globalValue))
+				{
+					result[variable.Name] = globalValue;
 				}
 				else
 				{
@@ -1293,6 +2443,156 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private Dictionary<string, object> BuildChangedOutputValues(
+			string protocolName,
+			string instanceName,
+			VisionRunContext context,
+			StepResult stepResult,
+			CommunicationConfig config)
+		{
+			Dictionary<string, object> sourceValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+			if (stepResult != null && stepResult.Outputs != null)
+			{
+				foreach (KeyValuePair<string, object> pair in stepResult.Outputs)
+				{
+					sourceValues[pair.Key] = pair.Value;
+				}
+			}
+
+			Dictionary<string, object> result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+			List<CommOutputVariable> outputVariables = GetOutputVariables(protocolName, instanceName, config);
+
+			foreach (CommOutputVariable variable in outputVariables)
+			{
+				if (variable == null || string.IsNullOrWhiteSpace(variable.Name))
+				{
+					continue;
+				}
+
+				object value;
+				if (TryFindValueByOutputName(sourceValues, variable.Name, out value))
+				{
+					result[variable.Name] = value;
+					continue;
+				}
+
+				if (!string.IsNullOrWhiteSpace(variable.GlobalVariableName) &&
+					TryFindValueByOutputName(sourceValues, variable.GlobalVariableName, out value))
+				{
+					result[variable.Name] = value;
+				}
+			}
+
+			return result;
+		}
+
+		private void RememberOutputValues(string protocolName, Dictionary<string, object> values)
+		{
+			if (values == null)
+			{
+				return;
+			}
+
+			Dictionary<string, object> latest = MergeOutputValues(protocolName, values);
+			RaiseOutputValuesChanged(protocolName, latest);
+		}
+
+		private Dictionary<string, object> BuildMergedOutputValues(string protocolName, Dictionary<string, object> changedValues)
+		{
+			string key = NormalizeProtocolKey(protocolName);
+
+			lock (OutputCacheSyncRoot)
+			{
+				Dictionary<string, object> merged;
+				Dictionary<string, object> latest;
+				if (LatestOutputValuesByProtocol.TryGetValue(key, out latest) && latest != null)
+				{
+					merged = new Dictionary<string, object>(latest, StringComparer.OrdinalIgnoreCase);
+				}
+				else
+				{
+					merged = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+				}
+
+				if (changedValues != null)
+				{
+					foreach (KeyValuePair<string, object> pair in changedValues)
+					{
+						merged[pair.Key] = pair.Value;
+					}
+				}
+
+				return merged;
+			}
+		}
+
+		private Dictionary<string, object> MergeOutputValues(string protocolName, Dictionary<string, object> changedValues)
+		{
+			string key = NormalizeProtocolKey(protocolName);
+
+			lock (OutputCacheSyncRoot)
+			{
+				Dictionary<string, object> latest;
+				if (!LatestOutputValuesByProtocol.TryGetValue(key, out latest))
+				{
+					latest = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+					LatestOutputValuesByProtocol[key] = latest;
+				}
+
+				if (changedValues != null)
+				{
+					foreach (KeyValuePair<string, object> pair in changedValues)
+					{
+						latest[pair.Key] = pair.Value;
+					}
+				}
+
+				return new Dictionary<string, object>(latest, StringComparer.OrdinalIgnoreCase);
+			}
+		}
+
+		private static string NormalizeProtocolKey(string protocolName)
+		{
+			if (string.IsNullOrWhiteSpace(protocolName))
+			{
+				return "Default";
+			}
+
+			string text = protocolName.Trim();
+			if (text.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("TcpIp", StringComparison.OrdinalIgnoreCase) ||
+				text.Replace("/", string.Empty).Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
+			{
+				return "TCP/IP";
+			}
+
+			if (text.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return "Profinet";
+			}
+
+			if (text.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				return "S7";
+			}
+
+			return text;
+		}
+
+		private static void RaiseOutputValuesChanged(string protocolName, Dictionary<string, object> latestValues)
+		{
+			EventHandler<RuntimeCommunicationOutputValuesChangedEventArgs> handler = OutputValuesChanged;
+			if (handler == null)
+			{
+				return;
+			}
+
+			handler(null, new RuntimeCommunicationOutputValuesChangedEventArgs(
+				NormalizeProtocolKey(protocolName),
+				latestValues));
 		}
 
 		private bool TryFindValueByOutputName(
@@ -1330,7 +2630,10 @@ namespace Aron_V3
 			return false;
 		}
 
-		private List<CommOutputVariable> GetOutputVariables(string protocolName, CommunicationConfig config)
+		private List<CommOutputVariable> GetOutputVariables(
+			string protocolName,
+			string instanceName,
+			CommunicationConfig config)
 		{
 			List<CommOutputVariable> result = new List<CommOutputVariable>();
 
@@ -1341,10 +2644,14 @@ namespace Aron_V3
 
 			// 优先从当前协议对象里读取 OutputVariables，例如 config.TcpIp.OutputVariables。
 			object protocolObj = null;
+			CommunicationInstanceConfig instance =
+				CommunicationRuntimeNaming.FindInstance(config, protocolName, instanceName);
 
 			if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
 			{
-				protocolObj = config.TcpIp;
+				protocolObj = instance != null && instance.TcpIp != null
+					? (object)instance.TcpIp
+					: config.TcpIp;
 			}
 			else if (protocolName.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
 			{
@@ -1352,7 +2659,9 @@ namespace Aron_V3
 			}
 			else if (protocolName.Equals("S7", StringComparison.OrdinalIgnoreCase))
 			{
-				protocolObj = config.S7;
+				protocolObj = instance != null && instance.S7 != null
+					? (object)instance.S7
+					: config.S7;
 			}
 
 			List<CommOutputVariable> protocolOutputs = GetOutputVariablesFromObject(protocolObj);
@@ -1400,28 +2709,62 @@ namespace Aron_V3
 			return result;
 		}
 
-		private void SendByProtocol(
+		private string ResolveOutputInstanceName(
 			string protocolName,
+			TaskConfig task,
+			CommunicationConfig config)
+		{
+			string instanceName = task == null ? string.Empty : task.CommunicationInstanceName;
+			return CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, config);
+		}
+
+		private TcpIpConfig GetTcpConfig(CommunicationConfig config, string instanceName)
+		{
+			CommunicationInstanceConfig instance =
+				CommunicationRuntimeNaming.FindInstance(config, "TCP/IP", instanceName);
+
+			if (instance != null && instance.TcpIp != null)
+			{
+				return instance.TcpIp;
+			}
+
+			return config == null ? null : config.TcpIp;
+		}
+
+		private bool SendByProtocol(
+			string protocolName,
+			string instanceName,
 			Dictionary<string, object> values,
 			CommunicationConfig config)
 		{
 			if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
 			{
-				TcpIpCommunicationService tcp = CommunicationRuntimeManager.Instance.TcpIp;
+				TcpIpCommunicationService tcp = null;
+				ICommunicationRuntime runtime = CommunicationRuntimeManager.Instance.GetRuntime(instanceName);
+
+				if (runtime != null)
+				{
+					tcp = runtime as TcpIpCommunicationService;
+				}
+
+				if (tcp == null)
+				{
+					tcp = CommunicationRuntimeManager.Instance.TcpIp;
+				}
 
 				if (tcp != null)
 				{
-					tcp.SendOutputValues(values);
+					return tcp.SendOutputValues(values, GetTcpConfig(config, instanceName));
 				}
 
-				return;
+				return false;
 			}
 
 			// Profinet / S7 下一阶段接入：
 			// 这里保留统一出口，后续把 values 根据 CommOutputVariable 的 ByteOffset/Length 打包后写入对应通讯类。
 			string text = BuildSimpleText(values);
 			CommunicationType type = ParseCommunicationType(protocolName);
-			CommunicationRuntimeManager.Instance.SendString(type, text);
+			return CommunicationRuntimeManager.Instance.SendString(type, text);
 		}
 
 		private CommunicationType ParseCommunicationType(string protocolName)
@@ -1459,6 +2802,39 @@ namespace Aron_V3
 			}
 
 			return string.Join(";", parts.ToArray());
+		}
+
+		private string FormatValueMap(Dictionary<string, object> values)
+		{
+			if (values == null || values.Count <= 0)
+			{
+				return "{}";
+			}
+
+			List<string> parts = new List<string>();
+
+			foreach (KeyValuePair<string, object> pair in values)
+			{
+				parts.Add(pair.Key + "=" + Convert.ToString(pair.Value));
+			}
+
+			return "{" + string.Join(", ", parts.ToArray()) + "}";
+		}
+	}
+
+	public class RuntimeCommunicationOutputValuesChangedEventArgs : EventArgs
+	{
+		public string ProtocolName { get; private set; }
+		public Dictionary<string, object> Values { get; private set; }
+		public DateTime Time { get; private set; }
+
+		public RuntimeCommunicationOutputValuesChangedEventArgs(string protocolName, Dictionary<string, object> values)
+		{
+			ProtocolName = protocolName ?? string.Empty;
+			Values = values == null
+				? new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+				: new Dictionary<string, object>(values, StringComparer.OrdinalIgnoreCase);
+			Time = DateTime.Now;
 		}
 	}
 }

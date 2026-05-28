@@ -35,6 +35,7 @@ namespace Aron_V3
 		{
 			Stopwatch sw = Stopwatch.StartNew();
 			StepResult stepResult = new StepResult();
+			CSharpScriptStepConfig scriptConfig = null;
 
 			try
 			{
@@ -54,8 +55,6 @@ namespace Aron_V3
 				string configPath = ResolveScriptConfigPath(_config, context);
 				string scriptPath = ResolveScriptFilePath(_config, context);
 
-				CSharpScriptStepConfig scriptConfig = null;
-
 				if (!string.IsNullOrWhiteSpace(configPath) && File.Exists(configPath))
 				{
 					scriptConfig = CSharpScriptStepStore.Load(configPath);
@@ -70,6 +69,8 @@ namespace Aron_V3
 				{
 					return BuildNg("Script config load failed: " + configPath, sw);
 				}
+
+				CSharpScriptStepStore.EnsureRequiredInputs(scriptConfig);
 
 				if (!scriptConfig.Enable)
 				{
@@ -95,15 +96,20 @@ namespace Aron_V3
 
 				CSharpScriptStepRunner runner = new CSharpScriptStepRunner();
 				CSharpScriptRunResult runResult = runner.CompileAndRun(scriptConfig, code, runtimeInputs);
+				CopyRuntimeInputsToStepResult(runtimeInputs, stepResult);
 
 				if (!runResult.IsCompileOK)
 				{
-					return BuildNg("Script compile failed: " + runResult.ErrorDetail, sw);
+					stepResult = BuildNg("Script compile failed: " + runResult.ErrorDetail, sw);
+					FillDefaultScriptOutputs(scriptConfig, stepResult);
+					return stepResult;
 				}
 
 				if (!runResult.IsRunOK)
 				{
-					return BuildNg("Script run failed: " + runResult.ErrorDetail, sw);
+					stepResult = BuildNg("Script run failed: " + runResult.ErrorDetail, sw);
+					FillDefaultScriptOutputs(scriptConfig, stepResult);
+					return stepResult;
 				}
 
 				foreach (KeyValuePair<string, object> pair in runResult.Outputs)
@@ -121,6 +127,13 @@ namespace Aron_V3
 					if (boundOutputPin != null && !string.IsNullOrWhiteSpace(boundOutputPin.GlobalVariableName))
 					{
 						GlobalVariableStore.SetValue(boundOutputPin.GlobalVariableName, pair.Value);
+
+						if (context != null)
+						{
+							context.SetData(boundOutputPin.GlobalVariableName, pair.Value);
+						}
+
+						stepResult.Outputs[boundOutputPin.GlobalVariableName] = pair.Value;
 					}
 
 					stepResult.Outputs[pair.Key] = pair.Value;
@@ -134,6 +147,7 @@ namespace Aron_V3
 			{
 				stepResult.IsOK = false;
 				stepResult.Message = ex.ToString();
+				FillDefaultScriptOutputs(scriptConfig, stepResult);
 			}
 			finally
 			{
@@ -158,9 +172,47 @@ namespace Aron_V3
 			return result;
 		}
 
+		private void CopyRuntimeInputsToStepResult(Dictionary<string, object> runtimeInputs, StepResult stepResult)
+		{
+			if (runtimeInputs == null || stepResult == null || stepResult.Inputs == null)
+			{
+				return;
+			}
+
+			foreach (KeyValuePair<string, object> pair in runtimeInputs)
+			{
+				if (string.IsNullOrWhiteSpace(pair.Key))
+				{
+					continue;
+				}
+
+				stepResult.Inputs[pair.Key] = pair.Value;
+			}
+		}
+
 		private Dictionary<string, object> BuildRuntimeInputs(CSharpScriptStepConfig config, VisionRunContext context)
 		{
 			Dictionary<string, object> result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+			bool previousStepsOK = true;
+
+			if (context != null)
+			{
+				object value = context.GetData(CSharpScriptStepStore.PreviousStepsOkInputName);
+				if (value is bool)
+				{
+					previousStepsOK = (bool)value;
+				}
+				else if (value != null)
+				{
+					bool parsed;
+					if (bool.TryParse(Convert.ToString(value), out parsed))
+					{
+						previousStepsOK = parsed;
+					}
+				}
+			}
+
+			result[CSharpScriptStepStore.PreviousStepsOkInputName] = previousStepsOK;
 
 			if (config == null || config.Inputs == null)
 			{
@@ -176,7 +228,11 @@ namespace Aron_V3
 
 				object value = null;
 
-				if (!string.IsNullOrWhiteSpace(input.GlobalVariableName))
+				if (string.Equals(input.Name, CSharpScriptStepStore.PreviousStepsOkInputName, StringComparison.OrdinalIgnoreCase))
+				{
+					value = previousStepsOK;
+				}
+				else if (!string.IsNullOrWhiteSpace(input.GlobalVariableName))
 				{
 					GlobalVariableStore.TryGetValue(input.GlobalVariableName, out value);
 				}
@@ -198,6 +254,47 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private void FillDefaultScriptOutputs(CSharpScriptStepConfig config, StepResult result)
+		{
+			if (config == null || config.Outputs == null || result == null)
+			{
+				return;
+			}
+
+			foreach (ScriptPinConfig pin in config.Outputs)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.Name))
+				{
+					continue;
+				}
+
+				if (!result.Outputs.ContainsKey(pin.Name))
+				{
+					result.Outputs[pin.Name] = 0;
+				}
+
+				if (!string.IsNullOrWhiteSpace(_config.StepName))
+				{
+					string stepKey = _config.StepName + "." + pin.Name;
+					if (!result.Outputs.ContainsKey(stepKey))
+					{
+						result.Outputs[stepKey] = 0;
+					}
+				}
+
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName) &&
+					!result.Outputs.ContainsKey(pin.GlobalVariableName))
+				{
+					result.Outputs[pin.GlobalVariableName] = 0;
+				}
+
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+				{
+					GlobalVariableStore.SetValue(pin.GlobalVariableName, 0);
+				}
+			}
 		}
 
 
@@ -346,7 +443,7 @@ namespace Aron_V3
 				return string.Empty;
 			}
 
-			// 1. 优先 ProjectFilePath。
+			// 1. 优先当前 Task 下的项目脚本。不同 Task 可以有同名 Script，不能先用旧的 SourceFilePath。
 			string p = ResolvePossiblePath(step.ProjectFilePath, step, context);
 
 			if (IsScriptCodeFile(p) && File.Exists(p))
@@ -368,11 +465,38 @@ namespace Aron_V3
 				}
 			}
 
-			// 3. 再从标准目录找。
+			// 3. 最后才允许使用 SourceFilePath，避免跨 Task 复用旧文件。
+			p = ResolvePossiblePath(step.SourceFilePath, step, context);
+
+			if (IsScriptCodeFile(p) && File.Exists(p))
+			{
+				return p;
+			}
+
+			// 4. 再从标准目录找同名文件，最后才允许使用文件夹内第一个脚本。
 			string folder = GetScriptFolder(step, context);
 
 			if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
 			{
+				string stepName = MakeSafeName(step.StepName);
+				string directCsx = Path.Combine(folder, stepName + ".csx");
+				if (File.Exists(directCsx))
+				{
+					return directCsx;
+				}
+
+				string directCs = Path.Combine(folder, stepName + ".cs");
+				if (File.Exists(directCs))
+				{
+					return directCs;
+				}
+
+				string directTxt = Path.Combine(folder, stepName + ".txt");
+				if (File.Exists(directTxt))
+				{
+					return directTxt;
+				}
+
 				string[] csxFiles = Directory.GetFiles(folder, "*.csx", SearchOption.TopDirectoryOnly);
 
 				if (csxFiles.Length > 0)
@@ -404,6 +528,14 @@ namespace Aron_V3
 			}
 
 			string folder = GetScriptFolder(step, context);
+			string taskFolder = GetTaskFolder(context);
+			string p0 = string.IsNullOrWhiteSpace(taskFolder) ? string.Empty : Path.Combine(taskFolder, path);
+
+			if (File.Exists(p0))
+			{
+				return p0;
+			}
+
 			string p1 = string.IsNullOrWhiteSpace(folder) ? string.Empty : Path.Combine(folder, path);
 
 			if (File.Exists(p1))
@@ -421,32 +553,27 @@ namespace Aron_V3
 			return p1;
 		}
 
-		private string GetScriptFolder(StepConfig step, VisionRunContext context)
+		private string GetTaskFolder(VisionRunContext context)
 		{
 			string jobName = context == null ? string.Empty : context.JobName;
 			string taskName = context == null ? string.Empty : context.TaskName;
+			string protocolName = context == null ? string.Empty : Convert.ToString(context.GetData("Comm.Protocol"));
+			string channelName = context == null ? string.Empty : Convert.ToString(context.GetData("Comm.Channel"));
 
-			if (string.IsNullOrWhiteSpace(jobName))
-			{
-				jobName = "Job_001";
-			}
+			return FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, jobName, taskName);
+		}
 
-			if (string.IsNullOrWhiteSpace(taskName))
-			{
-				taskName = "Task_New_01";
-			}
-
-			// 和 ProjectPathManager.EnsureStepFolder 保持一致：Scripts 复数。
-			string taskFolder = Path.Combine(ProjectPathStore.ProjectRoot, "Job", MakeSafeName(jobName), "Task", MakeSafeName(taskName));
-			string scriptsFolder = Path.Combine(taskFolder, "Scripts");
+		private string GetScriptFolder(StepConfig step, VisionRunContext context)
+		{
+			string taskFolder = GetTaskFolder(context);
+			string scriptsFolder = Path.Combine(taskFolder, "Script");
 
 			if (Directory.Exists(scriptsFolder))
 			{
 				return scriptsFolder;
 			}
 
-			// 兼容之前我给你的 Script 单数目录。
-			string scriptFolder = Path.Combine(taskFolder, "Script");
+			string scriptFolder = Path.Combine(taskFolder, "Scripts");
 
 			if (Directory.Exists(scriptFolder))
 			{

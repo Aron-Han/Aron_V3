@@ -5,14 +5,15 @@ namespace Aron_V3
 {
 	public enum RuntimeLogCategory
 	{
-		Operation,
-		Alarm,
-		System
+		Task,
+		Step,
+		Communication
 	}
 
 	public static class RuntimeLogStore
 	{
 		private static readonly object _syncRoot = new object();
+		public static event EventHandler<RuntimeFlowLogEventArgs> LogAppended;
 
 		public static string LogFolder
 		{
@@ -26,28 +27,67 @@ namespace Aron_V3
 
 		public static void Append(DateTime time, RuntimeLogCategory category, string message)
 		{
+			Append(time, category, message, IsErrorMessage(message));
+		}
+
+		public static void Append(DateTime time, RuntimeLogCategory category, string message, bool isError)
+		{
+			RuntimeFlowLogEventArgs args = new RuntimeFlowLogEventArgs(time, category, message, isError);
 			string line = time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
-				" [" + category.ToString().ToUpperInvariant() + "] " +
+				" [" + GetCategoryText(category) + "]" +
+				(isError ? " [Error]" : string.Empty) + " " +
 				(message ?? string.Empty) + Environment.NewLine;
 			string path = Path.Combine(LogFolder, time.ToString("yyyy-MM-dd") + ".log");
 			lock (_syncRoot)
 			{
 				File.AppendAllText(path, line);
 			}
+
+			EventHandler<RuntimeFlowLogEventArgs> handler = LogAppended;
+			if (handler != null)
+			{
+				handler(null, args);
+			}
 		}
 
 		public static RuntimeLogCategory Classify(string message)
 		{
 			string text = (message ?? string.Empty).ToLowerInvariant();
-			if (text.Contains("failed") || text.Contains("error") || text.Contains("alarm") || text.Contains("exception"))
+			if (text.Contains("communication") || text.Contains("protocol=") || text.Contains("raw="))
 			{
-				return RuntimeLogCategory.Alarm;
+				return RuntimeLogCategory.Communication;
 			}
-			if (text.Contains("communication") || text.Contains("task") || text.Contains("image acquired"))
+			if (text.Contains("step") || text.Contains("image acquired") || text.Contains("image source"))
 			{
-				return RuntimeLogCategory.Operation;
+				return RuntimeLogCategory.Step;
 			}
-			return RuntimeLogCategory.System;
+			return RuntimeLogCategory.Task;
+		}
+
+		public static bool IsErrorMessage(string message)
+		{
+			string text = (message ?? string.Empty).ToLowerInvariant();
+			return text.Contains("failed") ||
+				text.Contains("error") ||
+				text.Contains("alarm") ||
+				text.Contains("exception") ||
+				text.Contains("ok=false") ||
+				text.Contains("ng");
+		}
+
+		public static string GetCategoryText(RuntimeLogCategory category)
+		{
+			switch (category)
+			{
+				case RuntimeLogCategory.Task:
+					return "Task";
+				case RuntimeLogCategory.Step:
+					return "Step";
+				case RuntimeLogCategory.Communication:
+					return "Communication";
+				default:
+					return category.ToString();
+			}
 		}
 	}
 }

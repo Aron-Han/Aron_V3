@@ -30,26 +30,37 @@ namespace Aron_V3
 
 	public partial class TriggerManagerControl : UserControl, ILocalizable
 	{
+		private sealed class TaskGridRowTag
+		{
+			public string JobName;
+			public string OriginalTaskName;
+			public string OriginalProtocol;
+			public string OriginalChannel;
+		}
 
 		private Panel panelJobButtons;
 		private Button btnAddJob;
 		private Button btnDeleteJob;
 		private Button btnTestTask;
+		private Label lblProtocolsTitle;
+		private ListBox listProtocols;
+		private Label lblChannelsTitle;
+		private ListBox listChannels;
 
 		private ComboLikePopupForm _activeComboPopup;
 
 		private const int COL_TASK_NAME = 0;
 		private const int COL_PROTOCOL = 1;
-		private const int COL_TRIGGER_NAME = 2;
-		private const int COL_TRIGGER_VALUE = 3;
-		private const int COL_IMAGE_SOURCE = 4;
-		private const int COL_POSITION_NAME = 5;
-		private const int COL_POSITION_VALUE = 6;
-		private const int COL_REMARK = 7;
+		private const int COL_CHANNEL = 2;
+		private const int COL_TRIGGER_NAME = 3;
+		private const int COL_TRIGGER_VALUE = 4;
+		private const int COL_IMAGE_SOURCE = 5;
+		private const int COL_POSITION_NAME = 6;
+		private const int COL_POSITION_VALUE = 7;
+		private const int COL_REMARK = 8;
 
 		private bool _loading = false;
 		private bool _isEnglish = false;
-		private bool _refreshComboPending = false;
 
 		// 外部可绑定真实 Task 执行入口。
 		// 推荐在 Form1 或 FlowConfigForm 中赋值：
@@ -67,9 +78,21 @@ namespace Aron_V3
 			CommunicationConfigChangedHub.ConfigChanged += CommunicationConfigChangedHub_ConfigChanged;
 			this.VisibleChanged += TriggerManagerControl_VisibleChanged;
 
+			ConfigureTaskManagementLayout();
 			ConfigureTriggerGrid();
-			CreateJobActionButtons();
 			CreateTaskTestButton();
+
+			if (listProtocols != null)
+			{
+				listProtocols.SelectedIndexChanged -= listProtocols_SelectedIndexChanged;
+				listProtocols.SelectedIndexChanged += listProtocols_SelectedIndexChanged;
+			}
+
+			if (listChannels != null)
+			{
+				listChannels.SelectedIndexChanged -= listChannels_SelectedIndexChanged;
+				listChannels.SelectedIndexChanged += listChannels_SelectedIndexChanged;
+			}
 
 			listJobs.SelectedIndexChanged -= listJobs_SelectedIndexChanged;
 			listJobs.SelectedIndexChanged += listJobs_SelectedIndexChanged;
@@ -108,8 +131,35 @@ namespace Aron_V3
 			FlowConfigStore.FlowConfigSaved += FlowConfigStore_FlowConfigSaved;
 
 			LoadFlowConfigToJobList();
-			CreateJobActionButtons();
 			CreateTaskTestButton();
+		}
+
+		private void ConfigureTaskManagementLayout()
+		{
+			if (panelJobs != null)
+			{
+				panelJobs.Visible = false;
+				panelJobs.Enabled = false;
+				panelJobs.Margin = new Padding(0);
+			}
+
+			if (rootLayout != null && rootLayout.ColumnStyles.Count >= 2)
+			{
+				rootLayout.ColumnStyles[0].SizeType = SizeType.Absolute;
+				rootLayout.ColumnStyles[0].Width = 0F;
+				rootLayout.ColumnStyles[1].SizeType = SizeType.Percent;
+				rootLayout.ColumnStyles[1].Width = 100F;
+			}
+
+			if (panelTrigger != null)
+			{
+				panelTrigger.Margin = new Padding(0);
+			}
+
+			if (lblTriggerTitle != null)
+			{
+				lblTriggerTitle.Text = _isEnglish ? "Task Settings" : "任务设置";
+			}
 		}
 
 		private void ConfigureTriggerGrid()
@@ -134,17 +184,24 @@ namespace Aron_V3
 			colTask.FillWeight = 110;
 			dgvTrigger.Columns.Add(colTask);
 
-			DataGridViewComboBoxColumn colProtocol = new DataGridViewComboBoxColumn();
+			DataGridViewTextBoxColumn colProtocol = new DataGridViewTextBoxColumn();
 			colProtocol.Name = "colProtocol";
-			colProtocol.HeaderText = "通讯协议";
-			colProtocol.FillWeight = 90;
-			colProtocol.FlatStyle = FlatStyle.Flat;
-			colProtocol.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+			colProtocol.HeaderText = "协议";
+			colProtocol.FillWeight = 105;
+			colProtocol.ReadOnly = true;
 			dgvTrigger.Columns.Add(colProtocol);
+
+			DataGridViewComboBoxColumn colChannel = new DataGridViewComboBoxColumn();
+			colChannel.Name = "colChannel";
+			colChannel.HeaderText = "通道";
+			colChannel.FillWeight = 95;
+			colChannel.FlatStyle = FlatStyle.Flat;
+			colChannel.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+			dgvTrigger.Columns.Add(colChannel);
 
 			DataGridViewComboBoxColumn colTrigger = new DataGridViewComboBoxColumn();
 			colTrigger.Name = "colTriggerName";
-			colTrigger.HeaderText = "触发源名称";
+			colTrigger.HeaderText = "触发源";
 			colTrigger.FillWeight = 115;
 			colTrigger.FlatStyle = FlatStyle.Flat;
 			colTrigger.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
@@ -154,6 +211,7 @@ namespace Aron_V3
 			colTriggerValue.Name = "colTriggerValue";
 			colTriggerValue.HeaderText = "触发源值";
 			colTriggerValue.FillWeight = 90;
+			colTriggerValue.Visible = false;
 			dgvTrigger.Columns.Add(colTriggerValue);
 
 			DataGridViewTextBoxColumn colImage = new DataGridViewTextBoxColumn();
@@ -161,6 +219,7 @@ namespace Aron_V3
 			colImage.HeaderText = "图像源";
 			colImage.FillWeight = 180;
 			colImage.ReadOnly = true;
+			colImage.Visible = false;
 			colImage.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
 			colImage.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			dgvTrigger.Columns.Add(colImage);
@@ -201,12 +260,13 @@ namespace Aron_V3
 
 			// 下拉列由自定义弹出菜单处理。
 			dgvTrigger.Columns[COL_PROTOCOL].ReadOnly = true;
+			dgvTrigger.Columns[COL_CHANNEL].ReadOnly = true;
 			dgvTrigger.Columns[COL_TRIGGER_NAME].ReadOnly = true;
 			dgvTrigger.Columns[COL_IMAGE_SOURCE].ReadOnly = true;
 			dgvTrigger.Columns[COL_POSITION_NAME].ReadOnly = true;
 
 			// 普通值列需要可以直接编辑。
-			dgvTrigger.Columns[COL_TRIGGER_VALUE].ReadOnly = false;
+			dgvTrigger.Columns[COL_TRIGGER_VALUE].ReadOnly = true;
 			dgvTrigger.Columns[COL_POSITION_VALUE].ReadOnly = false;
 
 			if (dgvTrigger.Columns.Count > COL_REMARK)
@@ -233,6 +293,89 @@ namespace Aron_V3
 			dgvTrigger.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			dgvTrigger.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
 			dgvTrigger.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+		}
+
+		private void BuildProtocolNavigation()
+		{
+			if (panelJobs == null || listProtocols != null)
+			{
+				return;
+			}
+
+			lblProtocolsTitle = new Label();
+			lblProtocolsTitle.Name = "lblProtocolsTitle";
+			lblProtocolsTitle.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+			lblProtocolsTitle.ForeColor = Color.White;
+			lblProtocolsTitle.TextAlign = ContentAlignment.MiddleLeft;
+			lblProtocolsTitle.Text = _isEnglish ? "All Protocol" : "所有 通讯协议";
+			lblProtocolsTitle.AutoSize = false;
+			lblChannelsTitle = new Label();
+			lblChannelsTitle.Name = "lblChannelsTitle";
+			lblChannelsTitle.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+			lblChannelsTitle.ForeColor = Color.White;
+			lblChannelsTitle.TextAlign = ContentAlignment.MiddleLeft;
+			lblChannelsTitle.Text = _isEnglish ? "All Channel" : "所有 通道";
+			lblChannelsTitle.AutoSize = false;
+			lblJobsTitle.Text = _isEnglish ? "All Program" : "所有 程序号";
+
+			listProtocols = new ListBox();
+			listProtocols.Name = "listProtocols";
+			listProtocols.BackColor = Color.FromArgb(5, 14, 28);
+			listProtocols.BorderStyle = BorderStyle.FixedSingle;
+			listProtocols.Font = new Font("Microsoft YaHei UI", 9.5F);
+			listProtocols.ForeColor = Color.FromArgb(220, 230, 240);
+			listProtocols.ItemHeight = 25;
+
+			listChannels = new ListBox();
+			listChannels.Name = "listChannels";
+			listChannels.BackColor = Color.FromArgb(5, 14, 28);
+			listChannels.BorderStyle = BorderStyle.FixedSingle;
+			listChannels.Font = new Font("Microsoft YaHei UI", 9.5F);
+			listChannels.ForeColor = Color.FromArgb(220, 230, 240);
+			listChannels.ItemHeight = 25;
+
+			panelJobs.Controls.Add(lblProtocolsTitle);
+			panelJobs.Controls.Add(listProtocols);
+			panelJobs.Controls.Add(lblChannelsTitle);
+			panelJobs.Controls.Add(listChannels);
+
+			lblJobsTitle.Dock = DockStyle.None;
+			listJobs.Dock = DockStyle.None;
+			panelJobs.Resize -= TriggerNavigation_Resize;
+			panelJobs.Resize += TriggerNavigation_Resize;
+			LayoutTriggerNavigation();
+		}
+
+		private void TriggerNavigation_Resize(object sender, EventArgs e)
+		{
+			LayoutTriggerNavigation();
+		}
+
+		private void LayoutTriggerNavigation()
+		{
+			if (panelJobs == null || lblProtocolsTitle == null || listProtocols == null ||
+				lblChannelsTitle == null || listChannels == null || lblJobsTitle == null || listJobs == null)
+			{
+				return;
+			}
+
+			int left = 18;
+			int top = 16;
+			int width = Math.Max(60, panelJobs.ClientSize.Width - 36);
+			int selectorHeight = Math.Max(70, Math.Min(120, panelJobs.ClientSize.Height / 6));
+
+			lblProtocolsTitle.SetBounds(left, top, width, 30);
+			listProtocols.SetBounds(left, lblProtocolsTitle.Bottom, width, selectorHeight);
+
+			lblChannelsTitle.SetBounds(left, listProtocols.Bottom + 12, width, 30);
+			listChannels.SetBounds(left, lblChannelsTitle.Bottom, width, selectorHeight);
+
+			lblJobsTitle.SetBounds(left, listChannels.Bottom + 16, width, 30);
+			listJobs.Left = left;
+			listJobs.Top = lblJobsTitle.Bottom;
+			listJobs.Width = width;
+
+			LayoutJobActionButtons();
 		}
 
 		private List<string> GetCandidateCameraRootFolders()
@@ -414,23 +557,7 @@ namespace Aron_V3
 					continue;
 				}
 
-				string imageSourceText = GetCellString(row, COL_IMAGE_SOURCE);
-				int lineCount = 1;
-
-				if (!string.IsNullOrWhiteSpace(imageSourceText) &&
-					!imageSourceText.Equals("Not Use", StringComparison.OrdinalIgnoreCase))
-				{
-					lineCount = SplitImageSourceSelection(imageSourceText).Count;
-
-					if (lineCount <= 0)
-					{
-						lineCount = 1;
-					}
-				}
-
-				// 34 是单行基础高度；每增加一个图像源，行高增加约 22 像素。
-				int targetHeight = Math.Max(34, 26 + lineCount * 22);
-				row.Height = targetHeight;
+				row.Height = 34;
 			}
 		}
 
@@ -438,23 +565,7 @@ namespace Aron_V3
 
 		private void RefreshComboColumnOptions()
 		{
-			List<string> protocols = LoadEnabledProtocolOptions();
-
-			DataGridViewComboBoxColumn protocolCol = dgvTrigger.Columns[COL_PROTOCOL] as DataGridViewComboBoxColumn;
-
-			if (protocolCol != null)
-			{
-				protocolCol.Items.Clear();
-
-				foreach (string protocol in protocols)
-				{
-					protocolCol.Items.Add(protocol);
-				}
-			}
-
-			// 图像源只允许从相机目录真实文件生成。
-			// 不再使用旧的 HardwareConfig.xml 解析逻辑，避免 Cam1 被转换成 Cam1.Raw。
-			RefreshImageSourceColumnItems();
+			// 协议列改为双击勾选，不再维护 DataGridViewComboBoxColumn 的 Items。
 		}
 
 		private void FlowConfigStore_FlowConfigSaved(object sender, EventArgs e)
@@ -464,8 +575,12 @@ namespace Aron_V3
 				this.BeginInvoke(new EventHandler(FlowConfigStore_FlowConfigSaved), sender, e);
 				return;
 			}
+			string oldProtocol = GetSelectedProtocolNameSafe();
+			string oldChannel = GetSelectedChannelNameSafe();
 			string oldJob = GetSelectedJobNameSafe();
 			LoadFlowConfigToJobList();
+			SelectListItem(listProtocols, oldProtocol);
+			SelectListItem(listChannels, oldChannel);
 			SelectListItem(listJobs, oldJob);
 			LoadCurrentJobTasksToGrid();
 		}
@@ -476,10 +591,18 @@ namespace Aron_V3
 
 			try
 			{
-				string oldJob = GetSelectedJobNameSafe();
-
+				if (listProtocols != null)
+				{
+					listProtocols.Items.Clear();
+				}
+				if (listChannels != null)
+				{
+					listChannels.Items.Clear();
+				}
 				listJobs.Items.Clear();
 				dgvTrigger.Rows.Clear();
+
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
 
 				List<string> jobs = GetAllLocalJobNames();
 
@@ -488,22 +611,16 @@ namespace Aron_V3
 					listJobs.Items.Add(jobName);
 				}
 
-				if (!string.IsNullOrWhiteSpace(oldJob))
-				{
-					SelectListItem(listJobs, oldJob);
-				}
-
 				if (listJobs.SelectedIndex < 0 && listJobs.Items.Count > 0)
 				{
 					listJobs.SelectedIndex = 0;
 				}
 
-				LoadCurrentJobTasksToGrid();
+				LoadAllTasksToGrid(config);
 			}
 			finally
 			{
 				_loading = false;
-				CreateJobActionButtons();
 			}
 		}
 
@@ -514,34 +631,14 @@ namespace Aron_V3
 
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
 
-			if (config != null && config.Jobs != null)
+			foreach (JobConfig job in EnumerateAllJobs(config))
 			{
-				foreach (JobConfig job in config.Jobs)
+				if (job == null || string.IsNullOrWhiteSpace(job.JobName))
 				{
-					if (job == null || string.IsNullOrWhiteSpace(job.JobName))
-					{
-						continue;
-					}
-
-					AddJobNameIfNotExists(jobs, NormalizeJobName(job.JobName));
+					continue;
 				}
-			}
 
-			string jobRoot = GetFlowJobRootFolder();
-
-			if (Directory.Exists(jobRoot))
-			{
-				foreach (string dir in Directory.GetDirectories(jobRoot))
-				{
-					string name = Path.GetFileName(dir);
-
-					if (string.IsNullOrWhiteSpace(name))
-					{
-						continue;
-					}
-
-					AddJobNameIfNotExists(jobs, NormalizeJobName(name));
-				}
+				AddJobNameIfNotExists(jobs, NormalizeJobName(job.JobName));
 			}
 
 			jobs.Sort(StringComparer.OrdinalIgnoreCase);
@@ -591,59 +688,139 @@ namespace Aron_V3
 			LoadCurrentJobTasksToGrid();
 		}
 
+		private void listProtocols_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (_loading) return;
+			LoadFlowConfigToJobList();
+		}
+
+		private void listChannels_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (_loading) return;
+			LoadFlowConfigToJobList();
+		}
+
 		private void LoadCurrentJobTasksToGrid()
 		{
 			dgvTrigger.Rows.Clear();
 			RefreshComboColumnOptions();
-			string jobName = GetSelectedJobNameSafe();
-			if (string.IsNullOrEmpty(jobName)) return;
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			JobConfig job = config.Jobs.FirstOrDefault(j => string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
-			if (job == null) return;
-			foreach (TaskConfig task in job.Tasks.OrderBy(t => t.RunOrder)) AddTaskRowToGrid(task);
+			LoadAllTasksToGrid(config);
 		}
 
-		private void AddTaskRowToGrid(TaskConfig task)
+		private void LoadAllTasksToGrid(ProjectFlowConfig config)
+		{
+			dgvTrigger.Rows.Clear();
+			RefreshComboColumnOptions();
+
+			foreach (JobConfig job in EnumerateAllJobs(config)
+				.OrderBy(x => x == null ? string.Empty : x.JobName)
+				.ThenBy(x => x == null ? string.Empty : x.ProtocolName)
+				.ThenBy(x => x == null ? string.Empty : x.ChannelName))
+			{
+				if (job == null || job.Tasks == null) continue;
+				foreach (TaskConfig task in job.Tasks.OrderBy(t => t.RunOrder)) AddTaskRowToGrid(job, task);
+			}
+		}
+
+		private IEnumerable<JobConfig> EnumerateAllJobs(ProjectFlowConfig config)
+		{
+			if (config == null || config.Protocols == null)
+			{
+				yield break;
+			}
+
+			foreach (ProtocolFlowConfig protocol in config.Protocols)
+			{
+				if (protocol == null || protocol.Channels == null)
+				{
+					continue;
+				}
+
+				foreach (ChannelFlowConfig channel in protocol.Channels)
+				{
+					if (channel == null || channel.Jobs == null)
+					{
+						continue;
+					}
+
+					foreach (JobConfig job in channel.Jobs)
+					{
+						if (job != null)
+						{
+							yield return job;
+						}
+					}
+				}
+			}
+		}
+
+		private void AddTaskRowToGrid(JobConfig job, TaskConfig task)
 		{
 			if (task == null) return;
 
-			string protocol = task.CommunicationProtocol;
-			if (string.IsNullOrEmpty(protocol)) protocol = GetDefaultEnabledProtocol();
-			EnsureProtocolValueExists(protocol);
+			string protocolSelection = GetTaskProtocolSelection(job, task);
+			string protocol = GetPrimaryProtocol(protocolSelection);
+
+			string channelName = GetTaskChannelName(job, task);
 
 			string triggerName = task.TriggerName;
-			if (string.IsNullOrEmpty(triggerName)) triggerName = GetDefaultTriggerSource(protocol);
+			TaskCommunicationTriggerBinding firstBinding = GetFirstTriggerBinding(task);
+			if (firstBinding != null && !string.IsNullOrWhiteSpace(firstBinding.TriggerName))
+			{
+				triggerName = firstBinding.TriggerName;
+			}
+			if (string.IsNullOrEmpty(triggerName)) triggerName = GetDefaultTriggerSource(protocolSelection, channelName);
 
 			string triggerValue = task.TriggerValue;
+			if (firstBinding != null && !string.IsNullOrWhiteSpace(firstBinding.TriggerValue))
+			{
+				triggerValue = firstBinding.TriggerValue;
+			}
+			if (string.IsNullOrEmpty(triggerValue)) triggerValue = GetTriggerExpectedValue(protocolSelection, channelName, triggerName);
 			if (string.IsNullOrEmpty(triggerValue)) triggerValue = "1";
 
-			string imageSource = task.ImageSourceKey;
-			if (string.IsNullOrEmpty(imageSource)) imageSource = "Not Use";
-			imageSource = NormalizeImageSourceSelection(imageSource, GetAllCameraImageSourcesFromFiles());
-			if (string.IsNullOrEmpty(imageSource)) imageSource = "Not Use";
-
 			string positionName = task.PositionName;
+			if (firstBinding != null && !string.IsNullOrWhiteSpace(firstBinding.PositionName))
+			{
+				positionName = firstBinding.PositionName;
+			}
+			if (string.IsNullOrEmpty(positionName)) positionName = task.PositionOptionName;
 			if (string.IsNullOrEmpty(positionName)) positionName = task.FlagBit.ToString();
-			if (string.IsNullOrEmpty(positionName) || positionName == "0") positionName = GetDefaultPositionSource(protocol);
+			if (string.IsNullOrEmpty(positionName) || positionName == "0") positionName = GetDefaultPositionSource(protocolSelection, channelName);
 
 			string positionValue = task.PositionValue;
+			if (firstBinding != null && !string.IsNullOrWhiteSpace(firstBinding.PositionValue))
+			{
+				positionValue = firstBinding.PositionValue;
+			}
 			if (string.IsNullOrEmpty(positionValue)) positionValue = task.FlagValue;
+			if (string.IsNullOrEmpty(positionValue)) positionValue = GetPositionExpectedValue(protocolSelection, channelName, positionName);
 			if (string.IsNullOrEmpty(positionValue)) positionValue = "1";
 
 			int rowIndex = dgvTrigger.Rows.Add(
 				task.TaskName,
-				protocol,
+				protocolSelection,
+				channelName,
 				triggerName,
 				triggerValue,
-				imageSource,
+				"Not Use",
 				positionName,
 				positionValue,
 				task.Remark);
+			dgvTrigger.Rows[rowIndex].Tag = new TaskGridRowTag
+			{
+				JobName = job == null ? GetDefaultTaskJobName() : job.JobName,
+				OriginalTaskName = task.TaskName,
+				OriginalProtocol = protocol,
+				OriginalChannel = channelName
+			};
 			ShowAllTriggerRows();
 			UpdateTriggerGridRowHeights();
 
-			UpdateTriggerSourceCellOptions(rowIndex, protocol, triggerName);
-			UpdatePositionSourceCellOptions(rowIndex, protocol, positionName);
+			UpdateChannelCellOptions(rowIndex, protocolSelection, channelName);
+			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channelName, triggerName);
+			UpdatePositionSourceCellOptions(rowIndex, protocolSelection, channelName, positionName);
 		}
 
 		private void dgvTrigger_CurrentCellDirtyStateChanged(object sender, EventArgs e)
@@ -656,9 +833,11 @@ namespace Aron_V3
 			if (_loading || e.RowIndex < 0 || e.ColumnIndex < 0) return;
 			if (e.ColumnIndex == COL_PROTOCOL)
 			{
-				string protocol = GetCellString(dgvTrigger.Rows[e.RowIndex], COL_PROTOCOL);
-				UpdateTriggerSourceCellOptions(e.RowIndex, protocol, string.Empty);
-				UpdatePositionSourceCellOptions(e.RowIndex, protocol, string.Empty);
+				RefreshCommunicationOptionCells(e.RowIndex, true);
+			}
+			else if (e.ColumnIndex == COL_CHANNEL || e.ColumnIndex == COL_TRIGGER_NAME || e.ColumnIndex == COL_POSITION_NAME)
+			{
+				UpdateChannelDerivedValueCells(e.RowIndex);
 			}
 		}
 
@@ -669,6 +848,7 @@ namespace Aron_V3
 		{
 			return columnIndex == COL_PROTOCOL ||
 				columnIndex == COL_TRIGGER_NAME ||
+				columnIndex == COL_CHANNEL ||
 				columnIndex == COL_POSITION_NAME;
 		}
 
@@ -785,8 +965,15 @@ namespace Aron_V3
 
 				if (columnIndex == COL_PROTOCOL)
 				{
-					UpdateTriggerSourceCellOptions(rowIndex, selectedValue, "");
-					UpdatePositionSourceCellOptions(rowIndex, selectedValue, "");
+					RefreshCommunicationOptionCells(rowIndex, true);
+				}
+				else if (columnIndex == COL_CHANNEL)
+				{
+					RefreshCommunicationOptionCells(rowIndex, false);
+				}
+				else if (columnIndex == COL_TRIGGER_NAME || columnIndex == COL_POSITION_NAME)
+				{
+					UpdateChannelDerivedValueCells(rowIndex);
 				}
 
 				dgvTrigger.Invalidate();
@@ -829,6 +1016,11 @@ namespace Aron_V3
 		private List<string> GetComboLikeItems(int rowIndex, int columnIndex)
 		{
 			List<string> result = new List<string>();
+
+			if (columnIndex == COL_PROTOCOL)
+			{
+				return LoadCommunicationInstanceOptions();
+			}
 
 			DataGridViewCell cell = dgvTrigger.Rows[rowIndex].Cells[columnIndex];
 
@@ -930,13 +1122,6 @@ namespace Aron_V3
 
 			CloseActiveComboPopup();
 
-			if (e.ColumnIndex == COL_IMAGE_SOURCE)
-			{
-				dgvTrigger.Rows[e.RowIndex].Cells[COL_IMAGE_SOURCE].ToolTipText =
-					"Double click to select one or more image sources. Multiple sources are displayed in separate lines.";
-				return;
-			}
-
 			if (!dgvTrigger.Rows[e.RowIndex].Cells[e.ColumnIndex].ReadOnly)
 			{
 				dgvTrigger.CurrentCell = dgvTrigger.Rows[e.RowIndex].Cells[e.ColumnIndex];
@@ -946,12 +1131,7 @@ namespace Aron_V3
 
 		private void dgvTrigger_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
 		{
-			if (e.RowIndex < 0 || e.ColumnIndex != COL_IMAGE_SOURCE)
-			{
-				return;
-			}
-
-			OpenImageSourceMultiSelectDialog(e.RowIndex);
+			// 协议、通道、触发源、位置号都通过单击弹出的单选菜单处理。
 		}
 
 		private void OpenImageSourceMultiSelectDialog(int rowIndex)
@@ -1095,26 +1275,332 @@ namespace Aron_V3
 			e.ThrowException = false;
 		}
 
-		private void UpdateTriggerSourceCellOptions(int rowIndex, string protocol, string currentValue)
+		private TaskCommunicationTriggerBinding GetFirstTriggerBinding(TaskConfig task)
+		{
+			if (task == null || task.CommunicationTriggerBindings == null)
+			{
+				return null;
+			}
+
+			return task.CommunicationTriggerBindings.FirstOrDefault(x =>
+				x != null &&
+				!string.IsNullOrWhiteSpace(x.CommunicationProtocol) &&
+				!x.CommunicationProtocol.Equals("Not Use", StringComparison.OrdinalIgnoreCase));
+		}
+
+		private string GetTaskProtocolSelection(JobConfig job, TaskConfig task)
+		{
+			List<string> protocols = new List<string>();
+
+			if (task != null && task.CommunicationTriggerBindings != null)
+			{
+				foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+				{
+					if (binding == null)
+					{
+						continue;
+					}
+
+					if (!string.IsNullOrWhiteSpace(binding.CommunicationInstanceName))
+					{
+						AddProtocolIfValid(protocols, binding.CommunicationInstanceName);
+					}
+					else
+					{
+						AddProtocolIfValid(protocols, binding.CommunicationProtocol);
+					}
+				}
+			}
+
+			if (task != null)
+			{
+				if (!string.IsNullOrWhiteSpace(task.CommunicationInstanceName))
+				{
+					AddProtocolIfValid(protocols, task.CommunicationInstanceName);
+				}
+				else
+				{
+					AddProtocolIfValid(protocols, task.CommunicationProtocol);
+				}
+			}
+
+			if (job != null)
+			{
+				AddProtocolIfValid(protocols, job.ProtocolName);
+			}
+
+			if (protocols.Count <= 0)
+			{
+				AddProtocolIfValid(protocols, GetDefaultCommunicationSelection());
+			}
+
+			return JoinProtocolSelection(protocols);
+		}
+
+		private string GetTaskChannelName(JobConfig job, TaskConfig task)
+		{
+			TaskCommunicationTriggerBinding binding = GetFirstTriggerBinding(task);
+			if (binding != null && !string.IsNullOrWhiteSpace(binding.CommunicationChannel))
+			{
+				return binding.CommunicationChannel;
+			}
+
+			if (task != null && !string.IsNullOrWhiteSpace(task.CommunicationChannel))
+			{
+				return task.CommunicationChannel;
+			}
+
+			if (job != null && !string.IsNullOrWhiteSpace(job.ChannelName))
+			{
+				return job.ChannelName;
+			}
+
+			return GetDefaultChannelName(GetDefaultEnabledProtocol());
+		}
+
+		private void AddProtocolIfValid(List<string> protocols, string protocol)
+		{
+			if (protocols == null || string.IsNullOrWhiteSpace(protocol))
+			{
+				return;
+			}
+
+			string selection = ResolveCommunicationSelectionName(protocol);
+			if (selection.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				selection.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			if (!protocols.Any(x => string.Equals(x, selection, StringComparison.OrdinalIgnoreCase)))
+			{
+				protocols.Add(selection);
+			}
+		}
+
+		private string ResolveCommunicationSelectionName(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return string.Empty;
+			}
+
+			string text = value.Trim();
+			CommunicationInstanceConfig instance = FindCommunicationInstance(text);
+			if (instance != null)
+			{
+				return instance.InstanceName;
+			}
+
+			string protocol = FlowConfigStore.NormalizeProtocolName(text);
+			instance = FindFirstCommunicationInstanceByProtocol(protocol);
+			if (instance != null)
+			{
+				return instance.InstanceName;
+			}
+
+			return protocol;
+		}
+
+		private CommunicationInstanceConfig FindCommunicationInstance(string instanceName)
+		{
+			if (string.IsNullOrWhiteSpace(instanceName))
+			{
+				return null;
+			}
+
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			if (config == null || config.Instances == null)
+			{
+				return null;
+			}
+
+			return config.Instances.FirstOrDefault(x =>
+				x != null &&
+				!string.IsNullOrWhiteSpace(x.InstanceName) &&
+				string.Equals(x.InstanceName, instanceName.Trim(), StringComparison.OrdinalIgnoreCase));
+		}
+
+		private CommunicationInstanceConfig FindFirstCommunicationInstanceByProtocol(string protocolName)
+		{
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			if (config == null || config.Instances == null)
+			{
+				return null;
+			}
+
+			CommunicationType type;
+			if (!TryGetCommunicationType(protocolName, out type))
+			{
+				return null;
+			}
+
+			return config.Instances.FirstOrDefault(x => x != null && x.CommunicationType == type);
+		}
+
+		private bool TryGetCommunicationType(string protocolName, out CommunicationType type)
+		{
+			string normalized = FlowConfigStore.NormalizeProtocolName(protocolName);
+			if (normalized.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				normalized.Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
+			{
+				type = CommunicationType.TcpIp;
+				return true;
+			}
+
+			if (normalized.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				type = CommunicationType.Profinet;
+				return true;
+			}
+
+			if (normalized.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				type = CommunicationType.S7;
+				return true;
+			}
+
+			type = CommunicationType.TcpIp;
+			return false;
+		}
+
+		private string GetProtocolNameForCommunicationSelection(string selection)
+		{
+			CommunicationInstanceConfig instance = FindCommunicationInstance(selection);
+			if (instance != null)
+			{
+				return GetProtocolName(instance.CommunicationType);
+			}
+
+			return FlowConfigStore.NormalizeProtocolName(selection);
+		}
+
+		private string GetInstanceNameForCommunicationSelection(string selection)
+		{
+			CommunicationInstanceConfig instance = FindCommunicationInstance(selection);
+			if (instance != null)
+			{
+				return instance.InstanceName;
+			}
+
+			return GetDefaultCommunicationInstanceName(selection);
+		}
+
+		private string GetProtocolName(CommunicationType type)
+		{
+			if (type == CommunicationType.TcpIp)
+			{
+				return "TCP/IP";
+			}
+
+			if (type == CommunicationType.Profinet)
+			{
+				return "Profinet";
+			}
+
+			return "S7";
+		}
+
+		private List<string> SplitProtocolSelection(string value)
+		{
+			List<string> result = new List<string>();
+
+			if (!string.IsNullOrWhiteSpace(value))
+			{
+				string[] parts = value.Split(new char[] { ';', ',', '|', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+				foreach (string part in parts)
+				{
+					AddProtocolIfValid(result, part);
+					if (result.Count > 0)
+					{
+						break;
+					}
+				}
+			}
+
+			if (result.Count <= 0)
+			{
+				AddProtocolIfValid(result, GetDefaultCommunicationSelection());
+			}
+
+			return result;
+		}
+
+		private string JoinProtocolSelection(List<string> values)
+		{
+			List<string> result = new List<string>();
+
+			if (values != null)
+			{
+				foreach (string value in values)
+				{
+					AddProtocolIfValid(result, value);
+					if (result.Count > 0)
+					{
+						break;
+					}
+				}
+			}
+
+			if (result.Count <= 0)
+			{
+				return GetDefaultCommunicationSelection();
+			}
+
+			return result[0];
+		}
+
+		private string GetPrimaryProtocol(string protocolSelection)
+		{
+			List<string> protocols = SplitProtocolSelection(protocolSelection);
+			return protocols.Count > 0 ? GetProtocolNameForCommunicationSelection(protocols[0]) : GetDefaultEnabledProtocol();
+		}
+
+		private string GetPrimaryInstanceName(string protocolSelection)
+		{
+			List<string> protocols = SplitProtocolSelection(protocolSelection);
+			return protocols.Count > 0 ? GetInstanceNameForCommunicationSelection(protocols[0]) : GetDefaultCommunicationInstanceName(GetDefaultEnabledProtocol());
+		}
+
+		private void UpdateTriggerSourceCellOptions(int rowIndex, string protocol, string channelName, string currentValue)
 		{
 			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count) return;
 			DataGridViewComboBoxCell cell = new DataGridViewComboBoxCell();
 			cell.FlatStyle = FlatStyle.Flat;
-			List<string> triggers = LoadTriggerSourceOptions(protocol);
+			List<string> triggers = LoadTriggerSourceOptionsForProtocols(protocol, channelName);
 			foreach (string trigger in triggers) cell.Items.Add(trigger);
 			if (string.IsNullOrEmpty(currentValue) || !triggers.Contains(currentValue)) currentValue = triggers.Count > 0 ? triggers[0] : string.Empty;
 			cell.Value = currentValue;
 			dgvTrigger.Rows[rowIndex].Cells[COL_TRIGGER_NAME] = cell;
 		}
 
-		private void UpdatePositionSourceCellOptions(int rowIndex, string protocol, string currentValue)
+		private void UpdateChannelCellOptions(int rowIndex, string protocol, string currentValue)
 		{
 			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count) return;
 
 			DataGridViewComboBoxCell cell = new DataGridViewComboBoxCell();
 			cell.FlatStyle = FlatStyle.Flat;
 
-			List<string> positions = LoadPositionSourceOptions(protocol);
+			List<string> channels = LoadChannelOptionsForProtocols(protocol);
+			foreach (string channel in channels) cell.Items.Add(channel);
+
+			if (string.IsNullOrEmpty(currentValue) || !channels.Contains(currentValue))
+			{
+				currentValue = channels.Count > 0 ? channels[0] : string.Empty;
+			}
+
+			cell.Value = currentValue;
+			dgvTrigger.Rows[rowIndex].Cells[COL_CHANNEL] = cell;
+		}
+
+		private void UpdatePositionSourceCellOptions(int rowIndex, string protocol, string channelName, string currentValue)
+		{
+			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count) return;
+
+			DataGridViewComboBoxCell cell = new DataGridViewComboBoxCell();
+			cell.FlatStyle = FlatStyle.Flat;
+
+			List<string> positions = LoadPositionSourceOptionsForProtocols(protocol, channelName);
 			foreach (string position in positions) cell.Items.Add(position);
 
 			if (string.IsNullOrEmpty(currentValue) || !positions.Contains(currentValue))
@@ -1124,6 +1610,7 @@ namespace Aron_V3
 
 			cell.Value = currentValue;
 			dgvTrigger.Rows[rowIndex].Cells[COL_POSITION_NAME] = cell;
+			UpdateChannelDerivedValueCells(rowIndex);
 		}
 
 		private List<string> LoadEnabledProtocolOptions()
@@ -1137,10 +1624,111 @@ namespace Aron_V3
 			return result;
 		}
 
+		private List<string> LoadCommunicationInstanceOptions()
+		{
+			List<string> result = new List<string>();
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+
+			if (config != null && config.Instances != null)
+			{
+				foreach (CommunicationInstanceConfig instance in config.Instances)
+				{
+					if (instance == null || string.IsNullOrWhiteSpace(instance.InstanceName))
+					{
+						continue;
+					}
+
+					if (instance.CommunicationType == CommunicationType.Profinet)
+					{
+						continue;
+					}
+
+					if (!result.Any(x => string.Equals(x, instance.InstanceName, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(instance.InstanceName);
+					}
+				}
+			}
+
+			if (result.Count <= 0)
+			{
+				string protocol = GetDefaultEnabledProtocol();
+				string instanceName = GetDefaultCommunicationInstanceName(protocol);
+				result.Add(string.IsNullOrWhiteSpace(instanceName) ? protocol : instanceName);
+			}
+
+			return result;
+		}
+
 		private string GetDefaultEnabledProtocol()
 		{
 			List<string> protocols = LoadEnabledProtocolOptions();
 			return protocols.Count > 0 ? protocols[0] : "Not Use";
+		}
+
+		private string GetDefaultCommunicationSelection()
+		{
+			List<string> instances = LoadCommunicationInstanceOptions();
+			return instances.Count > 0 ? instances[0] : GetDefaultEnabledProtocol();
+		}
+
+		private List<string> LoadChannelOptions(string protocol)
+		{
+			List<string> result = new List<string>();
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			List<CommunicationChannelConfig> channels = GetChannelsByProtocol(config, protocol);
+
+			foreach (CommunicationChannelConfig channel in channels)
+			{
+				if (channel == null || !channel.Enabled || string.IsNullOrWhiteSpace(channel.ChannelName))
+				{
+					continue;
+				}
+
+				result.Add(channel.ChannelName);
+			}
+
+			if (result.Count == 0)
+			{
+				result.Add("Channel01");
+			}
+
+			return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+		}
+
+		private List<string> LoadChannelOptionsForProtocols(string protocolSelection)
+		{
+			List<string> result = new List<string>();
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+
+			foreach (string protocol in SplitProtocolSelection(protocolSelection))
+			{
+				foreach (CommunicationChannelConfig channelConfig in GetChannelsByCommunicationSelection(config, protocol))
+				{
+					if (channelConfig == null || !channelConfig.Enabled || string.IsNullOrWhiteSpace(channelConfig.ChannelName))
+					{
+						continue;
+					}
+
+					if (!result.Any(x => string.Equals(x, channelConfig.ChannelName, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(channelConfig.ChannelName);
+					}
+				}
+			}
+
+			if (result.Count <= 0)
+			{
+				result.Add("Channel01");
+			}
+
+			return result;
+		}
+
+		private string GetDefaultChannelName(string protocol)
+		{
+			List<string> channels = LoadChannelOptions(protocol);
+			return channels.Count > 0 ? channels[0] : "Channel01";
 		}
 
 		private void EnsureProtocolValueExists(string protocol)
@@ -1150,38 +1738,95 @@ namespace Aron_V3
 			if (col != null && !col.Items.Contains(protocol)) col.Items.Add(protocol);
 		}
 
-		private List<string> LoadTriggerSourceOptions(string protocol)
+		private List<string> LoadTriggerSourceOptions(string protocol, string channelName)
 		{
 			List<string> result = new List<string>();
 			if (string.IsNullOrEmpty(protocol) || protocol == "Not Use") { result.Add("Not Use"); return result; }
 			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
-			if (protocol.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			CommunicationChannelConfig channel = GetChannelByNameForSelection(config, protocol, channelName);
+			if (channel != null)
 			{
-				result.Add("engine0"); result.Add("engine1"); result.Add("engine2"); result.Add("engine3");
-			}
-			else if (protocol.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
-			{
-				if (config.TcpIp != null && config.TcpIp.InputVariables != null)
-					foreach (CommInputVariable item in config.TcpIp.InputVariables)
-						if (item.UseAsTrigger) result.Add(item.Name);
-			}
-			else if (protocol.Equals("S7", StringComparison.OrdinalIgnoreCase))
-			{
-				if (config.S7 != null && config.S7.InputVariables != null)
-					foreach (CommInputVariable item in config.S7.InputVariables)
-						if (item.UseAsTrigger) result.Add(item.Name);
+				string triggerGlobal = NormalizeConfiguredCommunicationValue(channel.TriggerGlobalVariableName);
+				if (!string.IsNullOrWhiteSpace(triggerGlobal))
+				{
+					result.Add(triggerGlobal);
+				}
+
+				string legacyTrigger = NormalizeConfiguredCommunicationValue(channel.TriggerName);
+				if (!string.IsNullOrWhiteSpace(legacyTrigger) &&
+					!legacyTrigger.Equals("Trigger", StringComparison.OrdinalIgnoreCase) &&
+					!result.Any(x => string.Equals(x, legacyTrigger, StringComparison.OrdinalIgnoreCase)))
+				{
+					result.Add(legacyTrigger);
+				}
+
+				string customTriggerGlobal = NormalizeConfiguredCommunicationValue(channel.CustomTriggerGlobalVariableName);
+				if (!string.IsNullOrWhiteSpace(customTriggerGlobal) &&
+					!result.Any(x => string.Equals(x, customTriggerGlobal, StringComparison.OrdinalIgnoreCase)))
+				{
+					result.Add(customTriggerGlobal);
+				}
 			}
 			if (result.Count == 0) result.Add("Not Use");
 			return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 		}
 
-		private string GetDefaultTriggerSource(string protocol)
+		private string NormalizeConfiguredCommunicationValue(string value)
 		{
-			List<string> triggers = LoadTriggerSourceOptions(protocol);
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return string.Empty;
+			}
+
+			string text = value.Trim();
+			if (text.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("None", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("Select", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("Select...", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("选择", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("选择...", StringComparison.OrdinalIgnoreCase))
+			{
+				return string.Empty;
+			}
+
+			return text;
+		}
+
+		private List<string> LoadTriggerSourceOptionsForProtocols(string protocolSelection, string channelName)
+		{
+			List<string> result = new List<string>();
+
+			foreach (string protocol in SplitProtocolSelection(protocolSelection))
+			{
+				foreach (string trigger in LoadTriggerSourceOptions(protocol, channelName))
+				{
+					if (!result.Any(x => string.Equals(x, trigger, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(trigger);
+					}
+				}
+			}
+
+			if (result.Any(x => !x.Equals("Not Use", StringComparison.OrdinalIgnoreCase)))
+			{
+				result.RemoveAll(x => x.Equals("Not Use", StringComparison.OrdinalIgnoreCase));
+			}
+
+			if (result.Count <= 0)
+			{
+				result.Add("Not Use");
+			}
+
+			return result;
+		}
+
+		private string GetDefaultTriggerSource(string protocol, string channelName)
+		{
+			List<string> triggers = LoadTriggerSourceOptions(protocol, channelName);
 			return triggers.Count > 0 ? triggers[0] : "Not Use";
 		}
 
-		private List<string> LoadPositionSourceOptions(string protocol)
+		private List<string> LoadPositionSourceOptions(string protocol, string channelName)
 		{
 			List<string> result = new List<string>();
 			result.Add("Not Use");
@@ -1192,34 +1837,36 @@ namespace Aron_V3
 			}
 
 			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			CommunicationChannelConfig channel = GetChannelByNameForSelection(config, protocol, channelName);
+			if (channel != null && !string.IsNullOrWhiteSpace(channel.PositionGlobalVariableName))
+			{
+				result.Add(channel.PositionGlobalVariableName);
+			}
+			else if (channel != null && !string.IsNullOrWhiteSpace(channel.PositionSourceName) &&
+				!channel.PositionSourceName.Equals("Not Use", StringComparison.OrdinalIgnoreCase))
+			{
+				result.Add(channel.PositionSourceName);
+			}
 
-			if (protocol.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			if (channel != null && channel.PositionOptions != null)
 			{
-				if (config.Profinet != null && config.Profinet.InputVariables != null)
+				foreach (CommunicationPositionOption option in channel.PositionOptions)
 				{
-					foreach (CommInputVariable item in config.Profinet.InputVariables)
+					if (option != null && !string.IsNullOrWhiteSpace(option.Name))
 					{
-						if (item.UseAsPosition) result.Add(item.Name);
+						result.Add(option.Name);
 					}
 				}
 			}
-			else if (protocol.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
+
+			List<CommInputVariable> inputVariables = GetInputVariablesByCommunicationSelection(config, protocol);
+			if (inputVariables != null)
 			{
-				if (config.TcpIp != null && config.TcpIp.InputVariables != null)
+				foreach (CommInputVariable item in inputVariables)
 				{
-					foreach (CommInputVariable item in config.TcpIp.InputVariables)
+					if (item != null && item.UseAsPosition)
 					{
-						if (item.UseAsPosition) result.Add(item.Name);
-					}
-				}
-			}
-			else if (protocol.Equals("S7", StringComparison.OrdinalIgnoreCase))
-			{
-				if (config.S7 != null && config.S7.InputVariables != null)
-				{
-					foreach (CommInputVariable item in config.S7.InputVariables)
-					{
-						if (item.UseAsPosition) result.Add(item.Name);
+						result.Add(item.Name);
 					}
 				}
 			}
@@ -1227,10 +1874,303 @@ namespace Aron_V3
 			return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 		}
 
-		private string GetDefaultPositionSource(string protocol)
+		private List<string> LoadPositionSourceOptionsForProtocols(string protocolSelection, string channelName)
 		{
-			List<string> positions = LoadPositionSourceOptions(protocol);
+			List<string> result = new List<string>();
+
+			foreach (string protocol in SplitProtocolSelection(protocolSelection))
+			{
+				foreach (string position in LoadPositionSourceOptions(protocol, channelName))
+				{
+					if (!result.Any(x => string.Equals(x, position, StringComparison.OrdinalIgnoreCase)))
+					{
+						result.Add(position);
+					}
+				}
+			}
+
+			if (result.Count <= 0)
+			{
+				result.Add("Not Use");
+			}
+
+			return result;
+		}
+
+		private string GetDefaultPositionSource(string protocol, string channelName)
+		{
+			List<string> positions = LoadPositionSourceOptions(protocol, channelName);
 			return positions.Count > 0 ? positions[0] : "Not Use";
+		}
+
+		private string GetPositionExpectedValue(string protocol, string channelName, string positionOptionName)
+		{
+			CommunicationChannelConfig channel = GetChannelByNameForSelection(CommunicationConfigStore.LoadOrCreateDefault(), protocol, channelName);
+			CommunicationPositionOption option = channel == null || channel.PositionOptions == null
+				? null
+				: channel.PositionOptions.FirstOrDefault(x =>
+					x != null && string.Equals(x.Name, positionOptionName, StringComparison.OrdinalIgnoreCase));
+
+			return option == null ? string.Empty : option.ExpectedValue;
+		}
+
+		private string GetTriggerExpectedValue(string protocol, string channelName, string triggerName)
+		{
+			CommunicationChannelConfig channel = GetChannelByNameForSelection(CommunicationConfigStore.LoadOrCreateDefault(), protocol, channelName);
+			if (channel == null)
+			{
+				return string.Empty;
+			}
+
+			string selectedTrigger = NormalizeConfiguredCommunicationValue(triggerName);
+			if (string.IsNullOrWhiteSpace(selectedTrigger))
+			{
+				return string.Empty;
+			}
+
+			string customTriggerGlobal = NormalizeConfiguredCommunicationValue(channel.CustomTriggerGlobalVariableName);
+			if (!string.IsNullOrWhiteSpace(customTriggerGlobal) &&
+				string.Equals(selectedTrigger, customTriggerGlobal, StringComparison.OrdinalIgnoreCase))
+			{
+				return channel.CustomTriggerExpectedValue;
+			}
+
+			string triggerGlobal = NormalizeConfiguredCommunicationValue(channel.TriggerGlobalVariableName);
+			if (!string.IsNullOrWhiteSpace(triggerGlobal) &&
+				string.Equals(selectedTrigger, triggerGlobal, StringComparison.OrdinalIgnoreCase))
+			{
+				return channel.TriggerExpectedValue;
+			}
+
+			string legacyTrigger = NormalizeConfiguredCommunicationValue(channel.TriggerName);
+			if (!string.IsNullOrWhiteSpace(legacyTrigger) &&
+				!legacyTrigger.Equals("Trigger", StringComparison.OrdinalIgnoreCase) &&
+				string.Equals(selectedTrigger, legacyTrigger, StringComparison.OrdinalIgnoreCase))
+			{
+				return channel.TriggerExpectedValue;
+			}
+
+			return string.Empty;
+		}
+
+		private void RefreshCommunicationOptionCells(int rowIndex, bool resetDerivedSelections)
+		{
+			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count)
+			{
+				return;
+			}
+
+			DataGridViewRow row = dgvTrigger.Rows[rowIndex];
+			string protocolSelection = GetCellString(row, COL_PROTOCOL);
+			string channelName = GetCellString(row, COL_CHANNEL);
+
+			UpdateChannelCellOptions(rowIndex, protocolSelection, channelName);
+			channelName = GetCellString(row, COL_CHANNEL);
+
+			string triggerName = resetDerivedSelections ? string.Empty : GetCellString(row, COL_TRIGGER_NAME);
+			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channelName, triggerName);
+
+			string positionName = resetDerivedSelections ? string.Empty : GetCellString(row, COL_POSITION_NAME);
+			UpdatePositionSourceCellOptions(rowIndex, protocolSelection, channelName, positionName);
+			UpdateChannelDerivedValueCells(rowIndex);
+		}
+
+		private void UpdateChannelDerivedValueCells(int rowIndex)
+		{
+			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count)
+			{
+				return;
+			}
+
+			DataGridViewRow row = dgvTrigger.Rows[rowIndex];
+			string protocolSelection = GetCellString(row, COL_PROTOCOL);
+			string channelName = GetCellString(row, COL_CHANNEL);
+			if (string.IsNullOrWhiteSpace(channelName))
+			{
+				List<string> channels = LoadChannelOptionsForProtocols(protocolSelection);
+				channelName = channels.Count > 0 ? channels[0] : "Channel01";
+			}
+			CommunicationChannelConfig channel = GetChannelByNameForSelection(CommunicationConfigStore.LoadOrCreateDefault(), protocolSelection, channelName);
+
+			if (channel != null)
+			{
+				string triggerName = GetCellString(row, COL_TRIGGER_NAME);
+				List<string> triggerOptions = LoadTriggerSourceOptionsForProtocols(protocolSelection, channelName);
+				if (string.IsNullOrWhiteSpace(triggerName) ||
+					!triggerOptions.Any(x => string.Equals(x, triggerName, StringComparison.OrdinalIgnoreCase)))
+				{
+					triggerName = triggerOptions.Count > 0 ? triggerOptions[0] : string.Empty;
+					row.Cells[COL_TRIGGER_NAME].Value = triggerName;
+				}
+
+				row.Cells[COL_TRIGGER_VALUE].Value = GetTriggerExpectedValue(protocolSelection, channelName, triggerName);
+			}
+
+			string positionName = GetCellString(row, COL_POSITION_NAME);
+			string expectedValue = GetPositionExpectedValue(protocolSelection, channelName, positionName);
+			string currentPositionValue = GetCellString(row, COL_POSITION_VALUE);
+			if (string.IsNullOrWhiteSpace(currentPositionValue) && !string.IsNullOrEmpty(expectedValue))
+			{
+				row.Cells[COL_POSITION_VALUE].Value = expectedValue;
+			}
+			else if (string.IsNullOrWhiteSpace(currentPositionValue) &&
+				string.Equals(positionName, "Not Use", StringComparison.OrdinalIgnoreCase))
+			{
+				row.Cells[COL_POSITION_VALUE].Value = string.Empty;
+			}
+		}
+
+		private List<CommunicationChannelConfig> GetChannelsByProtocol(CommunicationConfig config, string protocol)
+		{
+			if (config == null || string.IsNullOrWhiteSpace(protocol))
+			{
+				return new List<CommunicationChannelConfig>();
+			}
+
+			if (protocol.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				protocol.Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.TcpIp == null || config.TcpIp.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: config.TcpIp.Channels;
+			}
+
+			if (protocol.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.Profinet == null || config.Profinet.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: config.Profinet.Channels;
+			}
+
+			if (protocol.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.S7 == null || config.S7.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: config.S7.Channels;
+			}
+
+			return new List<CommunicationChannelConfig>();
+		}
+
+		private List<CommunicationChannelConfig> GetChannelsByCommunicationSelection(CommunicationConfig config, string selection)
+		{
+			if (config == null || string.IsNullOrWhiteSpace(selection))
+			{
+				return new List<CommunicationChannelConfig>();
+			}
+
+			CommunicationInstanceConfig instance = FindCommunicationInstance(selection);
+			if (instance != null)
+			{
+				if (instance.CommunicationType == CommunicationType.TcpIp)
+				{
+					if (instance.TcpIp != null && instance.TcpIp.Channels != null)
+					{
+						return instance.TcpIp.Channels;
+					}
+				}
+				else if (instance.CommunicationType == CommunicationType.Profinet)
+				{
+					if (instance.Profinet != null && instance.Profinet.Channels != null)
+					{
+						return instance.Profinet.Channels;
+					}
+				}
+				else if (instance.CommunicationType == CommunicationType.S7)
+				{
+					if (instance.S7 != null && instance.S7.Channels != null)
+					{
+						return instance.S7.Channels;
+					}
+				}
+
+				return instance.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: instance.Channels;
+			}
+
+			return GetChannelsByProtocol(config, GetProtocolNameForCommunicationSelection(selection));
+		}
+
+		private List<CommInputVariable> GetInputVariablesByCommunicationSelection(CommunicationConfig config, string selection)
+		{
+			if (config == null || string.IsNullOrWhiteSpace(selection))
+			{
+				return new List<CommInputVariable>();
+			}
+
+			CommunicationInstanceConfig instance = FindCommunicationInstance(selection);
+			if (instance != null)
+			{
+				if (instance.CommunicationType == CommunicationType.TcpIp)
+				{
+					return instance.TcpIp == null || instance.TcpIp.InputVariables == null
+						? new List<CommInputVariable>()
+						: instance.TcpIp.InputVariables;
+				}
+
+				if (instance.CommunicationType == CommunicationType.Profinet)
+				{
+					return instance.Profinet == null || instance.Profinet.InputVariables == null
+						? new List<CommInputVariable>()
+						: instance.Profinet.InputVariables;
+				}
+
+				if (instance.CommunicationType == CommunicationType.S7)
+				{
+					return instance.S7 == null || instance.S7.InputVariables == null
+						? new List<CommInputVariable>()
+						: instance.S7.InputVariables;
+				}
+			}
+
+			string protocol = GetProtocolNameForCommunicationSelection(selection);
+			if (protocol.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.TcpIp == null || config.TcpIp.InputVariables == null
+					? new List<CommInputVariable>()
+					: config.TcpIp.InputVariables;
+			}
+
+			if (protocol.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.Profinet == null || config.Profinet.InputVariables == null
+					? new List<CommInputVariable>()
+					: config.Profinet.InputVariables;
+			}
+
+			if (protocol.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				return config.S7 == null || config.S7.InputVariables == null
+					? new List<CommInputVariable>()
+					: config.S7.InputVariables;
+			}
+
+			return new List<CommInputVariable>();
+		}
+
+		private CommunicationChannelConfig GetChannelByName(CommunicationConfig config, string protocol, string channelName)
+		{
+			List<CommunicationChannelConfig> channels = GetChannelsByProtocol(config, protocol);
+			if (string.IsNullOrWhiteSpace(channelName))
+			{
+				channelName = "Channel01";
+			}
+
+			return channels.FirstOrDefault(x =>
+				x != null && string.Equals(x.ChannelName, channelName, StringComparison.OrdinalIgnoreCase));
+		}
+
+		private CommunicationChannelConfig GetChannelByNameForSelection(CommunicationConfig config, string selection, string channelName)
+		{
+			List<CommunicationChannelConfig> channels = GetChannelsByCommunicationSelection(config, selection);
+			if (string.IsNullOrWhiteSpace(channelName))
+			{
+				channelName = "Channel01";
+			}
+
+			return channels.FirstOrDefault(x =>
+				x != null && string.Equals(x.ChannelName, channelName, StringComparison.OrdinalIgnoreCase));
 		}
 
 
@@ -1464,15 +2404,14 @@ namespace Aron_V3
 				return;
 			}
 
-			string jobRoot = GetFlowJobRootFolder();
-			string jobFolder = Path.Combine(jobRoot, newJobName);
+			string protocolName = GetSelectedProtocolNameSafe();
+			string channelName = GetSelectedChannelNameSafe();
 
 			try
 			{
-				Directory.CreateDirectory(jobFolder);
-
 				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-				FlowConfigStore.GetOrCreateJob(config, newJobName);
+				JobConfig job = FlowConfigStore.GetOrCreateJob(config, protocolName, channelName, newJobName);
+				job.ProgramNo = GetNextProgramNo(config, protocolName, channelName);
 				FlowConfigStore.Save(config);
 
 				LoadFlowConfigToJobList();
@@ -1538,10 +2477,12 @@ namespace Aron_V3
 				DeleteLocalJobFiles(jobName);
 
 				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-
-				if (config.Jobs != null)
+				string protocolName = GetSelectedProtocolNameSafe();
+				string channelName = GetSelectedChannelNameSafe();
+				ChannelFlowConfig channel = FlowConfigStore.GetChannel(config, protocolName, channelName);
+				if (channel != null && channel.Jobs != null)
 				{
-					config.Jobs.RemoveAll(j => j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+					channel.Jobs.RemoveAll(j => j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
 				}
 
 				FlowConfigStore.Save(config);
@@ -1587,12 +2528,38 @@ namespace Aron_V3
 
 		private void btnAddTask_Click(object sender, EventArgs e)
 		{
-			string protocol = GetDefaultEnabledProtocol();
-			string trigger = GetDefaultTriggerSource(protocol);
-			string position = GetDefaultPositionSource(protocol);
-			int rowIndex = dgvTrigger.Rows.Add("Task_New_" + (dgvTrigger.Rows.Count + 1).ToString("00"), protocol, trigger, "1", "Not Use", position, "1", string.Empty);
-			UpdateTriggerSourceCellOptions(rowIndex, protocol, trigger);
-			UpdatePositionSourceCellOptions(rowIndex, protocol, position);
+			string protocolSelection = GetCurrentTriggerGridProtocolText();
+			if (string.IsNullOrWhiteSpace(protocolSelection))
+			{
+				protocolSelection = GetDefaultCommunicationSelection();
+			}
+
+			string protocol = GetPrimaryProtocol(protocolSelection);
+			string channel = GetCurrentTriggerGridChannelText();
+			if (string.IsNullOrWhiteSpace(channel))
+			{
+				List<string> channels = LoadChannelOptionsForProtocols(protocolSelection);
+				channel = channels.Count > 0 ? channels[0] : "Channel01";
+			}
+			string trigger = GetDefaultTriggerSource(protocolSelection, channel);
+			string position = GetDefaultPositionSource(protocolSelection, channel);
+			CommunicationChannelConfig channelConfig = GetChannelByNameForSelection(CommunicationConfigStore.LoadOrCreateDefault(), protocolSelection, channel);
+			string triggerValue = channelConfig == null
+				? "1"
+				: channelConfig.TriggerExpectedValue;
+			string positionValue = GetPositionExpectedValue(protocolSelection, channel, position);
+			if (string.IsNullOrEmpty(positionValue)) positionValue = "1";
+			int rowIndex = dgvTrigger.Rows.Add("Task_New_" + (dgvTrigger.Rows.Count + 1).ToString("00"), protocolSelection, channel, trigger, triggerValue, "Not Use", position, positionValue, string.Empty);
+			UpdateChannelCellOptions(rowIndex, protocolSelection, channel);
+			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channel, trigger);
+			UpdatePositionSourceCellOptions(rowIndex, protocolSelection, channel, position);
+			dgvTrigger.Rows[rowIndex].Tag = new TaskGridRowTag
+			{
+				JobName = GetDefaultTaskJobName(),
+				OriginalTaskName = string.Empty,
+				OriginalProtocol = protocol,
+				OriginalChannel = channel
+			};
 		}
 
 		private void btnDeleteSelected_Click(object sender, EventArgs e)
@@ -1739,14 +2706,109 @@ namespace Aron_V3
 
 		private string GetSelectedJobNameSafe()
 		{
+			DataGridViewRow row = GetCurrentTriggerGridRow();
+			TaskGridRowTag tag = row == null ? null : row.Tag as TaskGridRowTag;
+			if (tag != null && !string.IsNullOrWhiteSpace(tag.JobName))
+			{
+				return tag.JobName;
+			}
+
 			ListBox jobList = GetJobListBox();
 
 			if (jobList == null || jobList.SelectedItem == null)
 			{
-				return string.Empty;
+				return GetDefaultTaskJobName();
 			}
 
 			return jobList.SelectedItem.ToString();
+		}
+
+		private string GetSelectedProtocolNameSafe()
+		{
+			DataGridViewRow row = GetCurrentTriggerGridRow();
+			if (row != null)
+			{
+				string protocolSelection = GetCellString(row, COL_PROTOCOL);
+				if (!string.IsNullOrWhiteSpace(protocolSelection))
+				{
+					return GetPrimaryProtocol(protocolSelection);
+				}
+			}
+
+			if (listProtocols != null && listProtocols.SelectedItem != null)
+			{
+				return listProtocols.SelectedItem.ToString();
+			}
+
+			return GetDefaultEnabledProtocol();
+		}
+
+		private string GetSelectedChannelNameSafe()
+		{
+			DataGridViewRow row = GetCurrentTriggerGridRow();
+			if (row != null)
+			{
+				string channelName = GetCellString(row, COL_CHANNEL);
+				if (!string.IsNullOrWhiteSpace(channelName))
+				{
+					return channelName;
+				}
+			}
+
+			if (listChannels != null && listChannels.SelectedItem != null)
+			{
+				return listChannels.SelectedItem.ToString();
+			}
+
+			return GetDefaultChannelName(GetSelectedProtocolNameSafe());
+		}
+
+		private DataGridViewRow GetCurrentTriggerGridRow()
+		{
+			if (dgvTrigger == null)
+			{
+				return null;
+			}
+
+			if (dgvTrigger.CurrentRow != null && !dgvTrigger.CurrentRow.IsNewRow)
+			{
+				return dgvTrigger.CurrentRow;
+			}
+
+			if (dgvTrigger.SelectedRows.Count > 0 && !dgvTrigger.SelectedRows[0].IsNewRow)
+			{
+				return dgvTrigger.SelectedRows[0];
+			}
+
+			return null;
+		}
+
+		private List<JobConfig> GetJobsForSelectedProtocol(ProjectFlowConfig config, string jobName)
+		{
+			List<JobConfig> result = new List<JobConfig>();
+			if (config == null || string.IsNullOrWhiteSpace(jobName))
+			{
+				return result;
+			}
+
+			string protocolName = GetSelectedProtocolNameSafe();
+			string channelName = GetSelectedChannelNameSafe();
+			ChannelFlowConfig channel = FlowConfigStore.GetChannel(config, protocolName, channelName);
+
+			if (channel == null || channel.Jobs == null)
+			{
+				return result;
+			}
+
+			foreach (JobConfig job in channel.Jobs)
+			{
+				if (job != null && string.Equals(job.JobName, jobName, StringComparison.OrdinalIgnoreCase))
+				{
+					result.Add(job);
+				}
+			}
+
+			return result;
 		}
 
 		private string GetProjectRootFolderForJobFile()
@@ -1764,14 +2826,7 @@ namespace Aron_V3
 
 		private string GetFlowJobRootFolder()
 		{
-			string jobFolder = Path.Combine(ProjectPathStore.ProjectRoot, "Job");
-
-			if (!Directory.Exists(jobFolder))
-			{
-				Directory.CreateDirectory(jobFolder);
-			}
-
-			return jobFolder;
+			return Path.Combine(ProjectPathStore.ProjectRoot, "Job");
 		}
 
 
@@ -1785,13 +2840,9 @@ namespace Aron_V3
 			}
 
 			string normalizedJobName = NormalizeJobName(jobName);
-			string jobRoot = GetFlowJobRootFolder();
-			string jobFolder = Path.Combine(jobRoot, normalizedJobName);
-
-			if (!paths.Any(x => string.Equals(x, jobFolder, StringComparison.OrdinalIgnoreCase)))
-			{
-				paths.Add(jobFolder);
-			}
+			string protocolName = GetSelectedProtocolNameSafe();
+			string channelName = GetSelectedChannelNameSafe();
+			paths.Add(FlowConfigStore.PathManager.GetJobFolder(protocolName, channelName, normalizedJobName));
 
 			return paths;
 		}
@@ -1826,7 +2877,6 @@ namespace Aron_V3
 			dgvTrigger.EndEdit();
 			ShowAllTriggerRows();
 			RefreshComboColumnOptions();
-			RefreshImageSourceColumnItems();
 			UpdateTriggerGridRowHeights();
 			dgvTrigger.ClearSelection();
 
@@ -1851,32 +2901,60 @@ namespace Aron_V3
 		{
 			CloseActiveComboPopup();
 			dgvTrigger.EndEdit();
-			string jobName = GetSelectedJobNameSafe();
-			if (string.IsNullOrEmpty(jobName)) { MessageBox.Show("Please select Job first.", "Save", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			JobConfig job = FlowConfigStore.GetOrCreateJob(config, jobName);
-			Dictionary<string, TaskConfig> oldTaskDict = job.Tasks.ToDictionary(t => t.TaskName, t => t, StringComparer.OrdinalIgnoreCase);
-			job.Tasks.Clear();
+			Dictionary<string, TaskConfig> oldTaskDict = CollectExistingTaskDictionary(config);
+			ClearAllJobTasks(config);
+
 			int runOrder = 1;
 			foreach (DataGridViewRow row in dgvTrigger.Rows)
 			{
 				if (row.IsNewRow) continue;
 				string taskName = GetCellString(row, COL_TASK_NAME);
 				if (string.IsNullOrEmpty(taskName)) continue;
-				TaskConfig task = oldTaskDict.ContainsKey(taskName) ? oldTaskDict[taskName] : FlowConfigStore.CreateDefaultTask(jobName, taskName, runOrder);
+
+				TaskGridRowTag tag = row.Tag as TaskGridRowTag;
+				string jobName = tag == null || string.IsNullOrWhiteSpace(tag.JobName)
+					? GetDefaultTaskJobName(config)
+					: NormalizeJobName(tag.JobName);
+				string originalTaskName = tag == null ? string.Empty : tag.OriginalTaskName;
+				if (string.IsNullOrWhiteSpace(originalTaskName))
+				{
+					originalTaskName = taskName;
+				}
+
+				string protocolSelection = JoinProtocolSelection(SplitProtocolSelection(GetCellString(row, COL_PROTOCOL)));
+				List<string> protocols = SplitProtocolSelection(protocolSelection);
+				string primaryProtocol = protocols.Count > 0 ? protocols[0] : GetDefaultEnabledProtocol();
+				primaryProtocol = GetProtocolNameForCommunicationSelection(primaryProtocol);
+				string primaryInstanceName = GetPrimaryInstanceName(protocolSelection);
+				string rowChannel = GetCellString(row, COL_CHANNEL);
+				if (string.IsNullOrWhiteSpace(rowChannel))
+				{
+					rowChannel = GetDefaultChannelName(primaryProtocol);
+				}
+
+				TaskConfig task = ResolveExistingTaskForRow(oldTaskDict, tag, taskName, jobName, primaryProtocol, rowChannel, runOrder);
+				JobConfig rowJob = FlowConfigStore.GetOrCreateJob(config, primaryProtocol, rowChannel, jobName);
+				RenameTaskFolderIfNeeded(
+					tag == null ? primaryProtocol : tag.OriginalProtocol,
+					tag == null ? rowChannel : tag.OriginalChannel,
+					jobName,
+					originalTaskName,
+					taskName);
 				task.TaskName = taskName;
 				task.RunOrder = runOrder;
 				task.Enabled = true;
-				task.CommunicationProtocol = GetCellString(row, COL_PROTOCOL);
+				task.CommunicationProtocol = primaryProtocol;
+				task.CommunicationChannel = rowChannel;
+				if (string.IsNullOrEmpty(task.CommunicationChannel)) task.CommunicationChannel = "Channel01";
+				task.CommunicationInstanceName = primaryInstanceName;
 				task.TriggerName = GetCellString(row, COL_TRIGGER_NAME);
 				task.TriggerValue = GetCellString(row, COL_TRIGGER_VALUE);
 				if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
-				string imageSource = GetCellString(row, COL_IMAGE_SOURCE);
-				imageSource = NormalizeImageSourceSelection(imageSource, GetAllCameraImageSourcesFromFiles());
-				if (string.IsNullOrEmpty(imageSource)) imageSource = "Not Use";
-				task.ImageSourceKey = imageSource;
-				task.InputAddress = imageSource;
+				task.ImageSourceKey = "Not Use";
+				task.InputAddress = string.Empty;
 				task.PositionName = GetCellString(row, COL_POSITION_NAME);
+				task.PositionOptionName = task.PositionName;
 				task.PositionValue = GetCellString(row, COL_POSITION_VALUE);
 				if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = "Not Use";
 				if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = "1";
@@ -1889,28 +2967,307 @@ namespace Aron_V3
 				task.Remark = GetCellString(row, COL_REMARK);
 				if (task.Steps == null) task.Steps = new List<StepConfig>();
 				if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
+				task.CommunicationTriggerBindings = BuildTriggerBindingsForRow(protocols, rowChannel, task);
 
 				// 图像源取消选择后，历史调度行不能继续要求旧图像源。
-				if (IsNotUseSelection(task.ImageSourceKey))
+				foreach (StepFlowItem flowItem in task.StepFlow)
 				{
-					foreach (StepFlowItem flowItem in task.StepFlow)
+					if (flowItem != null)
 					{
-						if (flowItem != null)
-						{
-							flowItem.InputImageKey = string.Empty;
-						}
+						flowItem.InputImageKey = string.Empty;
 					}
 				}
 
-				job.Tasks.Add(task);
-				Directory.CreateDirectory(FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName));
+				rowJob.Tasks.Add(task);
+				Directory.CreateDirectory(FlowConfigStore.PathManager.GetTaskFolder(primaryProtocol, rowChannel, jobName, taskName));
+				row.Tag = new TaskGridRowTag
+				{
+					JobName = jobName,
+					OriginalTaskName = taskName,
+					OriginalProtocol = primaryProtocol,
+					OriginalChannel = rowChannel
+				};
 				runOrder++;
 			}
 			FlowConfigStore.Save(config);
-			MoveLegacyTaskFoldersUnderTaskFolder(jobName);
 			RefreshTriggerGridAfterSave();
 
-			MessageBox.Show("Trigger configuration saved.", "Save", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			MessageBox.Show("Task configuration saved.", "Save", MessageBoxButtons.OK, MessageBoxIcon.Information);
+		}
+
+		private Dictionary<string, TaskConfig> CollectExistingTaskDictionary(ProjectFlowConfig config)
+		{
+			Dictionary<string, TaskConfig> result = new Dictionary<string, TaskConfig>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (JobConfig job in EnumerateAllJobs(config))
+			{
+				if (job == null || job.Tasks == null)
+				{
+					continue;
+				}
+
+				foreach (TaskConfig task in job.Tasks)
+				{
+					if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
+					{
+						continue;
+					}
+
+					AddTaskToDictionary(result, BuildTaskKey(job.JobName, job.ProtocolName, job.ChannelName, task.TaskName), task);
+					AddTaskToDictionary(result, task.TaskName, task);
+				}
+			}
+
+			return result;
+		}
+
+		private void AddTaskToDictionary(Dictionary<string, TaskConfig> dict, string key, TaskConfig task)
+		{
+			if (dict == null || string.IsNullOrWhiteSpace(key) || task == null || dict.ContainsKey(key))
+			{
+				return;
+			}
+
+			dict.Add(key, task);
+		}
+
+		private void ClearAllJobTasks(ProjectFlowConfig config)
+		{
+			foreach (JobConfig job in EnumerateAllJobs(config))
+			{
+				if (job != null && job.Tasks != null)
+				{
+					job.Tasks.Clear();
+				}
+			}
+		}
+
+		private TaskConfig ResolveExistingTaskForRow(
+			Dictionary<string, TaskConfig> oldTaskDict,
+			TaskGridRowTag tag,
+			string taskName,
+			string jobName,
+			string protocolName,
+			string channelName,
+			int runOrder)
+		{
+			string originalTaskName = tag == null ? string.Empty : tag.OriginalTaskName;
+			string originalProtocol = tag == null ? protocolName : tag.OriginalProtocol;
+			string originalChannel = tag == null ? channelName : tag.OriginalChannel;
+			string key = BuildTaskKey(jobName, originalProtocol, originalChannel, originalTaskName);
+
+			if (!string.IsNullOrWhiteSpace(key) && oldTaskDict.ContainsKey(key))
+			{
+				return oldTaskDict[key];
+			}
+
+			if (!string.IsNullOrWhiteSpace(originalTaskName) && oldTaskDict.ContainsKey(originalTaskName))
+			{
+				return oldTaskDict[originalTaskName];
+			}
+
+			if (!string.IsNullOrWhiteSpace(taskName) && oldTaskDict.ContainsKey(taskName))
+			{
+				return oldTaskDict[taskName];
+			}
+
+			return FlowConfigStore.CreateDefaultTask(jobName, taskName, runOrder);
+		}
+
+		private string BuildTaskKey(string jobName, string protocolName, string channelName, string taskName)
+		{
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				return string.Empty;
+			}
+
+			return NormalizeJobName(jobName) + "|" +
+				FlowConfigStore.NormalizeProtocolName(protocolName) + "|" +
+				FlowConfigStore.NormalizeChannelName(channelName) + "|" +
+				taskName.Trim();
+		}
+
+		private string GetDefaultTaskJobName()
+		{
+			return GetDefaultTaskJobName(FlowConfigStore.LoadOrCreateDefault());
+		}
+
+		private string GetDefaultTaskJobName(ProjectFlowConfig config)
+		{
+			JobConfig firstJob = EnumerateAllJobs(config)
+				.FirstOrDefault(x => x != null && !string.IsNullOrWhiteSpace(x.JobName));
+
+			if (firstJob != null)
+			{
+				return NormalizeJobName(firstJob.JobName);
+			}
+
+			return "Job_001";
+		}
+
+		private string GetDefaultCommunicationInstanceName(string protocolName)
+		{
+			CommunicationInstanceConfig instance = FindCommunicationInstance(protocolName);
+			if (instance != null)
+			{
+				return instance.InstanceName;
+			}
+
+			instance = FindFirstCommunicationInstanceByProtocol(protocolName);
+			if (instance != null)
+			{
+				return instance.InstanceName;
+			}
+
+			string normalized = FlowConfigStore.NormalizeProtocolName(protocolName);
+
+			if (normalized.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				normalized.Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
+			{
+				return "TCPIP_01";
+			}
+
+			if (normalized.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return "Profinet_01";
+			}
+
+			if (normalized.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				return "S7_01";
+			}
+
+			return string.Empty;
+		}
+
+		private List<TaskCommunicationTriggerBinding> BuildTriggerBindingsForRow(
+			List<string> protocols,
+			string channelName,
+			TaskConfig task)
+		{
+			List<TaskCommunicationTriggerBinding> result = new List<TaskCommunicationTriggerBinding>();
+
+			if (protocols == null || protocols.Count <= 0)
+			{
+				protocols = SplitProtocolSelection(GetDefaultCommunicationSelection());
+			}
+
+			foreach (string protocol in protocols)
+			{
+				if (string.IsNullOrWhiteSpace(protocol))
+				{
+					continue;
+				}
+
+				TaskCommunicationTriggerBinding binding = new TaskCommunicationTriggerBinding();
+				binding.CommunicationProtocol = GetProtocolNameForCommunicationSelection(protocol);
+				binding.CommunicationChannel = string.IsNullOrWhiteSpace(channelName) ? "Channel01" : channelName;
+				binding.CommunicationInstanceName = GetInstanceNameForCommunicationSelection(protocol);
+				binding.TriggerName = task.TriggerName;
+				binding.TriggerValue = task.TriggerValue;
+				binding.TriggerCompare = task.TriggerCompare;
+				binding.PositionName = task.PositionName;
+				binding.PositionValue = task.PositionValue;
+				binding.PositionCompare = task.PositionCompare;
+				result.Add(binding);
+			}
+
+			return result;
+		}
+
+		private void RenameTaskFolderIfNeeded(string jobName, string oldTaskName, string newTaskName)
+		{
+			RenameTaskFolderIfNeeded("TCP/IP", "Channel01", jobName, oldTaskName, newTaskName);
+		}
+
+		private void RenameTaskFolderIfNeeded(string protocolName, string channelName, string jobName, string oldTaskName, string newTaskName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName) ||
+				string.IsNullOrWhiteSpace(oldTaskName) ||
+				string.IsNullOrWhiteSpace(newTaskName) ||
+				string.Equals(oldTaskName, newTaskName, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			string oldFolder = FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, jobName, oldTaskName);
+			string newFolder = FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, jobName, newTaskName);
+
+			if (!Directory.Exists(oldFolder))
+			{
+				return;
+			}
+
+			if (!Directory.Exists(newFolder))
+			{
+				Directory.Move(oldFolder, newFolder);
+				return;
+			}
+
+			MergeDirectory(oldFolder, newFolder);
+
+			try
+			{
+				Directory.Delete(oldFolder, true);
+			}
+			catch
+			{
+			}
+		}
+
+		private string GetNextProgramNo(ProjectFlowConfig config, string protocolName, string channelName)
+		{
+			int index = 1;
+			List<JobConfig> jobs = FlowConfigStore.GetJobs(config, protocolName, channelName);
+
+			while (jobs != null && jobs.Any(j => string.Equals(j == null ? string.Empty : j.ProgramNo, index.ToString(), StringComparison.OrdinalIgnoreCase)))
+			{
+				index++;
+			}
+
+			return index.ToString();
+		}
+
+		private void MergeDirectory(string sourceFolder, string targetFolder)
+		{
+			if (string.IsNullOrWhiteSpace(sourceFolder) ||
+				string.IsNullOrWhiteSpace(targetFolder) ||
+				!Directory.Exists(sourceFolder))
+			{
+				return;
+			}
+
+			Directory.CreateDirectory(targetFolder);
+
+			foreach (string file in Directory.GetFiles(sourceFolder))
+			{
+				string target = Path.Combine(targetFolder, Path.GetFileName(file));
+				if (File.Exists(target))
+				{
+					File.Delete(target);
+				}
+				File.Move(file, target);
+			}
+
+			foreach (string dir in Directory.GetDirectories(sourceFolder))
+			{
+				string target = Path.Combine(targetFolder, Path.GetFileName(dir));
+				if (Directory.Exists(target))
+				{
+					MergeDirectory(dir, target);
+					try
+					{
+						Directory.Delete(dir, true);
+					}
+					catch
+					{
+					}
+				}
+				else
+				{
+					Directory.Move(dir, target);
+				}
+			}
 		}
 
 		private void MoveLegacyTaskFoldersUnderTaskFolder(string jobName)
@@ -1921,65 +3278,67 @@ namespace Aron_V3
 			}
 
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			JobConfig job = config.Jobs.FirstOrDefault(j => string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			string protocolName = GetSelectedProtocolNameSafe();
 
-			if (job == null || job.Tasks == null)
+			foreach (JobConfig job in GetJobsForSelectedProtocol(config, jobName))
 			{
-				return;
-			}
-
-			string jobFolder = FlowConfigStore.PathManager.GetJobFolder(jobName);
-
-			foreach (TaskConfig task in job.Tasks)
-			{
-				if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
+				if (job == null || job.Tasks == null)
 				{
 					continue;
 				}
 
-				string legacyFolder = Path.Combine(jobFolder, task.TaskName);
-				string newFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, task.TaskName);
-
-				if (!Directory.Exists(legacyFolder))
+				string jobFolder = FlowConfigStore.PathManager.GetJobFolder(protocolName, job.ChannelName, jobName);
+				foreach (TaskConfig task in job.Tasks)
 				{
-					continue;
-				}
-
-				if (!Directory.Exists(newFolder))
-				{
-					Directory.CreateDirectory(newFolder);
-				}
-
-				foreach (string file in Directory.GetFiles(legacyFolder))
-				{
-					string target = Path.Combine(newFolder, Path.GetFileName(file));
-
-					if (File.Exists(target))
+					if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
 					{
-						File.Delete(target);
+						continue;
 					}
 
-					File.Move(file, target);
-				}
+					string legacyFolder = Path.Combine(jobFolder, task.TaskName);
+					string newFolder = FlowConfigStore.PathManager.GetTaskFolder(protocolName, job.ChannelName, jobName, task.TaskName);
 
-				foreach (string dir in Directory.GetDirectories(legacyFolder))
-				{
-					string target = Path.Combine(newFolder, Path.GetFileName(dir));
-
-					if (Directory.Exists(target))
+					if (!Directory.Exists(legacyFolder))
 					{
-						Directory.Delete(target, true);
+						continue;
 					}
 
-					Directory.Move(dir, target);
-				}
+					if (!Directory.Exists(newFolder))
+					{
+						Directory.CreateDirectory(newFolder);
+					}
 
-				try
-				{
-					Directory.Delete(legacyFolder, true);
-				}
-				catch
-				{
+					foreach (string file in Directory.GetFiles(legacyFolder))
+					{
+						string target = Path.Combine(newFolder, Path.GetFileName(file));
+
+						if (File.Exists(target))
+						{
+							File.Delete(target);
+						}
+
+						File.Move(file, target);
+					}
+
+					foreach (string dir in Directory.GetDirectories(legacyFolder))
+					{
+						string target = Path.Combine(newFolder, Path.GetFileName(dir));
+
+						if (Directory.Exists(target))
+						{
+							Directory.Delete(target, true);
+						}
+
+						Directory.Move(dir, target);
+					}
+
+					try
+					{
+						Directory.Delete(legacyFolder, true);
+					}
+					catch
+					{
+					}
 				}
 			}
 		}
@@ -2023,12 +3382,9 @@ namespace Aron_V3
 				return;
 			}
 
-			_refreshComboPending = true;
-
 			if (this.Visible)
 			{
 				RefreshByCommunicationConfigChanged();
-				RefreshImageSourceColumnItems();
 			}
 		}
 
@@ -2050,6 +3406,13 @@ namespace Aron_V3
 
 			try
 			{
+				string oldProtocol = GetSelectedProtocolNameSafe();
+				string oldChannel = GetSelectedChannelNameSafe();
+				string oldJob = GetSelectedJobNameSafe();
+				LoadFlowConfigToJobList();
+				SelectListItem(listProtocols, oldProtocol);
+				SelectListItem(listChannels, oldChannel);
+				SelectListItem(listJobs, oldJob);
 				dgvTrigger.SuspendLayout();
 
 				RefreshComboColumnOptions();
@@ -2064,16 +3427,17 @@ namespace Aron_V3
 					}
 
 					string protocol = GetCellString(row, COL_PROTOCOL);
+					string channel = GetCellString(row, COL_CHANNEL);
 					string triggerName = GetCellString(row, COL_TRIGGER_NAME);
 					string positionName = GetCellString(row, COL_POSITION_NAME);
 
-					EnsureProtocolValueExists(protocol);
-					UpdateTriggerSourceCellOptions(i, protocol, triggerName);
-					UpdatePositionSourceCellOptions(i, protocol, positionName);
+					UpdateChannelCellOptions(i, protocol, channel);
+					channel = GetCellString(row, COL_CHANNEL);
+					UpdateTriggerSourceCellOptions(i, protocol, channel, triggerName);
+					UpdatePositionSourceCellOptions(i, protocol, channel, positionName);
 				}
 
 				dgvTrigger.Invalidate();
-				_refreshComboPending = false;
 			}
 			finally
 			{
@@ -2128,8 +3492,14 @@ namespace Aron_V3
 				return;
 			}
 
-			JobConfig job = config.Jobs.FirstOrDefault(j =>
-				j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			string protocolName = GetPrimaryProtocol(GetCurrentTriggerGridProtocolText());
+			string channelName = GetCurrentTriggerGridChannelText();
+			JobConfig job = FlowConfigStore.GetJobs(config, protocolName, channelName)
+				.FirstOrDefault(j => j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			if (job == null)
+			{
+				job = GetJobsForSelectedProtocol(config, jobName).FirstOrDefault();
+			}
 
 			if (job == null)
 			{
@@ -2146,17 +3516,7 @@ namespace Aron_V3
 				return;
 			}
 
-			string gridImageSourceText = GetCurrentTriggerGridImageSourceText();
-			string selectedImageSources = string.IsNullOrWhiteSpace(gridImageSourceText)
-				? task.ImageSourceKey
-				: gridImageSourceText;
-			List<string> imageSources = new List<string>();
-
-			// 触发管理的当前选择为准；Not Use 不再回收旧 StepFlow 的残留图像源。
-			if (!IsNotUseSelection(selectedImageSources))
-			{
-				AddImageSourceName(imageSources, selectedImageSources);
-			}
+			List<string> imageSources = CollectTaskReplayImageSources(task);
 
 			using (TaskTestDialog dialog = new TaskTestDialog(taskName, imageSources))
 			{
@@ -2231,6 +3591,47 @@ namespace Aron_V3
 			return string.Empty;
 		}
 
+		private string GetCurrentTriggerGridProtocolText()
+		{
+			DataGridViewRow row = GetCurrentTriggerGridRow();
+			if (row == null)
+			{
+				return string.Empty;
+			}
+
+			try
+			{
+				object value = row.Cells[COL_PROTOCOL].Value;
+				return value == null ? string.Empty : Convert.ToString(value);
+			}
+			catch
+			{
+				return string.Empty;
+			}
+		}
+
+		private string GetCurrentTriggerGridChannelText()
+		{
+			DataGridViewRow row = GetCurrentTriggerGridRow();
+			if (row != null)
+			{
+				try
+				{
+					object value = row.Cells[COL_CHANNEL].Value;
+					string channel = value == null ? string.Empty : Convert.ToString(value);
+					if (!string.IsNullOrWhiteSpace(channel))
+					{
+						return channel;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			return GetSelectedChannelNameSafe();
+		}
+
 
 
 		private bool ExecuteTaskTest(string jobName, string taskName, TaskRunOptions options)
@@ -2297,6 +3698,100 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private List<string> CollectTaskReplayImageSources(TaskConfig task)
+		{
+			List<string> hardwareSources = CollectTaskHardwareImageSources(task);
+			if (hardwareSources.Count > 0)
+			{
+				return hardwareSources;
+			}
+
+			return CollectTaskImageSources(task);
+		}
+
+		private List<string> CollectTaskHardwareImageSources(TaskConfig task)
+		{
+			List<string> result = new List<string>();
+
+			if (task == null || task.StepFlow == null)
+			{
+				return result;
+			}
+
+			foreach (StepFlowItem flowItem in task.StepFlow
+				.Where(x => x != null && x.Enabled)
+				.OrderBy(x => x.RunOrder))
+			{
+				if (!IsHardwareFlowBlock(flowItem))
+				{
+					continue;
+				}
+
+				AddImageSourceName(result, GetHardwareFlowImageSourceName(flowItem));
+			}
+
+			return result;
+		}
+
+		private bool IsHardwareFlowBlock(StepFlowItem flowItem)
+		{
+			return flowItem != null &&
+				string.Equals(flowItem.BlockType, "Hardware", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private string GetHardwareFlowImageSourceName(StepFlowItem flowItem)
+		{
+			if (flowItem == null)
+			{
+				return string.Empty;
+			}
+
+			if (!string.IsNullOrWhiteSpace(flowItem.BlockName))
+			{
+				return flowItem.BlockName.Trim();
+			}
+
+			if (!string.IsNullOrWhiteSpace(flowItem.StepName))
+			{
+				return flowItem.StepName.Trim();
+			}
+
+			string path = flowItem.BlockPath;
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				path = flowItem.Remark;
+			}
+
+			return ConvertHardwarePathToImageSourceName(path);
+		}
+
+		private string ConvertHardwarePathToImageSourceName(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				return string.Empty;
+			}
+
+			string text = path.Trim();
+			try
+			{
+				text = Path.GetFileName(text);
+				string folder = Path.GetFileName(Path.GetDirectoryName(path));
+				if (!string.IsNullOrWhiteSpace(folder))
+				{
+					text = folder + "." + text;
+				}
+			}
+			catch
+			{
+			}
+
+			return text
+				.Replace(Path.DirectorySeparatorChar, '.')
+				.Replace(Path.AltDirectorySeparatorChar, '.')
+				.Trim('.');
 		}
 
 		private bool IsNotUseSelection(string value)
@@ -2429,11 +3924,12 @@ namespace Aron_V3
 
 			if (isEnglish)
 			{
+				if (lblTriggerTitle != null) lblTriggerTitle.Text = "Task Settings";
 				dgvTrigger.Columns[COL_TASK_NAME].HeaderText = "Task Name";
 				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "Protocol";
+				dgvTrigger.Columns[COL_CHANNEL].HeaderText = "Channel";
 				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "Trigger Source";
 				dgvTrigger.Columns[COL_TRIGGER_VALUE].HeaderText = "Trigger Value";
-				dgvTrigger.Columns[COL_IMAGE_SOURCE].HeaderText = "Image Source";
 				dgvTrigger.Columns[COL_POSITION_NAME].HeaderText = "Position No.";
 				dgvTrigger.Columns[COL_POSITION_VALUE].HeaderText = "Position Value";
 				dgvTrigger.Columns[COL_REMARK].HeaderText = "Remark";
@@ -2444,11 +3940,12 @@ namespace Aron_V3
 			}
 			else
 			{
+				if (lblTriggerTitle != null) lblTriggerTitle.Text = "任务设置";
 				dgvTrigger.Columns[COL_TASK_NAME].HeaderText = "task名称";
-				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "通讯协议";
-				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "触发源名称";
+				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "协议";
+				dgvTrigger.Columns[COL_CHANNEL].HeaderText = "通道";
+				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "触发源";
 				dgvTrigger.Columns[COL_TRIGGER_VALUE].HeaderText = "触发源值";
-				dgvTrigger.Columns[COL_IMAGE_SOURCE].HeaderText = "图像源";
 				dgvTrigger.Columns[COL_POSITION_NAME].HeaderText = "位置号";
 				dgvTrigger.Columns[COL_POSITION_VALUE].HeaderText = "位置号值";
 				dgvTrigger.Columns[COL_REMARK].HeaderText = "备注";

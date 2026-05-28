@@ -165,12 +165,12 @@ namespace Aron_V3
 		{
 			if (isEnglish)
 			{
-				btnTriggerManager.Text = "⚡  Trigger";
+				btnTriggerManager.Text = "▣  Task";
 				btnTaskScheduler.Text = "▣  Scheduler";
 			}
 			else
 			{
-				btnTriggerManager.Text = "⚡  触发管理";
+				btnTriggerManager.Text = "▣  任务管理";
 				btnTaskScheduler.Text = "▣  任务调度";
 			}
 

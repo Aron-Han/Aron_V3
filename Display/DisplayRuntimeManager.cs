@@ -35,6 +35,11 @@ namespace Aron_V3
 		public string DisplayMode { get; set; }
 		public object Record { get; set; }
 		public string RecordKey { get; set; }
+		public bool InspectionOK { get; set; }
+		public string JobName { get; set; }
+		public string JobID { get; set; }
+		public string PosID { get; set; }
+		public string EngineID { get; set; }
 
 		public DisplayImageEventArgs()
 		{
@@ -43,6 +48,29 @@ namespace Aron_V3
 			SourceInfo = "";
 			DisplayMode = "Fit";
 			RecordKey = "";
+			InspectionOK = true;
+			JobName = "";
+			JobID = "";
+			PosID = "";
+			EngineID = "";
+		}
+	}
+
+	public class DisplayInfoEventArgs : EventArgs
+	{
+		public string DisplaySlotName { get; set; }
+		public string JobName { get; set; }
+		public string JobID { get; set; }
+		public string PosID { get; set; }
+		public string EngineID { get; set; }
+
+		public DisplayInfoEventArgs()
+		{
+			DisplaySlotName = "";
+			JobName = "";
+			JobID = "";
+			PosID = "";
+			EngineID = "";
 		}
 	}
 
@@ -53,6 +81,35 @@ namespace Aron_V3
 			new Dictionary<string, DisplayImageEventArgs>(StringComparer.OrdinalIgnoreCase);
 
 		public static event EventHandler<DisplayImageEventArgs> DisplayImageRequested;
+		public static event EventHandler<DisplayInfoEventArgs> DisplayInfoRequested;
+
+		public static void UpdateInfo(
+			string displaySlotName,
+			string jobName,
+			string jobID,
+			string posID,
+			string engineID)
+		{
+			if (string.IsNullOrWhiteSpace(displaySlotName) ||
+				string.Equals(displaySlotName, "Not Show", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			EventHandler<DisplayInfoEventArgs> handler = DisplayInfoRequested;
+			if (handler == null)
+			{
+				return;
+			}
+
+			DisplayInfoEventArgs args = new DisplayInfoEventArgs();
+			args.DisplaySlotName = displaySlotName;
+			args.JobName = jobName ?? string.Empty;
+			args.JobID = jobID ?? string.Empty;
+			args.PosID = posID ?? string.Empty;
+			args.EngineID = engineID ?? string.Empty;
+			handler(null, args);
+		}
 
 		public static void ShowImage(
 			string displaySlotName,
@@ -61,6 +118,22 @@ namespace Aron_V3
 			string displayMode,
 			object record,
 			string recordKey)
+		{
+			ShowImage(displaySlotName, image, sourceInfo, displayMode, record, recordKey, true, string.Empty, string.Empty, string.Empty, string.Empty);
+		}
+
+		public static void ShowImage(
+			string displaySlotName,
+			Bitmap image,
+			string sourceInfo,
+			string displayMode,
+			object record,
+			string recordKey,
+			bool inspectionOK,
+			string jobName,
+			string jobID,
+			string posID,
+			string engineID)
 		{
 			if (string.IsNullOrWhiteSpace(displaySlotName))
 			{
@@ -77,7 +150,7 @@ namespace Aron_V3
 				return;
 			}
 
-			DisplayImageEventArgs cachedArgs = CreateArgs(displaySlotName, image, sourceInfo, displayMode, record, recordKey);
+			DisplayImageEventArgs cachedArgs = CreateArgs(displaySlotName, image, sourceInfo, displayMode, record, recordKey, inspectionOK, jobName, jobID, posID, engineID);
 			lock (SyncRoot)
 			{
 				DisplayImageEventArgs old;
@@ -96,7 +169,7 @@ namespace Aron_V3
 				return;
 			}
 
-			handler(null, CreateArgs(displaySlotName, image, sourceInfo, displayMode, record, recordKey));
+			handler(null, CreateArgs(displaySlotName, image, sourceInfo, displayMode, record, recordKey, inspectionOK, jobName, jobID, posID, engineID));
 		}
 
 		public static List<DisplayImageEventArgs> GetLatestImages()
@@ -114,7 +187,12 @@ namespace Aron_V3
 							item.SourceInfo,
 							item.DisplayMode,
 							item.Record,
-							item.RecordKey));
+							item.RecordKey,
+							item.InspectionOK,
+							item.JobName,
+							item.JobID,
+							item.PosID,
+							item.EngineID));
 					}
 				}
 			}
@@ -127,7 +205,12 @@ namespace Aron_V3
 			string sourceInfo,
 			string displayMode,
 			object record,
-			string recordKey)
+			string recordKey,
+			bool inspectionOK,
+			string jobName,
+			string jobID,
+			string posID,
+			string engineID)
 		{
 			DisplayImageEventArgs args = new DisplayImageEventArgs();
 			args.DisplaySlotName = displaySlotName;
@@ -136,6 +219,11 @@ namespace Aron_V3
 			args.DisplayMode = string.IsNullOrWhiteSpace(displayMode) ? "Fit" : displayMode;
 			args.Record = record;
 			args.RecordKey = recordKey ?? string.Empty;
+			args.InspectionOK = inspectionOK;
+			args.JobName = jobName ?? string.Empty;
+			args.JobID = jobID ?? string.Empty;
+			args.PosID = posID ?? string.Empty;
+			args.EngineID = engineID ?? string.Empty;
 
 			return args;
 		}

@@ -76,7 +76,7 @@
 			this.btnTriggerManager.Height = 58;
 			this.btnTriggerManager.Margin = new System.Windows.Forms.Padding(0);
 			this.btnTriggerManager.Padding = new System.Windows.Forms.Padding(0);
-			this.btnTriggerManager.Text = "⚡  触发管理";
+			this.btnTriggerManager.Text = "▣  任务管理";
 			this.btnTriggerManager.UseVisualStyleBackColor = false;
 			this.btnTriggerManager.Click += new System.EventHandler(this.btnTriggerManager_Click);
 			// 

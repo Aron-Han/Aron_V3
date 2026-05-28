@@ -7,9 +7,9 @@ namespace Aron_V3
 	/// <summary>
 	/// C# Script Step 配置文件。
 	/// 建议保存路径：
-	/// Project\Job\<JobName>\Task\<TaskName>\Script\<ScriptName>.script.xml
+	/// Project\Task\<TaskName>\<ProgramNo>\Script\<ScriptName>.script.xml
 	/// 脚本文件：
-	/// Project\Job\<JobName>\Task\<TaskName>\Script\<ScriptName>.csx
+	/// Project\Task\<TaskName>\<ProgramNo>\Script\<ScriptName>.csx
 	/// </summary>
 	[Serializable]
 	public class CSharpScriptStepConfig

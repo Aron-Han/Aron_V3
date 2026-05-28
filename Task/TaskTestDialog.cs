@@ -25,7 +25,7 @@ namespace Aron_V3
 
 		public TaskTestOptions()
 		{
-			EnableCommunicationOutput = false;
+			EnableCommunicationOutput = true;
 			ImageSources = new List<TaskTestImageSource>();
 		}
 	}
@@ -198,10 +198,10 @@ namespace Aron_V3
 			chkEnableCommOutput.Height = 28;
 			chkEnableCommOutput.ForeColor = _text;
 			chkEnableCommOutput.BackColor = _back;
-			chkEnableCommOutput.Checked = false;
+			chkEnableCommOutput.Checked = true;
 
 			Label commTip = new Label();
-			commTip.Text = "默认屏蔽通讯输出，避免测试时误发 PLC / TCP / S7 结果。";
+			commTip.Text = "勾选后，Task 测试会按已勾选的 Step 通讯输出发送。";
 			commTip.Left = 420;
 			commTip.Top = 10;
 			commTip.Width = 300;

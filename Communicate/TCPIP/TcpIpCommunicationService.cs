@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -15,14 +16,15 @@ namespace Aron_V3
 	/// 设计目标：
 	/// 1. 同时支持 Server / Client。
 	/// 2. 不依赖 UI 控件，方便后续在主程序、流程管理、测试窗口中复用。
-	/// 3. TCP/IP 当前按 String 处理，变量的 ByteOffset 在界面上等价为 Char Offset。
-	/// 4. 接收到原始字符串后，会按 CommunicationConfig 中的 InputVariables 解析出变量字典。
+	/// 3. TCP/IP 可按 String 或 Byte 模式处理，Byte 模式支持大小端转换。
+	/// 4. 接收到原始数据后，会按 CommunicationConfig 中的 InputVariables 解析出变量字典。
 	/// 5. 后续 Profinet / S7 也可以实现 ICommunicationRuntime，统一由 CommunicationRuntimeManager 管理。
 	/// </summary>
 	public class TcpIpCommunicationService : ICommunicationRuntime
 	{
 		private readonly object _syncRoot = new object();
 		private readonly object _sendLock = new object();
+		private readonly string _instanceName;
 
 		private TcpIpConfig _tcpConfig;
 		private CancellationTokenSource _cts;
@@ -39,6 +41,11 @@ namespace Aron_V3
 		public CommunicationType CommunicationType
 		{
 			get { return CommunicationType.TcpIp; }
+		}
+
+		public string InstanceName
+		{
+			get { return _instanceName; }
 		}
 
 		public CommunicationConnectionState State
@@ -76,6 +83,18 @@ namespace Aron_V3
 		public event EventHandler<CommunicationStatusChangedEventArgs> StatusChanged;
 		public event EventHandler<CommunicationDataReceivedEventArgs> DataReceived;
 		public event EventHandler<Exception> ErrorOccurred;
+
+		public TcpIpCommunicationService()
+			: this("TCPIP_01")
+		{
+		}
+
+		public TcpIpCommunicationService(string instanceName)
+		{
+			_instanceName = string.IsNullOrWhiteSpace(instanceName)
+				? "TCPIP_01"
+				: instanceName.Trim();
+		}
 
 		public void Start(CommunicationConfig config)
 		{
@@ -401,16 +420,7 @@ namespace Aron_V3
 				}
 				finally
 				{
-					if (client != null)
-					{
-						try
-						{
-							client.Close();
-						}
-						catch
-						{
-						}
-					}
+					RemoveClient(client);
 
 					lock (_syncRoot)
 					{
@@ -449,14 +459,15 @@ namespace Aron_V3
 					byte[] actual = new byte[count];
 					Buffer.BlockCopy(buffer, 0, actual, 0, count);
 
-					string text = Encoding.ASCII.GetString(actual, 0, actual.Length);
-					Dictionary<string, string> values = ParseInputVariables(text);
+					string text = TcpIpPayloadCodec.BuildRawDisplayText(actual, _tcpConfig);
+					Dictionary<string, string> values = TcpIpPayloadCodec.ParseInputVariables(actual, text, _tcpConfig);
 
 					OnDataReceived(new CommunicationDataReceivedEventArgs(
 						CommunicationType.TcpIp,
 						text,
 						actual,
-						values));
+						values,
+						InstanceName));
 				}
 			}
 			catch (ObjectDisposedException)
@@ -472,28 +483,6 @@ namespace Aron_V3
 			finally
 			{
 				RemoveClient(client);
-
-				try
-				{
-					if (stream != null)
-					{
-						stream.Close();
-					}
-				}
-				catch
-				{
-				}
-
-				try
-				{
-					if (client != null)
-					{
-						client.Close();
-					}
-				}
-				catch
-				{
-				}
 
 				if (_tcpConfig != null && _tcpConfig.IsServer)
 				{
@@ -519,57 +508,14 @@ namespace Aron_V3
 			}
 		}
 
-		private Dictionary<string, string> ParseInputVariables(string text)
-		{
-			Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-			if (_tcpConfig == null || _tcpConfig.InputVariables == null)
-			{
-				return result;
-			}
-
-			if (text == null)
-			{
-				text = string.Empty;
-			}
-
-			foreach (CommInputVariable item in _tcpConfig.InputVariables)
-			{
-				if (item == null || string.IsNullOrWhiteSpace(item.Name))
-				{
-					continue;
-				}
-
-				int start = item.ByteOffset;
-				int length = item.Length;
-
-				if (start < 0)
-				{
-					start = 0;
-				}
-
-				if (length <= 0)
-				{
-					length = text.Length - start;
-				}
-
-				string value = string.Empty;
-
-				if (start < text.Length)
-				{
-					int safeLength = Math.Min(length, text.Length - start);
-					value = text.Substring(start, safeLength);
-				}
-
-				result[item.Name] = value.Trim();
-			}
-
-			return result;
-		}
-
 		public string BuildOutputMessage(Dictionary<string, object> outputValues)
 		{
-			if (_tcpConfig == null || _tcpConfig.OutputVariables == null)
+			return BuildOutputMessage(outputValues, _tcpConfig);
+		}
+
+		public string BuildOutputMessage(Dictionary<string, object> outputValues, TcpIpConfig tcpConfig)
+		{
+			if (tcpConfig == null || tcpConfig.OutputVariables == null)
 			{
 				return string.Empty;
 			}
@@ -581,7 +527,7 @@ namespace Aron_V3
 
 			int length = 0;
 
-			foreach (CommOutputVariable item in _tcpConfig.OutputVariables)
+			foreach (CommOutputVariable item in tcpConfig.OutputVariables)
 			{
 				if (item == null)
 				{
@@ -607,7 +553,7 @@ namespace Aron_V3
 				chars[i] = ' ';
 			}
 
-			foreach (CommOutputVariable item in _tcpConfig.OutputVariables)
+			foreach (CommOutputVariable item in tcpConfig.OutputVariables)
 			{
 				if (item == null || string.IsNullOrWhiteSpace(item.Name))
 				{
@@ -656,7 +602,18 @@ namespace Aron_V3
 
 		public bool SendOutputValues(Dictionary<string, object> outputValues)
 		{
-			string message = BuildOutputMessage(outputValues);
+			return SendOutputValues(outputValues, _tcpConfig);
+		}
+
+		public bool SendOutputValues(Dictionary<string, object> outputValues, TcpIpConfig tcpConfig)
+		{
+			if (TcpIpPayloadCodec.IsByteMode(tcpConfig))
+			{
+				byte[] data = TcpIpPayloadCodec.BuildOutputBytes(outputValues, tcpConfig);
+				return SendBytes(data);
+			}
+
+			string message = BuildOutputMessage(outputValues, tcpConfig);
 			return SendString(message);
 		}
 
@@ -692,6 +649,8 @@ namespace Aron_V3
 					_clientForClientMode = null;
 				}
 			}
+
+			CloseTcpClient(client);
 		}
 
 		private void CloseAllClients()
@@ -712,16 +671,36 @@ namespace Aron_V3
 
 			foreach (TcpClient client in snapshot)
 			{
-				try
+				CloseTcpClient(client);
+			}
+		}
+
+		private static void CloseTcpClient(TcpClient client)
+		{
+			if (client == null)
+			{
+				return;
+			}
+
+			try
+			{
+				Socket socket = client.Client;
+
+				if (socket != null && socket.Connected)
 				{
-					if (client != null)
-					{
-						client.Close();
-					}
+					socket.Shutdown(SocketShutdown.Both);
 				}
-				catch
-				{
-				}
+			}
+			catch
+			{
+			}
+
+			try
+			{
+				client.Close();
+			}
+			catch
+			{
 			}
 		}
 
@@ -768,7 +747,8 @@ namespace Aron_V3
 				handler(this, new CommunicationStatusChangedEventArgs(
 					CommunicationType.TcpIp,
 					state,
-					message));
+					message,
+					InstanceName));
 			}
 		}
 
@@ -870,6 +850,9 @@ namespace Aron_V3
 			target.LocalPort = source.LocalPort;
 			target.RemoteIP = source.RemoteIP;
 			target.RemotePort = source.RemotePort;
+			target.PayloadMode = source.PayloadMode;
+			target.ByteOrder = source.ByteOrder;
+			target.Heartbeat = CloneHeartbeat(source.Heartbeat);
 
 			target.InputVariables = new List<CommInputVariable>();
 			target.OutputVariables = new List<CommOutputVariable>();
@@ -893,7 +876,8 @@ namespace Aron_V3
 						ByteOffset = item.ByteOffset,
 						BitOffset = item.BitOffset,
 						Length = item.Length,
-						Remark = item.Remark
+						Remark = item.Remark,
+						GlobalVariableName = item.GlobalVariableName
 					});
 				}
 			}
@@ -914,11 +898,27 @@ namespace Aron_V3
 						ByteOffset = item.ByteOffset,
 						BitOffset = item.BitOffset,
 						Length = item.Length,
-						Remark = item.Remark
+						Remark = item.Remark,
+						GlobalVariableName = item.GlobalVariableName
 					});
 				}
 			}
 
+			return target;
+		}
+
+		private static CommunicationHeartbeatConfig CloneHeartbeat(CommunicationHeartbeatConfig source)
+		{
+			CommunicationHeartbeatConfig target = new CommunicationHeartbeatConfig();
+			if (source == null)
+			{
+				return target;
+			}
+
+			target.Enabled = source.Enabled;
+			target.OutputName = source.OutputName;
+			target.HeartbeatText = source.HeartbeatText;
+			target.IntervalMs = source.IntervalMs;
 			return target;
 		}
 
@@ -931,6 +931,744 @@ namespace Aron_V3
 
 			_disposed = true;
 			Stop();
+		}
+	}
+
+	internal static class TcpIpPayloadCodec
+	{
+		public static bool IsByteMode(TcpIpConfig config)
+		{
+			return config != null && config.PayloadMode == TcpIpPayloadMode.Byte;
+		}
+
+		public static string BuildRawDisplayText(byte[] data, TcpIpConfig config)
+		{
+			if (data == null)
+			{
+				data = new byte[0];
+			}
+
+			if (IsByteMode(config))
+			{
+				return ToHexString(data);
+			}
+
+			return Encoding.ASCII.GetString(data, 0, data.Length);
+		}
+
+		public static Dictionary<string, string> ParseInputVariables(byte[] data, string rawText, TcpIpConfig config)
+		{
+			Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			if (config == null || config.InputVariables == null)
+			{
+				return result;
+			}
+
+			foreach (CommInputVariable item in config.InputVariables)
+			{
+				if (item == null || string.IsNullOrWhiteSpace(item.Name))
+				{
+					continue;
+				}
+
+				result[item.Name] = IsByteMode(config)
+					? ParseInputVariableFromBytes(data, item, config.ByteOrder)
+					: ParseInputVariableFromString(rawText, item);
+			}
+
+			return result;
+		}
+
+		public static string ParseInputVariableFromString(string rawText, CommInputVariable item)
+		{
+			if (rawText == null)
+			{
+				rawText = string.Empty;
+			}
+
+			if (item == null)
+			{
+				return string.Empty;
+			}
+
+			int offset = item.ByteOffset < 0 ? 0 : item.ByteOffset;
+			int length = item.Length <= 0 ? rawText.Length - offset : item.Length;
+
+			if (offset >= rawText.Length || length <= 0)
+			{
+				return string.Empty;
+			}
+
+			int realLength = Math.Min(length, rawText.Length - offset);
+			string value = rawText.Substring(offset, realLength);
+
+			return value.Trim();
+		}
+
+		public static string ParseInputVariableFromBytes(byte[] data, CommInputVariable item, CommByteOrder byteOrder)
+		{
+			if (data == null)
+			{
+				data = new byte[0];
+			}
+
+			if (item == null)
+			{
+				return string.Empty;
+			}
+
+			int offset = item.ByteOffset < 0 ? 0 : item.ByteOffset;
+
+			if (offset >= data.Length)
+			{
+				return string.Empty;
+			}
+
+			if (item.DataType == CommVariableDataType.Bool)
+			{
+				int bitOffset = item.BitOffset;
+				if (bitOffset >= 0 && bitOffset <= 7)
+				{
+					return (data[offset] & (1 << bitOffset)) != 0 ? "1" : "0";
+				}
+
+				int boolLength = item.Length <= 0 ? 1 : item.Length;
+				int realBoolLength = Math.Min(boolLength, data.Length - offset);
+				for (int i = 0; i < realBoolLength; i++)
+				{
+					if (data[offset + i] != 0)
+					{
+						return "1";
+					}
+				}
+
+				return "0";
+			}
+
+			if (item.DataType == CommVariableDataType.String)
+			{
+				int stringLength = item.Length <= 0 ? data.Length - offset : item.Length;
+				if (stringLength <= 0)
+				{
+					return string.Empty;
+				}
+
+				int realStringLength = Math.Min(stringLength, data.Length - offset);
+				return Encoding.ASCII.GetString(data, offset, realStringLength).TrimEnd('\0').Trim();
+			}
+
+			if (item.DataType == CommVariableDataType.Bytes)
+			{
+				int bytesLength = item.Length <= 0 ? data.Length - offset : item.Length;
+				if (bytesLength <= 0)
+				{
+					return string.Empty;
+				}
+
+				int realBytesLength = Math.Min(bytesLength, data.Length - offset);
+				byte[] slice = new byte[realBytesLength];
+				Buffer.BlockCopy(data, offset, slice, 0, realBytesLength);
+				return ToHexString(slice);
+			}
+
+			int length = GetFixedByteLength(item.DataType);
+			byte[] bytes = ReadFixedBytes(data, offset, length, byteOrder);
+
+			if (bytes == null)
+			{
+				return string.Empty;
+			}
+
+			try
+			{
+				switch (item.DataType)
+				{
+					case CommVariableDataType.Float:
+						return BitConverter.ToSingle(bytes, 0).ToString("G", CultureInfo.InvariantCulture);
+					case CommVariableDataType.Double:
+						return BitConverter.ToDouble(bytes, 0).ToString("G", CultureInfo.InvariantCulture);
+					case CommVariableDataType.ShortInt:
+						return BitConverter.ToInt16(bytes, 0).ToString(CultureInfo.InvariantCulture);
+					case CommVariableDataType.LongInt:
+						return BitConverter.ToInt32(bytes, 0).ToString(CultureInfo.InvariantCulture);
+					default:
+						return string.Empty;
+				}
+			}
+			catch
+			{
+				return string.Empty;
+			}
+		}
+
+		public static byte[] BuildOutputBytes(Dictionary<string, object> outputValues, TcpIpConfig config)
+		{
+			if (config == null || config.OutputVariables == null)
+			{
+				return new byte[0];
+			}
+
+			if (outputValues == null)
+			{
+				outputValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+			}
+
+			int totalLength = 0;
+
+			foreach (CommOutputVariable item in config.OutputVariables)
+			{
+				if (item == null)
+				{
+					continue;
+				}
+
+				object value;
+				TryGetOutputValue(outputValues, item.Name, out value);
+
+				int offset = item.ByteOffset < 0 ? 0 : item.ByteOffset;
+				int end = offset + GetOutputByteLength(item, value);
+				if (end > totalLength)
+				{
+					totalLength = end;
+				}
+			}
+
+			if (totalLength <= 0)
+			{
+				return new byte[0];
+			}
+
+			byte[] buffer = new byte[totalLength];
+
+			foreach (CommOutputVariable item in config.OutputVariables)
+			{
+				if (item == null || string.IsNullOrWhiteSpace(item.Name))
+				{
+					continue;
+				}
+
+				object rawValue;
+				if (!TryGetOutputValue(outputValues, item.Name, out rawValue))
+				{
+					continue;
+				}
+
+				WriteOutputVariable(buffer, item, rawValue, config.ByteOrder);
+			}
+
+			return buffer;
+		}
+
+		public static bool TryParseHexText(string text, out byte[] data, out string error)
+		{
+			data = new byte[0];
+			error = string.Empty;
+
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				error = "Hex text is empty.";
+				return false;
+			}
+
+			char[] separators = new char[] { ' ', ',', ';', '-', '\r', '\n', '\t' };
+			string[] tokens = text.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+			List<byte> bytes = new List<byte>();
+
+			if (tokens.Length == 1)
+			{
+				string compact = NormalizeHexToken(tokens[0]);
+				if (compact.Length > 2 && compact.Length % 2 == 0)
+				{
+					for (int i = 0; i < compact.Length; i += 2)
+					{
+						byte value;
+						if (!TryParseHexByte(compact.Substring(i, 2), out value))
+						{
+							error = "Invalid hex byte: " + compact.Substring(i, 2);
+							return false;
+						}
+
+						bytes.Add(value);
+					}
+				}
+				else
+				{
+					byte value;
+					if (!TryParseHexByte(compact, out value))
+					{
+						error = "Invalid hex byte: " + compact;
+						return false;
+					}
+
+					bytes.Add(value);
+				}
+			}
+			else
+			{
+				foreach (string token in tokens)
+				{
+					string normalized = NormalizeHexToken(token);
+
+					if (normalized.Length > 2 && normalized.Length % 2 == 0)
+					{
+						for (int i = 0; i < normalized.Length; i += 2)
+						{
+							byte value;
+							if (!TryParseHexByte(normalized.Substring(i, 2), out value))
+							{
+								error = "Invalid hex byte: " + normalized.Substring(i, 2);
+								return false;
+							}
+
+							bytes.Add(value);
+						}
+					}
+					else
+					{
+						byte value;
+						if (!TryParseHexByte(normalized, out value))
+						{
+							error = "Invalid hex byte: " + normalized;
+							return false;
+						}
+
+						bytes.Add(value);
+					}
+				}
+			}
+
+			data = bytes.ToArray();
+			return true;
+		}
+
+		public static string ToHexString(byte[] data)
+		{
+			if (data == null || data.Length <= 0)
+			{
+				return string.Empty;
+			}
+
+			StringBuilder sb = new StringBuilder(data.Length * 3);
+
+			for (int i = 0; i < data.Length; i++)
+			{
+				if (i > 0)
+				{
+					sb.Append(' ');
+				}
+
+				sb.Append(data[i].ToString("X2", CultureInfo.InvariantCulture));
+			}
+
+			return sb.ToString();
+		}
+
+		private static void WriteOutputVariable(byte[] buffer, CommOutputVariable item, object rawValue, CommByteOrder byteOrder)
+		{
+			int offset = item.ByteOffset < 0 ? 0 : item.ByteOffset;
+
+			if (offset >= buffer.Length)
+			{
+				return;
+			}
+
+			if (item.DataType == CommVariableDataType.Bool)
+			{
+				bool boolValue = ToBool(rawValue);
+				int bitOffset = item.BitOffset;
+
+				if (bitOffset >= 0 && bitOffset <= 7)
+				{
+					byte mask = (byte)(1 << bitOffset);
+					if (boolValue)
+					{
+						buffer[offset] = (byte)(buffer[offset] | mask);
+					}
+					else
+					{
+						buffer[offset] = (byte)(buffer[offset] & ~mask);
+					}
+				}
+				else
+				{
+					buffer[offset] = boolValue ? (byte)1 : (byte)0;
+				}
+
+				return;
+			}
+
+			if (item.DataType == CommVariableDataType.String)
+			{
+				string text = Convert.ToString(rawValue, CultureInfo.InvariantCulture);
+				if (text == null)
+				{
+					text = string.Empty;
+				}
+
+				int length = item.Length <= 0 ? Encoding.ASCII.GetByteCount(text) : item.Length;
+				byte[] textBytes = Encoding.ASCII.GetBytes(text);
+				WriteBytes(buffer, offset, textBytes, length);
+				return;
+			}
+
+			if (item.DataType == CommVariableDataType.Bytes)
+			{
+				byte[] rawBytes = ConvertToRawBytes(rawValue);
+				int length = item.Length <= 0 ? rawBytes.Length : item.Length;
+				WriteBytes(buffer, offset, rawBytes, length);
+				return;
+			}
+
+			byte[] data = BuildNumericBytes(item.DataType, rawValue);
+			if (data == null || data.Length <= 0)
+			{
+				return;
+			}
+
+			ApplyTargetByteOrder(data, byteOrder);
+			WriteBytes(buffer, offset, data, data.Length);
+		}
+
+		private static byte[] BuildNumericBytes(CommVariableDataType dataType, object rawValue)
+		{
+			switch (dataType)
+			{
+				case CommVariableDataType.Float:
+					float floatValue;
+					if (!TryToSingle(rawValue, out floatValue)) return null;
+					return BitConverter.GetBytes(floatValue);
+				case CommVariableDataType.Double:
+					double doubleValue;
+					if (!TryToDouble(rawValue, out doubleValue)) return null;
+					return BitConverter.GetBytes(doubleValue);
+				case CommVariableDataType.ShortInt:
+					short shortValue;
+					if (!TryToInt16(rawValue, out shortValue)) return null;
+					return BitConverter.GetBytes(shortValue);
+				case CommVariableDataType.LongInt:
+					int intValue;
+					if (!TryToInt32(rawValue, out intValue)) return null;
+					return BitConverter.GetBytes(intValue);
+				default:
+					return null;
+			}
+		}
+
+		private static int GetOutputByteLength(CommOutputVariable item, object value)
+		{
+			if (item == null)
+			{
+				return 0;
+			}
+
+			if (item.DataType == CommVariableDataType.String)
+			{
+				if (item.Length > 0)
+				{
+					return item.Length;
+				}
+
+				string text = value == null ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture);
+				return Math.Max(1, Encoding.ASCII.GetByteCount(text));
+			}
+
+			if (item.DataType == CommVariableDataType.Bytes)
+			{
+				if (item.Length > 0)
+				{
+					return item.Length;
+				}
+
+				byte[] data = ConvertToRawBytes(value);
+				return Math.Max(1, data.Length);
+			}
+
+			if (item.DataType == CommVariableDataType.Bool)
+			{
+				return 1;
+			}
+
+			return GetFixedByteLength(item.DataType);
+		}
+
+		private static int GetFixedByteLength(CommVariableDataType dataType)
+		{
+			switch (dataType)
+			{
+				case CommVariableDataType.Float:
+					return 4;
+				case CommVariableDataType.Double:
+					return 8;
+				case CommVariableDataType.ShortInt:
+					return 2;
+				case CommVariableDataType.LongInt:
+					return 4;
+				case CommVariableDataType.Bool:
+					return 1;
+				case CommVariableDataType.Bytes:
+					return 1;
+				default:
+					return 1;
+			}
+		}
+
+		private static byte[] ConvertToRawBytes(object value)
+		{
+			if (value == null)
+			{
+				return new byte[0];
+			}
+
+			byte[] bytes = value as byte[];
+			if (bytes != null)
+			{
+				byte[] copy = new byte[bytes.Length];
+				Buffer.BlockCopy(bytes, 0, copy, 0, bytes.Length);
+				return copy;
+			}
+
+			string text = Convert.ToString(value, CultureInfo.InvariantCulture);
+			byte[] data;
+			string error;
+			return TryParseHexText(text, out data, out error) ? data : new byte[0];
+		}
+
+		private static byte[] ReadFixedBytes(byte[] data, int offset, int length, CommByteOrder byteOrder)
+		{
+			if (data == null || length <= 0 || offset < 0 || offset + length > data.Length)
+			{
+				return null;
+			}
+
+			byte[] result = new byte[length];
+			Buffer.BlockCopy(data, offset, result, 0, length);
+			ApplySourceByteOrder(result, byteOrder);
+			return result;
+		}
+
+		private static void ApplySourceByteOrder(byte[] data, CommByteOrder byteOrder)
+		{
+			ApplyEndianForBitConverter(data, byteOrder);
+		}
+
+		private static void ApplyTargetByteOrder(byte[] data, CommByteOrder byteOrder)
+		{
+			ApplyEndianForBitConverter(data, byteOrder);
+		}
+
+		private static void ApplyEndianForBitConverter(byte[] data, CommByteOrder byteOrder)
+		{
+			if (data == null || data.Length <= 1)
+			{
+				return;
+			}
+
+			bool targetLittleEndian = byteOrder == CommByteOrder.LittleEndian;
+			if (BitConverter.IsLittleEndian != targetLittleEndian)
+			{
+				Array.Reverse(data);
+			}
+		}
+
+		private static void WriteBytes(byte[] buffer, int offset, byte[] data, int length)
+		{
+			if (buffer == null || data == null || offset < 0 || offset >= buffer.Length || length <= 0)
+			{
+				return;
+			}
+
+			int realLength = Math.Min(length, buffer.Length - offset);
+			int copyLength = Math.Min(realLength, data.Length);
+
+			if (copyLength > 0)
+			{
+				Buffer.BlockCopy(data, 0, buffer, offset, copyLength);
+			}
+		}
+
+		private static bool TryGetOutputValue(Dictionary<string, object> values, string name, out object value)
+		{
+			value = null;
+
+			if (values == null || string.IsNullOrWhiteSpace(name))
+			{
+				return false;
+			}
+
+			if (values.TryGetValue(name, out value))
+			{
+				return true;
+			}
+
+			foreach (KeyValuePair<string, object> pair in values)
+			{
+				if (string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase))
+				{
+					value = pair.Value;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool TryToSingle(object value, out float result)
+		{
+			result = 0;
+			double doubleValue;
+			if (!TryToDouble(value, out doubleValue))
+			{
+				return false;
+			}
+
+			result = (float)doubleValue;
+			return true;
+		}
+
+		private static bool TryToDouble(object value, out double result)
+		{
+			result = 0;
+
+			if (value == null)
+			{
+				return false;
+			}
+
+			try
+			{
+				if (value is string)
+				{
+					string text = ((string)value).Trim();
+					return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out result) ||
+						   double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out result);
+				}
+
+				result = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+				return true;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		private static bool TryToInt16(object value, out short result)
+		{
+			result = 0;
+			int intValue;
+			if (!TryToInt32(value, out intValue))
+			{
+				return false;
+			}
+
+			if (intValue < short.MinValue || intValue > short.MaxValue)
+			{
+				return false;
+			}
+
+			result = (short)intValue;
+			return true;
+		}
+
+		private static bool TryToInt32(object value, out int result)
+		{
+			result = 0;
+
+			if (value == null)
+			{
+				return false;
+			}
+
+			if (value is bool)
+			{
+				result = (bool)value ? 1 : 0;
+				return true;
+			}
+
+			try
+			{
+				if (value is string)
+				{
+					string text = ((string)value).Trim();
+					if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out result) ||
+						int.TryParse(text, NumberStyles.Integer, CultureInfo.CurrentCulture, out result))
+					{
+						return true;
+					}
+
+					double doubleValue;
+					if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out doubleValue) ||
+						double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out doubleValue))
+					{
+						result = Convert.ToInt32(doubleValue);
+						return true;
+					}
+
+					return false;
+				}
+
+				result = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+				return true;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		private static bool ToBool(object value)
+		{
+			if (value == null)
+			{
+				return false;
+			}
+
+			if (value is bool)
+			{
+				return (bool)value;
+			}
+
+			string text = Convert.ToString(value, CultureInfo.InvariantCulture);
+
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return false;
+			}
+
+			text = text.Trim();
+
+			return text.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+				   text.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+				   text.Equals("ok", StringComparison.OrdinalIgnoreCase) ||
+				   text.Equals("yes", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string NormalizeHexToken(string token)
+		{
+			if (token == null)
+			{
+				return string.Empty;
+			}
+
+			string text = token.Trim();
+			if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+			{
+				text = text.Substring(2);
+			}
+
+			return text;
+		}
+
+		private static bool TryParseHexByte(string token, out byte value)
+		{
+			value = 0;
+			if (string.IsNullOrWhiteSpace(token) || token.Length > 2)
+			{
+				return false;
+			}
+
+			return byte.TryParse(token, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
 		}
 	}
 }

@@ -18,7 +18,6 @@
 		private System.Windows.Forms.Panel panelNavCommunication;
 		private System.Windows.Forms.Panel panelNavDatabase;
 		private System.Windows.Forms.Panel panelNavSystem;
-		private System.Windows.Forms.Panel panelNavStop;
 
 		private System.Windows.Forms.Button btnLogin;
 		private System.Windows.Forms.Button btnHardwareConfig;
@@ -27,7 +26,6 @@
 		private System.Windows.Forms.Button btnCommunicateConfig;
 		private System.Windows.Forms.Button btnDatabase;
 		private System.Windows.Forms.Button btnSystemSetting;
-		private System.Windows.Forms.Button btnStop;
 
 		private System.Windows.Forms.Label lblRunStatus;
 		private System.Windows.Forms.Label lblUser;
@@ -42,7 +40,6 @@
 		private System.Windows.Forms.Panel underlineCommunicateConfig;
 		private System.Windows.Forms.Panel underlineDatabase;
 		private System.Windows.Forms.Panel underlineSystemSetting;
-		private System.Windows.Forms.Panel underlineStop;
 
 		private System.Windows.Forms.Panel pageHost;
 
@@ -104,9 +101,6 @@
 			this.panelNavSystem = new System.Windows.Forms.Panel();
 			this.btnSystemSetting = new System.Windows.Forms.Button();
 			this.underlineSystemSetting = new System.Windows.Forms.Panel();
-			this.panelNavStop = new System.Windows.Forms.Panel();
-			this.btnStop = new System.Windows.Forms.Button();
-			this.underlineStop = new System.Windows.Forms.Panel();
 			this.panelRightStatus = new System.Windows.Forms.Panel();
 			this.btnClose = new System.Windows.Forms.Button();
 			this.lblUser = new System.Windows.Forms.Label();
@@ -143,7 +137,6 @@
 			this.panelNavCommunication.SuspendLayout();
 			this.panelNavDatabase.SuspendLayout();
 			this.panelNavSystem.SuspendLayout();
-			this.panelNavStop.SuspendLayout();
 			this.panelRightStatus.SuspendLayout();
 			this.panelBrand.SuspendLayout();
 			this.pageHost.SuspendLayout();
@@ -196,7 +189,6 @@
 			this.navFlowPanel.Controls.Add(this.panelNavCommunication);
 			this.navFlowPanel.Controls.Add(this.panelNavDatabase);
 			this.navFlowPanel.Controls.Add(this.panelNavSystem);
-			this.navFlowPanel.Controls.Add(this.panelNavStop);
 			this.navFlowPanel.Dock = System.Windows.Forms.DockStyle.Fill;
 			this.navFlowPanel.Location = new System.Drawing.Point(230, 0);
 			this.navFlowPanel.Margin = new System.Windows.Forms.Padding(0);
@@ -477,45 +469,6 @@
 			this.underlineSystemSetting.Size = new System.Drawing.Size(135, 3);
 			this.underlineSystemSetting.TabIndex = 1;
 			this.underlineSystemSetting.Visible = false;
-			// 
-			// panelNavStop
-			// 
-			this.panelNavStop.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
-			this.panelNavStop.Controls.Add(this.btnStop);
-			this.panelNavStop.Controls.Add(this.underlineStop);
-			this.panelNavStop.Location = new System.Drawing.Point(915, 0);
-			this.panelNavStop.Margin = new System.Windows.Forms.Padding(0);
-			this.panelNavStop.Name = "panelNavStop";
-			this.panelNavStop.Size = new System.Drawing.Size(110, 92);
-			this.panelNavStop.TabIndex = 6;
-			// 
-			// btnStop
-			// 
-			this.btnStop.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
-			this.btnStop.Dock = System.Windows.Forms.DockStyle.Fill;
-			this.btnStop.FlatAppearance.BorderSize = 0;
-			this.btnStop.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(18)))), ((int)(((byte)(50)))), ((int)(((byte)(82)))));
-			this.btnStop.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(14)))), ((int)(((byte)(36)))), ((int)(((byte)(62)))));
-			this.btnStop.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-			this.btnStop.Font = new System.Drawing.Font("Microsoft YaHei UI", 10F, System.Drawing.FontStyle.Bold);
-			this.btnStop.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(235)))), ((int)(((byte)(54)))), ((int)(((byte)(65)))));
-			this.btnStop.Location = new System.Drawing.Point(0, 0);
-			this.btnStop.Name = "btnStop";
-			this.btnStop.Size = new System.Drawing.Size(110, 89);
-			this.btnStop.TabIndex = 0;
-			this.btnStop.Text = "● 离线";
-			this.btnStop.UseVisualStyleBackColor = false;
-			this.btnStop.Click += new System.EventHandler(this.btnRunStatus_Click);
-			// 
-			// underlineStop
-			// 
-			this.underlineStop.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(185)))), ((int)(((byte)(255)))));
-			this.underlineStop.Dock = System.Windows.Forms.DockStyle.Bottom;
-			this.underlineStop.Location = new System.Drawing.Point(0, 89);
-			this.underlineStop.Name = "underlineStop";
-			this.underlineStop.Size = new System.Drawing.Size(110, 3);
-			this.underlineStop.TabIndex = 1;
-			this.underlineStop.Visible = false;
 			// 
 			// panelRightStatus
 			// 
@@ -902,7 +855,6 @@
 			this.panelNavCommunication.ResumeLayout(false);
 			this.panelNavDatabase.ResumeLayout(false);
 			this.panelNavSystem.ResumeLayout(false);
-			this.panelNavStop.ResumeLayout(false);
 			this.panelRightStatus.ResumeLayout(false);
 			this.panelBrand.ResumeLayout(false);
 			this.pageHost.ResumeLayout(false);

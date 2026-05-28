@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace Aron_V3
@@ -11,10 +12,16 @@ namespace Aron_V3
 		private readonly Color _panel = Color.FromArgb(3, 14, 27);
 		private readonly Color _border = Color.FromArgb(38, 62, 86);
 		private DataGridView _grid;
+		private TextBox _txtFilter;
+		private Label _lblFilter;
 		private Button _btnAdd;
 		private Button _btnDelete;
 		private Button _btnSave;
 		private bool _isEnglish;
+		private bool _loading;
+		private List<GlobalVariableItem> _allVariables = new List<GlobalVariableItem>();
+		private HashSet<string> _loadedVariableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		private Dictionary<string, string> _pendingRenameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 		public GlobalVariableControl()
 		{
@@ -50,13 +57,45 @@ namespace Aron_V3
 			{
 				Dock = DockStyle.Fill,
 				Padding = new Padding(16),
-				RowCount = 2,
+				RowCount = 3,
 				ColumnCount = 1,
 				BackColor = _back
 			};
+			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
 			root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58F));
 			SetDoubleBuffered(root);
+
+			Panel filterPanel = new Panel
+			{
+				Dock = DockStyle.Fill,
+				BackColor = _panel
+			};
+			SetDoubleBuffered(filterPanel);
+
+			_lblFilter = new Label
+			{
+				Text = "Filter",
+				AutoSize = false,
+				Location = new Point(8, 8),
+				Size = new Size(70, 26),
+				TextAlign = ContentAlignment.MiddleLeft,
+				ForeColor = Color.White,
+				BackColor = Color.Transparent,
+				Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold)
+			};
+
+			_txtFilter = new TextBox
+			{
+				Location = new Point(84, 8),
+				Size = new Size(260, 26),
+				BackColor = _back,
+				ForeColor = Color.White,
+				BorderStyle = BorderStyle.FixedSingle
+			};
+			_txtFilter.TextChanged += FilterTextChanged;
+			filterPanel.Controls.Add(_lblFilter);
+			filterPanel.Controls.Add(_txtFilter);
 
 			_grid = new BufferedDataGridView
 			{
@@ -120,8 +159,9 @@ namespace Aron_V3
 			buttons.Controls.Add(_btnAdd);
 			buttons.Controls.Add(_btnDelete);
 			buttons.Controls.Add(_btnSave);
-			root.Controls.Add(_grid, 0, 0);
-			root.Controls.Add(buttons, 0, 1);
+			root.Controls.Add(filterPanel, 0, 0);
+			root.Controls.Add(_grid, 0, 1);
+			root.Controls.Add(buttons, 0, 2);
 			Controls.Add(root);
 		}
 
@@ -143,13 +183,38 @@ namespace Aron_V3
 
 		private void LoadVariables()
 		{
+			_loading = true;
+			try
+			{
+				_allVariables = GlobalVariableStore.LoadForEditing().Variables
+					.Select(CloneVariable)
+					.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+					.ThenBy(x => x.Name, StringComparer.Ordinal)
+					.ToList();
+				_loadedVariableNames = new HashSet<string>(
+					_allVariables
+						.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Name))
+						.Select(x => x.Name),
+					StringComparer.OrdinalIgnoreCase);
+				_pendingRenameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+				BindFilteredVariables();
+			}
+			finally
+			{
+				_loading = false;
+			}
+		}
+
+		private void BindFilteredVariables()
+		{
 			_grid.SuspendLayout();
 			try
 			{
 				_grid.Rows.Clear();
-				foreach (GlobalVariableItem item in GlobalVariableStore.LoadForEditing().Variables)
+				foreach (GlobalVariableItem item in GetFilteredVariables())
 				{
-					_grid.Rows.Add(item.Name, item.DataType.ToString().ToLowerInvariant(), item.CurrentValue, item.Mark, item.RememberValue);
+					int rowIndex = _grid.Rows.Add(item.Name, item.DataType.ToString().ToLowerInvariant(), item.CurrentValue, item.Mark, item.RememberValue);
+					_grid.Rows[rowIndex].Tag = item.Name;
 				}
 			}
 			finally
@@ -158,29 +223,100 @@ namespace Aron_V3
 			}
 		}
 
+		private IEnumerable<GlobalVariableItem> GetFilteredVariables()
+		{
+			string filter = _txtFilter == null ? string.Empty : _txtFilter.Text.Trim();
+			IEnumerable<GlobalVariableItem> query = _allVariables;
+			if (!string.IsNullOrWhiteSpace(filter))
+			{
+				query = query.Where(x =>
+					x != null &&
+					!string.IsNullOrWhiteSpace(x.Name) &&
+					x.Name.StartsWith(filter, StringComparison.OrdinalIgnoreCase));
+			}
+
+			return query
+				.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(x => x.Name, StringComparer.Ordinal);
+		}
+
+		private void FilterTextChanged(object sender, EventArgs e)
+		{
+			if (_loading)
+			{
+				return;
+			}
+
+			CaptureVisibleRowsToAllVariables();
+			BindFilteredVariables();
+		}
+
 		private void AddRow()
 		{
-			int index = _grid.Rows.Add("Variable_" + (_grid.Rows.Count + 1).ToString("00"),
-				"string", string.Empty, string.Empty, false);
-			_grid.CurrentCell = _grid.Rows[index].Cells["Name"];
-			_grid.BeginEdit(true);
+			CaptureVisibleRowsToAllVariables();
+
+			if (_txtFilter != null && _txtFilter.Text.Length > 0)
+			{
+				_txtFilter.Text = string.Empty;
+			}
+
+			string name = GetNextVariableName();
+			_allVariables.Add(new GlobalVariableItem
+			{
+				Name = name,
+				DataType = GlobalVariableDataType.String,
+				CurrentValue = string.Empty,
+				Mark = string.Empty,
+				RememberValue = false
+			});
+			BindFilteredVariables();
+
+			foreach (DataGridViewRow row in _grid.Rows)
+			{
+				if (string.Equals(Convert.ToString(row.Cells["Name"].Value), name, StringComparison.OrdinalIgnoreCase))
+				{
+					_grid.CurrentCell = row.Cells["Name"];
+					row.Selected = true;
+					_grid.BeginEdit(true);
+					break;
+				}
+			}
 		}
 
 		private void DeleteSelected()
 		{
 			if (_grid.SelectedRows.Count > 0 && !_grid.SelectedRows[0].IsNewRow)
 			{
-				_grid.Rows.Remove(_grid.SelectedRows[0]);
+				DataGridViewRow row = _grid.SelectedRows[0];
+				string originalName = Convert.ToString(row.Tag);
+				string currentName = Convert.ToString(row.Cells["Name"].Value).Trim();
+				RemovePendingRename(originalName, currentName);
+				_allVariables.RemoveAll(x =>
+					x != null &&
+					(string.Equals(x.Name, originalName, StringComparison.OrdinalIgnoreCase) ||
+					 string.Equals(x.Name, currentName, StringComparison.OrdinalIgnoreCase)));
+				BindFilteredVariables();
 			}
 		}
 
 		private void SaveVariables()
 		{
+			_grid.EndEdit();
+			BindingContext[_grid.DataSource ?? _grid].EndCurrentEdit();
+			Dictionary<string, string> visibleRenameMap = BuildVisibleRenameMap();
+			CaptureVisibleRowsToAllVariables();
+			Dictionary<string, string> renameMap = new Dictionary<string, string>(_pendingRenameMap, StringComparer.OrdinalIgnoreCase);
+			foreach (KeyValuePair<string, string> pair in visibleRenameMap)
+			{
+				renameMap[pair.Key] = pair.Value;
+			}
 			GlobalVariableConfig config = new GlobalVariableConfig();
 			HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			foreach (DataGridViewRow row in _grid.Rows)
+			foreach (GlobalVariableItem variable in _allVariables
+				.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(x => x.Name, StringComparer.Ordinal))
 			{
-				string name = Convert.ToString(row.Cells["Name"].Value).Trim();
+				string name = variable == null ? string.Empty : variable.Name;
 				if (string.IsNullOrWhiteSpace(name))
 				{
 					continue;
@@ -192,22 +328,187 @@ namespace Aron_V3
 					return;
 				}
 
-				GlobalVariableDataType type = GlobalVariableDataType.String;
-				Enum.TryParse(Convert.ToString(row.Cells["DataType"].Value), true, out type);
 				config.Variables.Add(new GlobalVariableItem
 				{
 					Name = name,
-					DataType = type,
-					CurrentValue = Convert.ToString(row.Cells["CurrentValue"].Value),
-					Mark = Convert.ToString(row.Cells["Mark"].Value),
-					RememberValue = Convert.ToBoolean(row.Cells["RememberValue"].Value ?? false)
+					DataType = variable.DataType,
+					CurrentValue = variable.CurrentValue,
+					Mark = variable.Mark,
+					RememberValue = variable.RememberValue
 				});
 			}
 
 			GlobalVariableStore.Save(config);
+			HashSet<string> finalNames = new HashSet<string>(
+				config.Variables
+					.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Name))
+					.Select(x => x.Name),
+				StringComparer.OrdinalIgnoreCase);
+			HashSet<string> deletedNames = new HashSet<string>(_loadedVariableNames, StringComparer.OrdinalIgnoreCase);
+			deletedNames.ExceptWith(renameMap.Keys);
+			deletedNames.ExceptWith(finalNames);
+			GlobalVariableReferenceUpdater.Apply(renameMap, deletedNames);
 			LoadVariables();
 			MessageBox.Show(_isEnglish ? "Global variables saved." : "全局变量已保存。",
 				"Global Variables", MessageBoxButtons.OK, MessageBoxIcon.Information);
+		}
+
+		private Dictionary<string, string> BuildVisibleRenameMap()
+		{
+			Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (DataGridViewRow row in _grid.Rows)
+			{
+				if (row.IsNewRow)
+				{
+					continue;
+				}
+
+				string oldName = Convert.ToString(row.Tag).Trim();
+				string newName = Convert.ToString(row.Cells["Name"].Value).Trim();
+				if (string.IsNullOrWhiteSpace(oldName) ||
+					string.IsNullOrWhiteSpace(newName) ||
+					string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				result[oldName] = newName;
+			}
+
+			return result;
+		}
+
+		private void CaptureVisibleRowsToAllVariables()
+		{
+			foreach (DataGridViewRow row in _grid.Rows)
+			{
+				if (row.IsNewRow)
+				{
+					continue;
+				}
+
+				string name = Convert.ToString(row.Cells["Name"].Value).Trim();
+				if (string.IsNullOrWhiteSpace(name))
+				{
+					continue;
+				}
+
+				string originalName = Convert.ToString(row.Tag);
+				RegisterPendingRename(originalName, name);
+				GlobalVariableItem item = _allVariables.FirstOrDefault(x =>
+					x != null && string.Equals(x.Name, originalName, StringComparison.OrdinalIgnoreCase));
+
+				if (item == null)
+				{
+					item = _allVariables.FirstOrDefault(x =>
+						x != null && string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+				}
+
+				if (item == null)
+				{
+					item = new GlobalVariableItem();
+					_allVariables.Add(item);
+				}
+
+				GlobalVariableDataType type = GlobalVariableDataType.String;
+				Enum.TryParse(Convert.ToString(row.Cells["DataType"].Value), true, out type);
+				item.Name = name;
+				item.DataType = type;
+				item.CurrentValue = Convert.ToString(row.Cells["CurrentValue"].Value);
+				item.Mark = Convert.ToString(row.Cells["Mark"].Value);
+				item.RememberValue = Convert.ToBoolean(row.Cells["RememberValue"].Value ?? false);
+			}
+		}
+
+		private void RegisterPendingRename(string oldName, string newName)
+		{
+			oldName = (oldName ?? string.Empty).Trim();
+			newName = (newName ?? string.Empty).Trim();
+			if (string.IsNullOrWhiteSpace(oldName) ||
+				string.IsNullOrWhiteSpace(newName) ||
+				string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			string chainedOldName = null;
+			foreach (KeyValuePair<string, string> pair in _pendingRenameMap)
+			{
+				if (string.Equals(pair.Value, oldName, StringComparison.OrdinalIgnoreCase))
+				{
+					chainedOldName = pair.Key;
+					break;
+				}
+			}
+
+			if (!string.IsNullOrWhiteSpace(chainedOldName))
+			{
+				if (string.Equals(chainedOldName, newName, StringComparison.OrdinalIgnoreCase))
+				{
+					_pendingRenameMap.Remove(chainedOldName);
+				}
+				else
+				{
+					_pendingRenameMap[chainedOldName] = newName;
+				}
+				return;
+			}
+
+			_pendingRenameMap[oldName] = newName;
+		}
+
+		private void RemovePendingRename(string oldName, string currentName)
+		{
+			oldName = (oldName ?? string.Empty).Trim();
+			currentName = (currentName ?? string.Empty).Trim();
+			List<string> keysToRemove = new List<string>();
+			foreach (KeyValuePair<string, string> pair in _pendingRenameMap)
+			{
+				if (string.Equals(pair.Key, oldName, StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(pair.Key, currentName, StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(pair.Value, oldName, StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(pair.Value, currentName, StringComparison.OrdinalIgnoreCase))
+				{
+					keysToRemove.Add(pair.Key);
+				}
+			}
+
+			foreach (string key in keysToRemove)
+			{
+				_pendingRenameMap.Remove(key);
+			}
+		}
+
+		private string GetNextVariableName()
+		{
+			int index = _allVariables.Count + 1;
+			string name;
+			do
+			{
+				name = "Variable_" + index.ToString("00");
+				index++;
+			}
+			while (_allVariables.Any(x => x != null && string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)));
+
+			return name;
+		}
+
+		private GlobalVariableItem CloneVariable(GlobalVariableItem source)
+		{
+			if (source == null)
+			{
+				return new GlobalVariableItem();
+			}
+
+			return new GlobalVariableItem
+			{
+				Name = source.Name,
+				DataType = source.DataType,
+				CurrentValue = source.CurrentValue,
+				Mark = source.Mark,
+				RememberValue = source.RememberValue
+			};
 		}
 
 		private void SetDoubleBuffered(Control control)

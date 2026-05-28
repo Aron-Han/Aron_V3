@@ -95,6 +95,7 @@ namespace Aron_V3
 		private Control _currentVisionProEditor;
 		private bool _loadingPins = false;
 		private bool _loadingVpp = false;
+		private bool _loadingNavigation = false;
 
 		private string _currentJobName = string.Empty;
 		private string _currentTaskName = string.Empty;
@@ -106,6 +107,7 @@ namespace Aron_V3
 		private CSharpScriptStepEditorControl _scriptEditor;
 		private Control vppPinContent;
 		private bool _showingScriptEditor = false;
+		private bool _suppressFlowConfigRefresh = false;
 
 		public AlgorithmModuleControl()
 		{
@@ -122,6 +124,7 @@ namespace Aron_V3
 			}
 
 			ConfigureVppPinsGrid();
+			BuildFlowNavigationUi();
 			ApplyModuleConfigToUi();
 			EnableDoubleBuffer(this);
 			BindRuntimeEvents();
@@ -218,12 +221,16 @@ namespace Aron_V3
 
 			if (listJobs != null)
 			{
+				listJobs.SelectedIndexChanged -= listJobs_SelectedIndexChanged;
+				listJobs.SelectedIndexChanged += listJobs_SelectedIndexChanged;
 				listJobs.DoubleClick -= listJobs_DoubleClick;
 				listJobs.DoubleClick += listJobs_DoubleClick;
 			}
 
 			if (listTasks != null)
 			{
+				listTasks.SelectedIndexChanged -= listTasks_SelectedIndexChanged;
+				listTasks.SelectedIndexChanged += listTasks_SelectedIndexChanged;
 				listTasks.DoubleClick -= listTasks_DoubleClick;
 				listTasks.DoubleClick += listTasks_DoubleClick;
 			}
@@ -260,6 +267,10 @@ namespace Aron_V3
 
 			RuntimeStepResultStore.StepResultUpdated -= RuntimeStepResultStore_StepResultUpdated;
 			RuntimeStepResultStore.StepResultUpdated += RuntimeStepResultStore_StepResultUpdated;
+			FlowConfigStore.FlowConfigSaved -= FlowConfigStore_FlowConfigSaved;
+			FlowConfigStore.FlowConfigSaved += FlowConfigStore_FlowConfigSaved;
+			CommunicationConfigChangedHub.ConfigChanged -= CommunicationConfigChangedHub_ConfigChanged;
+			CommunicationConfigChangedHub.ConfigChanged += CommunicationConfigChangedHub_ConfigChanged;
 			this.HandleDestroyed -= AlgorithmModuleControl_HandleDestroyed;
 			this.HandleDestroyed += AlgorithmModuleControl_HandleDestroyed;
 		}
@@ -267,6 +278,59 @@ namespace Aron_V3
 		private void AlgorithmModuleControl_HandleDestroyed(object sender, EventArgs e)
 		{
 			RuntimeStepResultStore.StepResultUpdated -= RuntimeStepResultStore_StepResultUpdated;
+			FlowConfigStore.FlowConfigSaved -= FlowConfigStore_FlowConfigSaved;
+			CommunicationConfigChangedHub.ConfigChanged -= CommunicationConfigChangedHub_ConfigChanged;
+		}
+
+		private void FlowConfigStore_FlowConfigSaved(object sender, EventArgs e)
+		{
+			if (_suppressFlowConfigRefresh)
+			{
+				return;
+			}
+
+			if (IsDisposed)
+			{
+				return;
+			}
+
+			if (InvokeRequired)
+			{
+				try
+				{
+					BeginInvoke(new EventHandler(FlowConfigStore_FlowConfigSaved), sender, e);
+				}
+				catch
+				{
+				}
+
+				return;
+			}
+
+			RefreshProjectFlow();
+		}
+
+		private void CommunicationConfigChangedHub_ConfigChanged(object sender, EventArgs e)
+		{
+			if (IsDisposed)
+			{
+				return;
+			}
+
+			if (InvokeRequired)
+			{
+				try
+				{
+					BeginInvoke(new EventHandler(CommunicationConfigChangedHub_ConfigChanged), sender, e);
+				}
+				catch
+				{
+				}
+
+				return;
+			}
+
+			RefreshProjectFlow();
 		}
 
 		private void RuntimeStepResultStore_StepResultUpdated(object sender, RuntimeStepResultUpdatedEventArgs e)
@@ -293,15 +357,15 @@ namespace Aron_V3
 				return;
 			}
 
-			if (_currentLibrary != AlgorithmLibraryType.Hdev ||
+			if ((_currentLibrary != AlgorithmLibraryType.Hdev && _currentLibrary != AlgorithmLibraryType.Vpp) ||
 				!string.Equals(_currentJobName, e.JobName, StringComparison.OrdinalIgnoreCase) ||
 				!string.Equals(_currentTaskName, e.TaskName, StringComparison.OrdinalIgnoreCase) ||
-				!IsCurrentHdevRuntimeStep(e.StepName))
+				!IsCurrentAlgorithmRuntimeStep(e.StepName))
 			{
 				return;
 			}
 
-			ApplyHdevRunResultToGrid(e.Result);
+			ApplyAlgorithmRunResultToGrid(e.Result);
 		}
 
 		private void btnVpp_Click(object sender, EventArgs e)
@@ -330,6 +394,54 @@ namespace Aron_V3
 		// 真正的软件启动预加载，请在 Form1 启动完成后延迟调用 StartPreloadIfNeeded()。
 		private void AlgorithmModuleControl_HandleCreated(object sender, EventArgs e)
 		{
+		}
+
+		private void BuildFlowNavigationUi()
+		{
+			if (jobTaskLayout == null)
+			{
+				return;
+			}
+
+			jobTaskLayout.SuspendLayout();
+			jobTaskLayout.Controls.Clear();
+			jobTaskLayout.RowStyles.Clear();
+			jobTaskLayout.RowCount = 2;
+			jobTaskLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+			jobTaskLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+
+			grpTasks.Margin = new Padding(0, 0, 0, 14);
+			grpJobs.Margin = new Padding(0);
+
+			grpJobs.Text = _isEnglish ? "All Program" : "所有 程序号";
+			grpTasks.Text = _isEnglish ? "All Task" : "所有 Task";
+
+			jobTaskLayout.Controls.Add(grpTasks, 0, 0);
+			jobTaskLayout.Controls.Add(grpJobs, 0, 1);
+			jobTaskLayout.ResumeLayout(true);
+		}
+
+		private GroupBox CreateNavigationGroup(string title, out ListBox list)
+		{
+			GroupBox group = new GroupBox();
+			group.BackColor = Color.FromArgb(3, 14, 27);
+			group.Dock = DockStyle.Fill;
+			group.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+			group.ForeColor = Color.White;
+			group.Padding = new Padding(12, 26, 12, 12);
+			group.Text = title;
+
+			list = new ListBox();
+			list.BackColor = Color.FromArgb(1, 8, 16);
+			list.BorderStyle = BorderStyle.FixedSingle;
+			list.Dock = DockStyle.Fill;
+			list.Font = new Font("Microsoft YaHei UI", 9F);
+			list.ForeColor = Color.White;
+			list.IntegralHeight = false;
+			list.ItemHeight = 24;
+			group.Controls.Add(list);
+
+			return group;
 		}
 
 		public void StartPreloadIfNeeded()
@@ -938,54 +1050,123 @@ namespace Aron_V3
 			string selectedJob = _currentJobName;
 			string selectedTask = _currentTaskName;
 
-			LoadJobs();
-
-			if (!string.IsNullOrEmpty(selectedJob) && listJobs.Items.Contains(selectedJob))
-			{
-				listJobs.SelectedItem = selectedJob;
-				_currentJobName = selectedJob;
-				LoadTasks(selectedJob);
-			}
-
-			if (!string.IsNullOrEmpty(selectedTask) && listTasks.Items.Contains(selectedTask))
-			{
-				listTasks.SelectedItem = selectedTask;
-				_currentTaskName = selectedTask;
-				LoadAlgorithmFilesForCurrentTask();
-			}
+			ReloadTaskProgramNavigation(selectedTask, selectedJob);
 		}
 
 		private void LoadJobs()
 		{
-			listJobs.Items.Clear();
-			listTasks.Items.Clear();
-			listAlgorithmFiles.Items.Clear();
-			dgvPins.Rows.Clear();
-			ClearVppEditor();
+			ReloadTaskProgramNavigation(string.Empty, string.Empty);
+		}
+
+		private void ReloadTaskProgramNavigation(string preferredTaskName, string preferredJobName)
+		{
+			_loadingNavigation = true;
 
 			try
 			{
+				listJobs.Items.Clear();
+				listTasks.Items.Clear();
+				listAlgorithmFiles.Items.Clear();
+				dgvPins.Rows.Clear();
+				ClearVppEditor();
+
 				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
 
-				if (config == null || config.Jobs == null)
+				if (config == null)
 				{
 					return;
 				}
 
-				foreach (JobConfig job in config.Jobs)
-				{
-					if (job == null || string.IsNullOrEmpty(job.JobName))
-					{
-						continue;
-					}
-
-					listJobs.Items.Add(job.JobName);
-				}
+				RefreshTaskList(config);
+				SelectListItem(listTasks, preferredTaskName);
+				RefreshProgramsByTask(GetSelectedTaskName());
+				SelectListItem(listJobs, preferredJobName);
+				SyncCurrentNavigationSelection();
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show("Load Job failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show("Load Task / Program failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			}
+			finally
+			{
+				_loadingNavigation = false;
+			}
+
+			LoadAlgorithmFilesForCurrentTask();
+		}
+
+		private void RefreshTaskList(ProjectFlowConfig config)
+		{
+			listTasks.Items.Clear();
+
+			foreach (string taskName in EnumerateJobContexts(config)
+				.SelectMany(x => x.Job.Tasks == null ? new List<TaskConfig>() : x.Job.Tasks)
+				.Where(x => x != null && !string.IsNullOrWhiteSpace(x.TaskName))
+				.Select(x => x.TaskName)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+			{
+				listTasks.Items.Add(taskName);
+			}
+
+			if (listTasks.Items.Count > 0)
+			{
+				listTasks.SelectedIndex = 0;
+			}
+		}
+
+		private void RefreshProgramsByTask(string taskName)
+		{
+			listJobs.Items.Clear();
+			listAlgorithmFiles.Items.Clear();
+			dgvPins.Rows.Clear();
+			ClearVppEditor();
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				return;
+			}
+
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+			foreach (JobContext context in EnumerateJobContexts(config)
+				.Where(x => x.Job.Tasks != null &&
+					x.Job.Tasks.Any(t => t != null && string.Equals(t.TaskName, taskName, StringComparison.OrdinalIgnoreCase)))
+				.OrderBy(x => ParseProgramNo(x.Job.ProgramNo))
+				.ThenBy(x => x.Job.JobName)
+				.ThenBy(x => x.ProtocolName)
+				.ThenBy(x => x.ChannelName))
+			{
+				listJobs.Items.Add(new ProgramListItem(context));
+			}
+
+			if (listJobs.Items.Count > 0)
+			{
+				listJobs.SelectedIndex = 0;
+			}
+		}
+
+		private void SyncCurrentNavigationSelection()
+		{
+			_currentTaskName = GetSelectedTaskName();
+
+			ProgramListItem item = GetSelectedProgramItem();
+			_currentJobName = item == null ? string.Empty : item.JobName;
+		}
+
+		private void listJobs_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (_loadingNavigation)
+			{
+				return;
+			}
+
+			if (listJobs.SelectedItem == null)
+			{
+				return;
+			}
+
+			SyncCurrentNavigationSelection();
+			LoadAlgorithmFilesForCurrentTask();
 		}
 
 		private void listJobs_DoubleClick(object sender, EventArgs e)
@@ -995,47 +1176,8 @@ namespace Aron_V3
 				return;
 			}
 
-			_currentJobName = listJobs.SelectedItem.ToString();
-			LoadTasks(_currentJobName);
-		}
-
-		private void LoadTasks(string jobName)
-		{
-			listTasks.Items.Clear();
-			listAlgorithmFiles.Items.Clear();
-			dgvPins.Rows.Clear();
-			ClearVppEditor();
-
-			if (string.IsNullOrEmpty(jobName))
-			{
-				return;
-			}
-
-			try
-			{
-				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-				JobConfig job = config.Jobs.FirstOrDefault(j =>
-					string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
-
-				if (job == null || job.Tasks == null)
-				{
-					return;
-				}
-
-				foreach (TaskConfig task in job.Tasks.OrderBy(t => t.RunOrder))
-				{
-					if (task == null || string.IsNullOrEmpty(task.TaskName))
-					{
-						continue;
-					}
-
-					listTasks.Items.Add(task.TaskName);
-				}
-			}
-			catch (Exception ex)
-			{
-				MessageBox.Show("Load Task failed: " + ex.Message, "Algorithm Module", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-			}
+			SyncCurrentNavigationSelection();
+			LoadAlgorithmFilesForCurrentTask();
 		}
 
 		private void listTasks_DoubleClick(object sender, EventArgs e)
@@ -1045,7 +1187,49 @@ namespace Aron_V3
 				return;
 			}
 
+			string oldJob = _currentJobName;
 			_currentTaskName = listTasks.SelectedItem.ToString();
+			_loadingNavigation = true;
+			try
+			{
+				RefreshProgramsByTask(_currentTaskName);
+				SelectListItem(listJobs, oldJob);
+				SyncCurrentNavigationSelection();
+			}
+			finally
+			{
+				_loadingNavigation = false;
+			}
+
+			LoadAlgorithmFilesForCurrentTask();
+		}
+
+		private void listTasks_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (_loadingNavigation)
+			{
+				return;
+			}
+
+			if (listTasks.SelectedItem == null)
+			{
+				return;
+			}
+
+			string oldJob = _currentJobName;
+			_loadingNavigation = true;
+			try
+			{
+				_currentTaskName = listTasks.SelectedItem.ToString();
+				RefreshProgramsByTask(_currentTaskName);
+				SelectListItem(listJobs, oldJob);
+				SyncCurrentNavigationSelection();
+			}
+			finally
+			{
+				_loadingNavigation = false;
+			}
+
 			LoadAlgorithmFilesForCurrentTask();
 		}
 
@@ -1127,7 +1311,7 @@ namespace Aron_V3
 					{
 						if (_scriptEditor != null && !_scriptEditor.IsDisposed)
 						{
-							_scriptEditor.LoadScriptStep(_currentJobName, _currentTaskName, string.Empty);
+							_scriptEditor.LoadScriptStep(GetSelectedProtocolName(), GetSelectedChannelName(), _currentJobName, _currentTaskName, string.Empty);
 						}
 
 						if (lblEditorInfo != null)
@@ -1165,8 +1349,7 @@ namespace Aron_V3
 			List<AlgorithmFileItem> result = new List<AlgorithmFileItem>();
 
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			JobConfig job = config.Jobs.FirstOrDefault(j =>
-				string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			JobConfig job = GetJobConfig(config, jobName);
 
 			if (job == null || job.Tasks == null)
 			{
@@ -1209,8 +1392,7 @@ namespace Aron_V3
 			List<AlgorithmFileItem> result = new List<AlgorithmFileItem>();
 
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			JobConfig job = config.Jobs.FirstOrDefault(j =>
-				string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			JobConfig job = GetJobConfig(config, jobName);
 
 			if (job == null || job.Tasks == null)
 			{
@@ -1253,8 +1435,7 @@ namespace Aron_V3
 			List<AlgorithmFileItem> result = new List<AlgorithmFileItem>();
 
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			JobConfig job = config.Jobs.FirstOrDefault(j =>
-				string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			JobConfig job = GetJobConfig(config, jobName);
 
 			if (job == null || job.Tasks == null)
 			{
@@ -1290,6 +1471,128 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private JobConfig GetJobConfig(ProjectFlowConfig config, string jobName)
+		{
+			if (config == null || string.IsNullOrWhiteSpace(jobName))
+			{
+				return null;
+			}
+
+			ProgramListItem selectedProgram = GetSelectedProgramItem();
+			if (selectedProgram != null &&
+				string.Equals(selectedProgram.JobName, jobName, StringComparison.OrdinalIgnoreCase))
+			{
+				return FlowConfigStore.GetJobs(config, selectedProgram.ProtocolName, selectedProgram.ChannelName)
+					.FirstOrDefault(j => j != null && string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			}
+
+			string taskName = GetSelectedTaskName();
+			return EnumerateJobContexts(config)
+				.Select(x => x.Job)
+				.FirstOrDefault(j =>
+					j != null &&
+					string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase) &&
+					j.Tasks != null &&
+					(string.IsNullOrWhiteSpace(taskName) ||
+					 j.Tasks.Any(t => t != null && string.Equals(t.TaskName, taskName, StringComparison.OrdinalIgnoreCase))));
+		}
+
+		private string GetSelectedProtocolName()
+		{
+			ProgramListItem item = GetSelectedProgramItem();
+			return item == null ? string.Empty : item.ProtocolName;
+		}
+
+		private string GetSelectedChannelName()
+		{
+			ProgramListItem item = GetSelectedProgramItem();
+			return item == null ? string.Empty : item.ChannelName;
+		}
+
+		private ProgramListItem GetSelectedProgramItem()
+		{
+			return listJobs == null ? null : listJobs.SelectedItem as ProgramListItem;
+		}
+
+		private string GetSelectedTaskName()
+		{
+			return listTasks == null || listTasks.SelectedItem == null
+				? string.Empty
+				: listTasks.SelectedItem.ToString();
+		}
+
+		private IEnumerable<JobContext> EnumerateJobContexts(ProjectFlowConfig config)
+		{
+			if (config == null || config.Protocols == null)
+			{
+				yield break;
+			}
+
+			foreach (ProtocolFlowConfig protocol in config.Protocols)
+			{
+				if (protocol == null || protocol.Channels == null)
+				{
+					continue;
+				}
+
+				string protocolName = FlowConfigStore.NormalizeProtocolName(protocol.ProtocolName);
+				foreach (ChannelFlowConfig channel in protocol.Channels)
+				{
+					if (channel == null || channel.Jobs == null)
+					{
+						continue;
+					}
+
+					string channelName = FlowConfigStore.NormalizeChannelName(channel.ChannelName);
+					foreach (JobConfig job in channel.Jobs)
+					{
+						if (job == null)
+						{
+							continue;
+						}
+
+						job.ProtocolName = protocolName;
+						job.ChannelName = channelName;
+						yield return new JobContext(protocolName, channelName, job);
+					}
+				}
+			}
+		}
+
+		private int ParseProgramNo(string programNo)
+		{
+			int value;
+			return int.TryParse(programNo, out value) ? value : int.MaxValue;
+		}
+
+		private void SelectListItem(ListBox listBox, string itemText)
+		{
+			if (listBox == null || string.IsNullOrWhiteSpace(itemText))
+			{
+				return;
+			}
+
+			for (int i = 0; i < listBox.Items.Count; i++)
+			{
+				ProgramListItem programItem = listBox.Items[i] as ProgramListItem;
+				if (programItem != null)
+				{
+					if (string.Equals(programItem.JobName, itemText, StringComparison.OrdinalIgnoreCase) ||
+						string.Equals(programItem.ProgramNo, itemText, StringComparison.OrdinalIgnoreCase) ||
+						string.Equals(programItem.DisplayText, itemText, StringComparison.OrdinalIgnoreCase))
+					{
+						listBox.SelectedIndex = i;
+						return;
+					}
+				}
+				else if (string.Equals(listBox.Items[i].ToString(), itemText, StringComparison.OrdinalIgnoreCase))
+				{
+					listBox.SelectedIndex = i;
+					return;
+				}
+			}
 		}
 
 		private bool IsScriptStep(StepConfig step)
@@ -1402,7 +1705,7 @@ namespace Aron_V3
 				fileName = "Halcon.hdev";
 			}
 
-			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName);
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(GetSelectedProtocolName(), GetSelectedChannelName(), jobName, taskName);
 			string hdevFolder = Path.Combine(taskFolder, "Hdev");
 			string runtimePath = Path.Combine(hdevFolder, Path.GetFileName(fileName));
 
@@ -1514,8 +1817,8 @@ namespace Aron_V3
 				fileName = "CS_Script.csx";
 			}
 
-			string taskFolder = Path.Combine(GetRuntimeProjectRoot(), "Job", jobName, "Task", taskName);
-			string scriptsFolder = Path.Combine(taskFolder, "Scripts");
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(GetSelectedProtocolName(), GetSelectedChannelName(), jobName, taskName);
+			string scriptsFolder = Path.Combine(taskFolder, "Script");
 
 			string runtimePath = Path.Combine(scriptsFolder, Path.GetFileName(fileName));
 
@@ -1524,8 +1827,7 @@ namespace Aron_V3
 				return runtimePath;
 			}
 
-			// 兼容旧的 Script 单数目录。
-			string oldScriptFolder = Path.Combine(taskFolder, "Script");
+			string oldScriptFolder = Path.Combine(taskFolder, "Scripts");
 			string oldPath = Path.Combine(oldScriptFolder, Path.GetFileName(fileName));
 
 			if (File.Exists(oldPath))
@@ -1547,7 +1849,14 @@ namespace Aron_V3
 						return file;
 					}
 
-					string p = Path.Combine(scriptsFolder, file);
+					string p = Path.Combine(taskFolder, file);
+
+					if (File.Exists(p))
+					{
+						return p;
+					}
+
+					p = Path.Combine(scriptsFolder, Path.GetFileName(file));
 
 					if (File.Exists(p))
 					{
@@ -1651,7 +1960,7 @@ namespace Aron_V3
 
 			// 1. 优先使用当前 Task 标准目录下的工程内 VPP。
 			string standardTaskPath = Path.Combine(
-				FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName),
+				FlowConfigStore.PathManager.GetTaskFolder(GetSelectedProtocolName(), GetSelectedChannelName(), jobName, taskName),
 				"VPP",
 				fileName);
 
@@ -2330,7 +2639,7 @@ namespace Aron_V3
 
 			// 关键修复：
 			// 这里必须传当前双击的脚本路径/名称，不能再固定传 CS_Script。
-			_scriptEditor.LoadScriptStep(jobName, taskName, loadKey);
+			_scriptEditor.LoadScriptStep(GetSelectedProtocolName(), GetSelectedChannelName(), jobName, taskName, loadKey);
 		}
 
 		private string GetScriptLoadKey(AlgorithmFileItem item)
@@ -2504,7 +2813,7 @@ namespace Aron_V3
 					return result;
 				}
 
-				foreach (JobConfig job in config.Jobs)
+				foreach (JobConfig job in FlowConfigStore.GetJobs(config, GetSelectedProtocolName(), GetSelectedChannelName()))
 				{
 					if (job == null || job.Tasks == null)
 					{
@@ -2565,6 +2874,7 @@ namespace Aron_V3
 			ClearVppEditor();
 			dgvPins.Rows.Clear();
 			SetEditorMessage("正在后台加载 VPP，请稍候..." + Environment.NewLine + item.FilePath);
+			ShowPinStatusMessage("正在后台加载 VPP，请稍候...");
 
 			try
 			{
@@ -2604,6 +2914,7 @@ namespace Aron_V3
 					}
 
 					SetEditorMessage(_lastLoadError);
+					ShowPinStatusMessage(_lastLoadError);
 					return;
 				}
 
@@ -2612,7 +2923,9 @@ namespace Aron_V3
 			}
 			catch (Exception ex)
 			{
-				SetEditorMessage("VPP 加载失败：" + Environment.NewLine + GetRealExceptionMessage(ex));
+				string error = "VPP 加载失败：" + Environment.NewLine + GetRealExceptionMessage(ex);
+				SetEditorMessage(error);
+				ShowPinStatusMessage(error);
 			}
 			finally
 			{
@@ -2842,6 +3155,28 @@ namespace Aron_V3
 			lblEditorInfo.Text = message;
 
 			panelEditorHost.Controls.Add(lblEditorInfo);
+		}
+
+		private void ShowPinStatusMessage(string message)
+		{
+			if (dgvPins == null)
+			{
+				return;
+			}
+
+			try
+			{
+				dgvPins.Rows.Clear();
+				int rowIndex = dgvPins.Rows.Add(string.Empty, message ?? string.Empty, string.Empty, string.Empty, string.Empty);
+				DataGridViewRow row = dgvPins.Rows[rowIndex];
+				row.Tag = "__status__";
+				row.DefaultCellStyle.ForeColor = Color.FromArgb(150, 185, 210);
+				row.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+				row.Height = 34;
+			}
+			catch
+			{
+			}
 		}
 
 		private object TryCloneVisionObject(object source)
@@ -3413,6 +3748,7 @@ namespace Aron_V3
 				// 关键：VPP 页面当前显示的输出引脚，需要同步回 FlowConfig 的 StepConfig.OutputPins。
 				// Script 编辑器的“绑定来源”下拉，就是从这些 OutputPins 中生成的。
 				SyncDisplayedPinsToCurrentStepConfig();
+				ApplyLatestAlgorithmRunResultToGrid();
 			}
 		}
 
@@ -3427,12 +3763,12 @@ namespace Aron_V3
 			try
 			{
 				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-				if (config == null || config.Jobs == null)
+				if (config == null)
 				{
 					return;
 				}
 
-				JobConfig job = config.Jobs.FirstOrDefault(j =>
+				JobConfig job = FlowConfigStore.GetJobs(config, GetSelectedProtocolName(), GetSelectedChannelName()).FirstOrDefault(j =>
 					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
 
 				if (job == null || job.Tasks == null)
@@ -3469,6 +3805,11 @@ namespace Aron_V3
 						continue;
 					}
 
+					if (row.Tag is string && string.Equals(row.Tag.ToString(), "__status__", StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+
 					string direction = GetPinGridCellString(row, "colDirection");
 					string pinName = GetPinGridCellString(row, "colName");
 					string dataTypeText = GetPinGridCellString(row, "colDataType");
@@ -3495,7 +3836,15 @@ namespace Aron_V3
 					}
 				}
 
-				FlowConfigStore.Save(config);
+				_suppressFlowConfigRefresh = true;
+				try
+				{
+					FlowConfigStore.Save(config);
+				}
+				finally
+				{
+					_suppressFlowConfigRefresh = false;
+				}
 			}
 			catch
 			{
@@ -3752,10 +4101,6 @@ namespace Aron_V3
 			if (direction == "Output")
 			{
 				row.Cells["colValue"].ReadOnly = true;
-				if (!string.IsNullOrWhiteSpace(globalVariableName))
-				{
-					GlobalVariableStore.SetValue(globalVariableName, value);
-				}
 			}
 		}
 
@@ -3888,7 +4233,7 @@ namespace Aron_V3
 
 			StepResult result = new HalconStep(step).Execute(context);
 			RuntimeStepResultStore.SetLatest(_currentJobName, _currentTaskName, step.StepName, result);
-			ApplyHdevRunResultToGrid(result);
+			ApplyAlgorithmRunResultToGrid(result);
 
 			MessageBox.Show(
 				(result.IsOK ? "OK" : "NG") + Environment.NewLine + result.Message,
@@ -3902,7 +4247,7 @@ namespace Aron_V3
 			try
 			{
 				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-				JobConfig job = config.Jobs.FirstOrDefault(j =>
+				JobConfig job = FlowConfigStore.GetJobs(config, GetSelectedProtocolName(), GetSelectedChannelName()).FirstOrDefault(j =>
 					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
 				TaskConfig task = job == null ? null : job.Tasks.FirstOrDefault(t =>
 					t != null && string.Equals(t.TaskName, _currentTaskName, StringComparison.OrdinalIgnoreCase));
@@ -3918,7 +4263,61 @@ namespace Aron_V3
 			}
 		}
 
+		private StepConfig GetCurrentVppStepConfig()
+		{
+			try
+			{
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+				JobConfig job = config.Jobs.FirstOrDefault(j =>
+					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
+				TaskConfig task = job == null ? null : job.Tasks.FirstOrDefault(t =>
+					t != null && string.Equals(t.TaskName, _currentTaskName, StringComparison.OrdinalIgnoreCase));
+				return task == null ? null : task.Steps.FirstOrDefault(s =>
+					s != null &&
+					s.StepType == StepType.Vpp &&
+					(string.Equals(s.StepName, _currentAlgorithmName, StringComparison.OrdinalIgnoreCase) ||
+					 IsSameAlgorithmFileName(s, _currentAlgorithmName, _currentAlgorithmPath)));
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
 		private void ApplyHdevRunResultToGrid(StepResult result)
+		{
+			ApplyAlgorithmRunResultToGrid(result);
+		}
+
+		private void ApplyLatestHdevRunResultToGrid()
+		{
+			ApplyLatestAlgorithmRunResultToGrid();
+		}
+
+		private void ApplyLatestAlgorithmRunResultToGrid()
+		{
+			if ((_currentLibrary != AlgorithmLibraryType.Hdev && _currentLibrary != AlgorithmLibraryType.Vpp) ||
+				string.IsNullOrWhiteSpace(_currentJobName) ||
+				string.IsNullOrWhiteSpace(_currentTaskName) ||
+				string.IsNullOrWhiteSpace(_currentAlgorithmName))
+			{
+				return;
+			}
+
+			string stepName = GetCurrentAlgorithmRuntimeStepName();
+			if (string.IsNullOrWhiteSpace(stepName))
+			{
+				stepName = _currentAlgorithmName;
+			}
+
+			StepResult result;
+			if (RuntimeStepResultStore.TryGetLatest(_currentJobName, _currentTaskName, stepName, out result))
+			{
+				ApplyAlgorithmRunResultToGrid(result);
+			}
+		}
+
+		private void ApplyAlgorithmRunResultToGrid(StepResult result)
 		{
 			if (result == null || dgvPins == null)
 			{
@@ -3927,13 +4326,14 @@ namespace Aron_V3
 
 			foreach (DataGridViewRow row in dgvPins.Rows)
 			{
-				if (row == null || row.IsNewRow ||
-					!string.Equals(GetPinGridCellString(row, "colDirection"), "Output", StringComparison.OrdinalIgnoreCase))
+				if (row == null || row.IsNewRow)
 				{
 					continue;
 				}
 
+				string direction = GetPinGridCellString(row, "colDirection");
 				string pinName = GetPinGridCellString(row, "colName");
+				string globalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable");
 				if (string.IsNullOrWhiteSpace(pinName))
 				{
 					continue;
@@ -3941,11 +4341,25 @@ namespace Aron_V3
 
 				object value;
 				VisionImage image;
-				if (result.Outputs.TryGetValue(pinName, out value))
+				if (string.Equals(direction, "Input", StringComparison.OrdinalIgnoreCase))
+				{
+					if (result.Inputs != null && TryFindStepValue(result.Inputs, pinName, globalVariableName, out value))
+					{
+						row.Cells["colValue"].Value = ValueToDisplayText(value);
+					}
+					continue;
+				}
+
+				if (!string.Equals(direction, "Output", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				if (result.Outputs != null && TryFindStepValue(result.Outputs, pinName, globalVariableName, out value))
 				{
 					row.Cells["colValue"].Value = ValueToDisplayText(value);
 				}
-				else if (result.OutputImages.TryGetValue(pinName, out image) && image != null)
+				else if (result.OutputImages != null && result.OutputImages.TryGetValue(pinName, out image) && image != null)
 				{
 					row.Cells["colValue"].Value = "[Image]";
 				}
@@ -3956,27 +4370,29 @@ namespace Aron_V3
 			}
 		}
 
-		private void ApplyLatestHdevRunResultToGrid()
+		private bool TryFindStepValue(
+			Dictionary<string, object> values,
+			string pinName,
+			string globalVariableName,
+			out object value)
 		{
-			if (_currentLibrary != AlgorithmLibraryType.Hdev ||
-				string.IsNullOrWhiteSpace(_currentJobName) ||
-				string.IsNullOrWhiteSpace(_currentTaskName) ||
-				string.IsNullOrWhiteSpace(_currentAlgorithmName))
+			value = null;
+			if (values == null)
 			{
-				return;
+				return false;
 			}
 
-			string stepName = GetCurrentHdevRuntimeStepName();
-			if (string.IsNullOrWhiteSpace(stepName))
+			if (!string.IsNullOrWhiteSpace(pinName) && values.TryGetValue(pinName, out value))
 			{
-				stepName = _currentAlgorithmName;
+				return true;
 			}
 
-			StepResult result;
-			if (RuntimeStepResultStore.TryGetLatest(_currentJobName, _currentTaskName, stepName, out result))
+			if (!string.IsNullOrWhiteSpace(globalVariableName) && values.TryGetValue(globalVariableName, out value))
 			{
-				ApplyHdevRunResultToGrid(result);
+				return true;
 			}
+
+			return false;
 		}
 
 		private bool IsCurrentHdevRuntimeStep(string stepName)
@@ -3991,14 +4407,40 @@ namespace Aron_V3
 				return true;
 			}
 
-			string currentStepName = GetCurrentHdevRuntimeStepName();
+			string currentStepName = GetCurrentAlgorithmRuntimeStepName();
 			return !string.IsNullOrWhiteSpace(currentStepName) &&
 				string.Equals(currentStepName, stepName, StringComparison.OrdinalIgnoreCase);
 		}
 
 		private string GetCurrentHdevRuntimeStepName()
 		{
+			return GetCurrentAlgorithmRuntimeStepName();
+		}
+
+		private bool IsCurrentAlgorithmRuntimeStep(string stepName)
+		{
+			if (string.IsNullOrWhiteSpace(stepName))
+			{
+				return false;
+			}
+
+			if (string.Equals(_currentAlgorithmName, stepName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			string currentStepName = GetCurrentAlgorithmRuntimeStepName();
+			return !string.IsNullOrWhiteSpace(currentStepName) &&
+				string.Equals(currentStepName, stepName, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private string GetCurrentAlgorithmRuntimeStepName()
+		{
 			StepConfig step = GetCurrentHdevStepConfig();
+			if (step == null && _currentLibrary == AlgorithmLibraryType.Vpp)
+			{
+				step = GetCurrentVppStepConfig();
+			}
 			return step == null ? string.Empty : step.StepName;
 		}
 
@@ -4321,7 +4763,7 @@ namespace Aron_V3
 				fileName += ".vpp";
 			}
 
-			return Path.Combine(FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName), "VPP", fileName);
+			return Path.Combine(FlowConfigStore.PathManager.GetTaskFolder(GetSelectedProtocolName(), GetSelectedChannelName(), jobName, taskName), "VPP", fileName);
 		}
 
 		private string GetRuntimeProjectRoot()
@@ -4337,12 +4779,12 @@ namespace Aron_V3
 			{
 				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
 
-				if (config == null || config.Jobs == null)
+				if (config == null)
 				{
 					return;
 				}
 
-				foreach (JobConfig job in config.Jobs)
+				foreach (JobConfig job in FlowConfigStore.GetJobs(config, GetSelectedProtocolName(), GetSelectedChannelName()))
 				{
 					if (job == null || !string.Equals(job.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase) || job.Tasks == null)
 					{
@@ -4607,7 +5049,7 @@ namespace Aron_V3
 				btnHdev.Text = "Hdev";
 				btnVM.Text = "VM";
 
-				grpJobs.Text = "All JobID";
+				grpJobs.Text = "All Program";
 				grpTasks.Text = "All Task";
 
 				SetVppColumnHeader("colDirection", "Type");
@@ -4627,7 +5069,7 @@ namespace Aron_V3
 				btnHdev.Text = "Hdev";
 				btnVM.Text = "VM";
 
-				grpJobs.Text = "所有 JobID";
+				grpJobs.Text = "所有 程序号";
 				grpTasks.Text = "所有 Task";
 
 				SetVppColumnHeader("colDirection", "类型");
@@ -4699,6 +5141,43 @@ namespace Aron_V3
 			public override string ToString()
 			{
 				return Name;
+			}
+		}
+
+		private class JobContext
+		{
+			public string ProtocolName { get; private set; }
+			public string ChannelName { get; private set; }
+			public JobConfig Job { get; private set; }
+
+			public JobContext(string protocolName, string channelName, JobConfig job)
+			{
+				ProtocolName = protocolName;
+				ChannelName = channelName;
+				Job = job;
+			}
+		}
+
+		private class ProgramListItem
+		{
+			public string ProtocolName { get; private set; }
+			public string ChannelName { get; private set; }
+			public string JobName { get; private set; }
+			public string ProgramNo { get; private set; }
+			public string DisplayText { get; private set; }
+
+			public ProgramListItem(JobContext context)
+			{
+				ProtocolName = context.ProtocolName;
+				ChannelName = context.ChannelName;
+				JobName = context.Job == null ? string.Empty : context.Job.JobName;
+				ProgramNo = context.Job == null ? string.Empty : context.Job.ProgramNo;
+				DisplayText = string.IsNullOrWhiteSpace(JobName) ? ProgramNo : JobName;
+			}
+
+			public override string ToString()
+			{
+				return DisplayText;
 			}
 		}
 

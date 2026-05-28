@@ -35,6 +35,8 @@ namespace Aron_V3
 
 		private string _jobName;
 		private string _taskName;
+		private string _protocolName = "TCP/IP";
+		private string _channelName = "Channel01";
 		private string _configPath;
 		private string _scriptPath;
 		private CSharpScriptStepConfig _config;
@@ -52,6 +54,9 @@ namespace Aron_V3
 		private int _lastKnownCodeLineCount = -1;
 		private bool _forceLineNumberRefresh;
 		private bool _loadingCodeText;
+		private Timer _syntaxHighlightTimer;
+		private bool _syntaxHighlighting;
+		private bool _formatChordPending;
 
 		// Script 输入 BindingPath 下拉来源。
 		// 来源包括：任务调度中当前 Script 已选择的前序模块输出引脚、当前脚本已有绑定值；不再默认加入 Comm.* 示例项。
@@ -71,9 +76,47 @@ namespace Aron_V3
 			InitGrids();
 			InitializePinToggleLayout();
 			BindEvents();
+			RuntimeStepResultStore.StepResultUpdated -= RuntimeStepResultStore_StepResultUpdated;
+			RuntimeStepResultStore.StepResultUpdated += RuntimeStepResultStore_StepResultUpdated;
+			HandleDestroyed -= CSharpScriptStepEditorControl_HandleDestroyed;
+			HandleDestroyed += CSharpScriptStepEditorControl_HandleDestroyed;
 			ShowPinPage(true);
 
 			LoadConfigToUi();
+		}
+
+		private void CSharpScriptStepEditorControl_HandleDestroyed(object sender, EventArgs e)
+		{
+			RuntimeStepResultStore.StepResultUpdated -= RuntimeStepResultStore_StepResultUpdated;
+		}
+
+		private void RuntimeStepResultStore_StepResultUpdated(object sender, RuntimeStepResultUpdatedEventArgs e)
+		{
+			if (e == null || e.Result == null || IsDisposed)
+			{
+				return;
+			}
+
+			if (InvokeRequired)
+			{
+				try
+				{
+					BeginInvoke(new EventHandler<RuntimeStepResultUpdatedEventArgs>(RuntimeStepResultStore_StepResultUpdated), sender, e);
+				}
+				catch
+				{
+				}
+				return;
+			}
+
+			if (!string.Equals(_jobName, e.JobName, StringComparison.OrdinalIgnoreCase) ||
+				!string.Equals(_taskName, e.TaskName, StringComparison.OrdinalIgnoreCase) ||
+				!IsCurrentScriptRuntimeStep(e.StepName))
+			{
+				return;
+			}
+
+			ApplyScriptRunResultToGrid(e.Result);
 		}
 
 		public void ApplyLanguage(bool isEnglish)
@@ -102,6 +145,13 @@ namespace Aron_V3
 
 		public void LoadScriptStep(string jobName, string taskName, string stepName)
 		{
+			LoadScriptStep("TCP/IP", "Channel01", jobName, taskName, stepName);
+		}
+
+		public void LoadScriptStep(string protocolName, string channelName, string jobName, string taskName, string stepName)
+		{
+			_protocolName = string.IsNullOrWhiteSpace(protocolName) ? "TCP/IP" : protocolName;
+			_channelName = string.IsNullOrWhiteSpace(channelName) ? "Channel01" : channelName;
 			_jobName = string.IsNullOrWhiteSpace(jobName) ? "Job_001" : jobName;
 			_taskName = string.IsNullOrWhiteSpace(taskName) ? "Task_New_01" : taskName;
 
@@ -223,8 +273,9 @@ namespace Aron_V3
 
 		private string ResolveScriptPath(string jobName, string taskName, string stepName, StepConfig step)
 		{
-			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(jobName, taskName);
-			string scriptsFolder = Path.Combine(taskFolder, "Scripts");
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_protocolName, _channelName, jobName, taskName);
+			string scriptsFolder = Path.Combine(taskFolder, "Script");
+			string legacyScriptsFolder = Path.Combine(taskFolder, "Scripts");
 
 			// 1. 如果外部直接传入完整文件路径，优先使用。
 			if (!string.IsNullOrWhiteSpace(stepName) && Path.IsPathRooted(stepName) && IsScriptCodeFile(stepName) && File.Exists(stepName))
@@ -256,10 +307,14 @@ namespace Aron_V3
 			// 3. 再按左侧列表传进来的文件名查找。
 			string file = FindScriptFileInTaskFolder(scriptsFolder, stepName);
 			if (!string.IsNullOrWhiteSpace(file)) return file;
+			file = FindScriptFileInTaskFolder(legacyScriptsFolder, stepName);
+			if (!string.IsNullOrWhiteSpace(file)) return file;
 
 			// 4. 最后按去扩展名后的 StepName 兜底。
 			string normalized = NormalizeScriptSelectionName(stepName);
 			file = FindScriptFileInTaskFolder(scriptsFolder, normalized);
+			if (!string.IsNullOrWhiteSpace(file)) return file;
+			file = FindScriptFileInTaskFolder(legacyScriptsFolder, normalized);
 			if (!string.IsNullOrWhiteSpace(file)) return file;
 
 			return Path.Combine(scriptsFolder, MakeSafeFileName(normalized) + ".csx");
@@ -327,7 +382,24 @@ namespace Aron_V3
 		{
 			if (string.IsNullOrWhiteSpace(relativeOrAbsolute)) return string.Empty;
 			if (Path.IsPathRooted(relativeOrAbsolute)) return relativeOrAbsolute;
-			return Path.Combine(taskFolder, relativeOrAbsolute);
+			string candidate = Path.Combine(taskFolder, relativeOrAbsolute);
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+
+			string normalized = relativeOrAbsolute.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+			string legacyPrefix = "Scripts" + Path.DirectorySeparatorChar;
+			if (normalized.StartsWith(legacyPrefix, StringComparison.OrdinalIgnoreCase))
+			{
+				string alternate = Path.Combine(taskFolder, "Script" + Path.DirectorySeparatorChar + normalized.Substring(legacyPrefix.Length));
+				if (File.Exists(alternate))
+				{
+					return alternate;
+				}
+			}
+
+			return candidate;
 		}
 
 		private string ResolveScriptConfigPath(string jobName, string taskName, string stepName, string scriptPath)
@@ -342,7 +414,7 @@ namespace Aron_V3
 				}
 			}
 
-			return CSharpScriptStepStore.GetConfigPath(jobName, taskName, stepName);
+			return CSharpScriptStepStore.GetConfigPath(_protocolName, _channelName, jobName, taskName, stepName);
 		}
 
 		private string GetScriptDisplayName(string fallbackStepName, string scriptPath)
@@ -1359,7 +1431,7 @@ namespace Aron_V3
 		{
 			try
 			{
-				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_jobName, _taskName);
+				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_protocolName, _channelName, _jobName, _taskName);
 
 				List<string> scriptFiles = new List<string>();
 				AddUniqueText(scriptFiles, step.ProjectFilePath);
@@ -1391,7 +1463,7 @@ namespace Aron_V3
 					}
 				}
 
-				string fallback = CSharpScriptStepStore.GetConfigPath(_jobName, _taskName, step.StepName);
+				string fallback = CSharpScriptStepStore.GetConfigPath(_protocolName, _channelName, _jobName, _taskName, step.StepName);
 				if (File.Exists(fallback))
 				{
 					return CSharpScriptStepStore.Load(fallback);
@@ -1728,15 +1800,11 @@ namespace Aron_V3
 				return false;
 			}
 
-			string name = pin.Name == null ? string.Empty : pin.Name.Trim();
 			string binding = pin.BindingPath == null ? string.Empty : pin.BindingPath.Trim();
 
-			// 旧模板的三个示例输入统一清理。
-			// 这里按名称或典型绑定路径都清理，避免旧 .script.xml 里被用户改过默认值后残留。
+			// 只清理旧模板的自动绑定值，不再按输入名清理。
+			// JobID / Barcode 也可能是用户手动添加的合法输入名，按名称删除会导致保存后重开丢失。
 			return
-				string.Equals(name, "JobID", StringComparison.OrdinalIgnoreCase) ||
-				string.Equals(name, "Measure1", StringComparison.OrdinalIgnoreCase) ||
-				string.Equals(name, "Barcode", StringComparison.OrdinalIgnoreCase) ||
 				string.Equals(binding, "Comm.JobID", StringComparison.OrdinalIgnoreCase) ||
 				string.Equals(binding, "Vpp_01.Result1", StringComparison.OrdinalIgnoreCase) ||
 				string.Equals(binding, "Halcon_01.Code", StringComparison.OrdinalIgnoreCase);
@@ -1929,7 +1997,7 @@ namespace Aron_V3
 				return string.Empty;
 			}
 
-			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_jobName, _taskName);
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_protocolName, _channelName, _jobName, _taskName);
 			List<string> candidates = new List<string>();
 			AddUniqueText(candidates, step.ProjectFilePath);
 			AddUniqueText(candidates, step.SourceFilePath);
@@ -2230,6 +2298,190 @@ namespace Aron_V3
 			catch
 			{
 			}
+		}
+
+		private void TrySyncCurrentScriptPinsToFlowConfig()
+		{
+			if (_config == null || string.IsNullOrWhiteSpace(_scriptPath))
+			{
+				return;
+			}
+
+			try
+			{
+				ProjectFlowConfig flow = FlowConfigStore.LoadOrCreateDefault();
+				if (flow == null || flow.Jobs == null)
+				{
+					return;
+				}
+
+				JobConfig job = flow.Jobs.FirstOrDefault(j => j != null && string.Equals(j.JobName, _jobName, StringComparison.OrdinalIgnoreCase));
+				if (job == null || job.Tasks == null)
+				{
+					return;
+				}
+
+				TaskConfig task = job.Tasks.FirstOrDefault(t => t != null && string.Equals(t.TaskName, _taskName, StringComparison.OrdinalIgnoreCase));
+				if (task == null || task.Steps == null)
+				{
+					return;
+				}
+
+				StepConfig step = FindCurrentScriptStep(task);
+				if (step == null)
+				{
+					return;
+				}
+
+				step.StepType = StepType.Script;
+				step.SourceFilePath = _scriptPath;
+				step.ProjectFilePath = GetCurrentScriptProjectFilePath();
+				if (step.ScriptFiles == null)
+				{
+					step.ScriptFiles = new List<string>();
+				}
+				step.ScriptFiles.Clear();
+				if (!string.IsNullOrWhiteSpace(step.ProjectFilePath))
+				{
+					step.ScriptFiles.Add(step.ProjectFilePath);
+				}
+
+				step.InputPins = ConvertScriptPinsToFlowPins(_config.Inputs, true, step.StepName);
+				step.OutputPins = ConvertScriptPinsToFlowPins(_config.Outputs, false, step.StepName);
+				FlowConfigStore.Save(flow);
+			}
+			catch
+			{
+			}
+		}
+
+		private StepConfig FindCurrentScriptStep(TaskConfig task)
+		{
+			if (task == null || task.Steps == null)
+			{
+				return null;
+			}
+
+			foreach (StepConfig step in task.Steps)
+			{
+				if (IsCurrentScriptStep(task, step))
+				{
+					return step;
+				}
+			}
+
+			string configStepName = _config == null ? string.Empty : _config.StepName;
+			return task.Steps.FirstOrDefault(s => s != null && string.Equals(s.StepName, configStepName, StringComparison.OrdinalIgnoreCase));
+		}
+
+		private bool IsCurrentScriptStep(TaskConfig task, StepConfig step)
+		{
+			if (task == null || step == null || step.StepType != StepType.Script)
+			{
+				return false;
+			}
+
+			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_protocolName, _channelName, _jobName, _taskName);
+			List<string> candidates = new List<string>();
+			AddUniqueText(candidates, step.SourceFilePath);
+			AddUniqueText(candidates, step.ProjectFilePath);
+
+			if (step.ScriptFiles != null)
+			{
+				foreach (string scriptFile in step.ScriptFiles)
+				{
+					AddUniqueText(candidates, scriptFile);
+				}
+			}
+
+			foreach (string candidate in candidates)
+			{
+				string path = ResolveStepFilePath(taskFolder, candidate);
+				if (IsSameFullPath(path, _scriptPath))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private string GetCurrentScriptProjectFilePath()
+		{
+			try
+			{
+				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(_protocolName, _channelName, _jobName, _taskName);
+				string scriptFullPath = Path.GetFullPath(_scriptPath);
+				string taskFullPath = Path.GetFullPath(taskFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+				if (scriptFullPath.StartsWith(taskFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+				{
+					return scriptFullPath.Substring(taskFullPath.Length + 1);
+				}
+			}
+			catch
+			{
+			}
+
+			return Path.Combine("Script", Path.GetFileName(_scriptPath));
+		}
+
+		private bool IsSameFullPath(string left, string right)
+		{
+			if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+			{
+				return false;
+			}
+
+			try
+			{
+				return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+			}
+			catch
+			{
+				return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+			}
+		}
+
+		private List<PinConfig> ConvertScriptPinsToFlowPins(List<ScriptPinConfig> scriptPins, bool isInput, string stepName)
+		{
+			List<PinConfig> pins = new List<PinConfig>();
+			if (scriptPins == null)
+			{
+				return pins;
+			}
+
+			foreach (ScriptPinConfig scriptPin in scriptPins)
+			{
+				if (scriptPin == null || string.IsNullOrWhiteSpace(scriptPin.Name))
+				{
+					continue;
+				}
+
+				string pinName = scriptPin.Name.Trim();
+				PinConfig pin = new PinConfig();
+				pin.PinName = pinName;
+				string stepPinKey = BuildStepPinKey(stepName, pinName);
+				pin.SourceKey = isInput ? string.Empty : stepPinKey;
+				pin.TargetKey = isInput ? string.Empty : stepPinKey;
+				pin.DataType = ConvertScriptPinDataTypeToPinDataType(scriptPin.DataType);
+				pin.Length = 0;
+				pin.Description = scriptPin.Description ?? string.Empty;
+				pin.GlobalVariableName = scriptPin.GlobalVariableName ?? string.Empty;
+				pins.Add(pin);
+			}
+
+			return pins;
+		}
+
+		private string BuildStepPinKey(string stepName, string pinName)
+		{
+			if (string.IsNullOrWhiteSpace(stepName))
+			{
+				return pinName ?? string.Empty;
+			}
+
+			return stepName + "." + (pinName ?? string.Empty);
 		}
 
 		private void AutoMergeSelectedPreviousOutputPinsToInputs()
@@ -3043,11 +3295,53 @@ namespace Aron_V3
 
 			foreach (DataGridViewRow row in grid.SelectedRows)
 			{
-				if (!row.IsNewRow)
+				if (!row.IsNewRow && !IsRequiredScriptInputRow(row))
 				{
 					grid.Rows.Remove(row);
 				}
 			}
+		}
+
+		private bool IsRequiredScriptInputRow(DataGridViewRow row)
+		{
+			if (row == null || row.DataGridView != gridInputs || !row.DataGridView.Columns.Contains("Name"))
+			{
+				return false;
+			}
+
+			string name = GetPinCellString(row, "Name");
+			return string.Equals(name, CSharpScriptStepStore.PreviousStepsOkInputName, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private void ApplyRequiredInputRowStyle(DataGridViewRow row)
+		{
+			if (!IsRequiredScriptInputRow(row))
+			{
+				return;
+			}
+
+			if (row.DataGridView.Columns.Contains("Name"))
+			{
+				row.Cells["Name"].ReadOnly = true;
+			}
+
+			if (row.DataGridView.Columns.Contains("DataType"))
+			{
+				row.Cells["DataType"].ReadOnly = true;
+			}
+
+			if (row.DataGridView.Columns.Contains("DefaultValue"))
+			{
+				row.Cells["DefaultValue"].ReadOnly = true;
+			}
+
+			if (row.DataGridView.Columns.Contains("GlobalVariableName"))
+			{
+				row.Cells["GlobalVariableName"].ReadOnly = true;
+			}
+
+			row.DefaultCellStyle.BackColor = Color.FromArgb(10, 32, 50);
+			row.DefaultCellStyle.ForeColor = Color.FromArgb(210, 235, 255);
 		}
 
 		private void UpdateScriptEditorSplitter()
@@ -3193,6 +3487,7 @@ namespace Aron_V3
 				txtStepName.Text = GetCurrentScriptDisplayName();
 				chkEnable.Checked = true;
 				txtScriptPath.Text = _config == null ? string.Empty : _config.ScriptFilePath;
+				CSharpScriptStepStore.EnsureRequiredInputs(_config);
 
 				string scriptCode = string.Empty;
 				if (_config != null && !string.IsNullOrWhiteSpace(_config.ScriptFilePath) && File.Exists(_config.ScriptFilePath))
@@ -3206,6 +3501,7 @@ namespace Aron_V3
 				EnsureOutputPanelVisible();
 				LoadPinsToGrid(gridInputs, _config == null ? null : _config.Inputs);
 				LoadPinsToGrid(gridOutputs, _config == null ? null : _config.Outputs);
+				ApplyLatestScriptRunResultToGrid();
 				EnsureOutputPanelVisible();
 				txtCode.Text = scriptCode;
 
@@ -3240,6 +3536,8 @@ namespace Aron_V3
 
 		private void SaveUiToConfig()
 		{
+			CommitPinGridEdits();
+
 			if (_config == null)
 			{
 				_config = new CSharpScriptStepConfig();
@@ -3252,6 +3550,39 @@ namespace Aron_V3
 
 			_config.Inputs = ReadPinsFromGrid(gridInputs);
 			_config.Outputs = ReadPinsFromGrid(gridOutputs);
+			CSharpScriptStepStore.EnsureRequiredInputs(_config);
+		}
+
+		private void CommitPinGridEdits()
+		{
+			CommitPinGridEdit(gridInputs);
+			CommitPinGridEdit(gridOutputs);
+		}
+
+		private void CommitPinGridEdit(DataGridView grid)
+		{
+			if (grid == null)
+			{
+				return;
+			}
+
+			try
+			{
+				if (grid.IsCurrentCellDirty)
+				{
+					grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+				}
+
+				grid.EndEdit(DataGridViewDataErrorContexts.Commit);
+				CurrencyManager manager = BindingContext[grid.DataSource ?? grid] as CurrencyManager;
+				if (manager != null)
+				{
+					manager.EndCurrentEdit();
+				}
+			}
+			catch
+			{
+			}
 		}
 
 		private void LoadPinsToGrid(DataGridView grid, List<ScriptPinConfig> pins)
@@ -3288,6 +3619,7 @@ namespace Aron_V3
 				{
 					SetPinCellValueIfExists(row, "DefaultValue", pin.DefaultValue);
 					UpdateBoundInputValue(row);
+					ApplyRequiredInputRowStyle(row);
 				}
 				else
 				{
@@ -3347,6 +3679,14 @@ namespace Aron_V3
 
 				pin.Description = isInput ? GetAutoInputDescriptionByBinding(pin.BindingPath) : string.Empty;
 				result.Add(pin);
+			}
+
+			if (isInput)
+			{
+				CSharpScriptStepConfig temp = new CSharpScriptStepConfig();
+				temp.Inputs = result;
+				CSharpScriptStepStore.EnsureRequiredInputs(temp);
+				result = temp.Inputs;
 			}
 
 			return result;
@@ -3854,7 +4194,15 @@ namespace Aron_V3
 			try
 			{
 				SaveCurrentScriptAndConfigOnly();
-				LogInfo("Script saved.");
+				CSharpScriptRunResult compile = CompileCurrentScriptToPersistentCache();
+				if (!compile.IsCompileOK || !compile.IsRunOK)
+				{
+					LogError("Script saved, but compile cache failed: " + compile.ErrorDetail);
+					SetStatusError("Compile Error");
+					return;
+				}
+
+				LogInfo("Script saved and compiled. Cost=" + compile.CompileCost.TotalMilliseconds.ToString("0.0") + " ms");
 				SetStatusOK("Saved");
 			}
 			catch (Exception ex)
@@ -3886,6 +4234,7 @@ namespace Aron_V3
 
 			File.WriteAllText(_config.ScriptFilePath, txtCode.Text, System.Text.Encoding.UTF8);
 			CSharpScriptStepStore.Save(_configPath, _config);
+			TrySyncCurrentScriptPinsToFlowConfig();
 		}
 
 		private void btnCompile_Click(object sender, EventArgs e)
@@ -4041,29 +4390,157 @@ namespace Aron_V3
 			}
 		}
 
+		private void ApplyLatestScriptRunResultToGrid()
+		{
+			if (string.IsNullOrWhiteSpace(_jobName) ||
+				string.IsNullOrWhiteSpace(_taskName) ||
+				_config == null ||
+				string.IsNullOrWhiteSpace(_config.StepName))
+			{
+				return;
+			}
+
+			StepResult result;
+			if (RuntimeStepResultStore.TryGetLatest(_jobName, _taskName, _config.StepName, out result))
+			{
+				ApplyScriptRunResultToGrid(result);
+			}
+		}
+
+		private bool IsCurrentScriptRuntimeStep(string stepName)
+		{
+			if (string.IsNullOrWhiteSpace(stepName) || _config == null)
+			{
+				return false;
+			}
+
+			if (string.Equals(stepName, _config.StepName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			string displayName = GetCurrentScriptDisplayName();
+			return string.Equals(stepName, displayName, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private void ApplyScriptRunResultToGrid(StepResult result)
+		{
+			if (result == null)
+			{
+				return;
+			}
+
+			ApplyScriptInputRunValues(result);
+			ApplyScriptOutputRunValues(result);
+		}
+
+		private void ApplyScriptInputRunValues(StepResult result)
+		{
+			if (gridInputs == null || result.Inputs == null || result.Inputs.Count <= 0)
+			{
+				return;
+			}
+
+			foreach (DataGridViewRow row in gridInputs.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				string name = GetPinCellString(row, "Name");
+				string globalVariableName = GetPinCellString(row, "GlobalVariableName");
+				object value;
+				if (TryFindRuntimeValue(result.Inputs, name, globalVariableName, out value))
+				{
+					row.Cells["DefaultValue"].Value = ValueToDisplayText(value);
+				}
+			}
+		}
+
+		private void ApplyScriptOutputRunValues(StepResult result)
+		{
+			if (gridOutputs == null || result.Outputs == null || result.Outputs.Count <= 0)
+			{
+				return;
+			}
+
+			foreach (DataGridViewRow row in gridOutputs.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				string name = GetPinCellString(row, "Name");
+				string globalVariableName = GetPinCellString(row, "GlobalVariableName");
+				object value;
+				if (TryFindRuntimeValue(result.Outputs, name, globalVariableName, out value))
+				{
+					row.Cells["CurrentValue"].Value = ValueToDisplayText(value);
+					row.Cells["CurrentValue"].ReadOnly = true;
+				}
+			}
+		}
+
+		private bool TryFindRuntimeValue(
+			Dictionary<string, object> values,
+			string name,
+			string globalVariableName,
+			out object value)
+		{
+			value = null;
+			if (values == null)
+			{
+				return false;
+			}
+
+			if (!string.IsNullOrWhiteSpace(name) && values.TryGetValue(name, out value))
+			{
+				return true;
+			}
+
+			if (!string.IsNullOrWhiteSpace(globalVariableName) && values.TryGetValue(globalVariableName, out value))
+			{
+				return true;
+			}
+
+			return false;
+		}
+
+		private string ValueToDisplayText(object value)
+		{
+			if (value == null)
+			{
+				return string.Empty;
+			}
+
+			if (value is string)
+			{
+				return value.ToString();
+			}
+
+			Type type = value.GetType();
+			if (type.IsPrimitive || value is decimal)
+			{
+				return Convert.ToString(value);
+			}
+
+			return "[" + type.Name + "]";
+		}
+
 
 		private CompilerResultProxy CompileOnly(CSharpScriptStepRunner runner)
 		{
 			CompilerResultProxy proxy = new CompilerResultProxy();
 
-			System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
-			System.CodeDom.Compiler.CompilerResults cr = runner.Compile(_config, txtCode.Text);
-			sw.Stop();
+			CSharpScriptRunResult result = runner.CompileAndCache(_config, txtCode.Text);
+			proxy.Cost = result.CompileCost;
 
-			proxy.Cost = sw.Elapsed;
-
-			if (cr.Errors.HasErrors)
+			if (!result.IsCompileOK || !result.IsRunOK)
 			{
 				proxy.HasError = true;
-
-				System.Text.StringBuilder sb = new System.Text.StringBuilder();
-
-				foreach (System.CodeDom.Compiler.CompilerError error in cr.Errors)
-				{
-					sb.AppendLine("Line " + error.Line + ", Column " + error.Column + ", " + error.ErrorNumber + ": " + error.ErrorText);
-				}
-
-				proxy.Message = sb.ToString();
+				proxy.Message = result.ErrorDetail;
 			}
 			else
 			{
@@ -4072,6 +4549,12 @@ namespace Aron_V3
 			}
 
 			return proxy;
+		}
+
+		private CSharpScriptRunResult CompileCurrentScriptToPersistentCache()
+		{
+			CSharpScriptStepRunner runner = new CSharpScriptStepRunner();
+			return runner.CompileAndCache(_config, txtCode.Text);
 		}
 
 		private void LogOutputsToGrid(Dictionary<string, object> outputs)
@@ -4253,15 +4736,38 @@ namespace Aron_V3
 			AddCompletion(items, "bool", "bool");
 			AddCompletion(items, "object", "object");
 			AddCompletion(items, "var", "var");
+			AddCompletion(items, "using", "using");
+			AddCompletion(items, "namespace", "namespace");
+			AddCompletion(items, "static", "static");
+			AddCompletion(items, "readonly", "readonly");
+			AddCompletion(items, "const", "const");
+			AddCompletion(items, "this", "this");
+			AddCompletion(items, "base", "base");
+			AddCompletion(items, "break", "break;");
+			AddCompletion(items, "continue", "continue;");
+			AddCompletion(items, "switch", "switch");
+			AddCompletion(items, "case", "case");
+			AddCompletion(items, "default", "default:");
+			AddCompletion(items, "throw", "throw");
+			AddCompletion(items, "Exception", "Exception");
+			AddCompletion(items, "StringBuilder", "StringBuilder sb = new StringBuilder();");
 
 			AddCompletion(items, "MessageBox.Show", "MessageBox.Show(\"message\");");
 			AddCompletion(items, "Math.Abs", "Math.Abs(value)");
+			AddCompletion(items, "Math.Max", "Math.Max(a, b)");
+			AddCompletion(items, "Math.Min", "Math.Min(a, b)");
 			AddCompletion(items, "Math.Round", "Math.Round(value, 3)");
+			AddCompletion(items, "Math.Floor", "Math.Floor(value)");
+			AddCompletion(items, "Math.Ceiling", "Math.Ceiling(value)");
 			AddCompletion(items, "Convert.ToString", "Convert.ToString(value)");
 			AddCompletion(items, "Convert.ToInt32", "Convert.ToInt32(value)");
 			AddCompletion(items, "Convert.ToDouble", "Convert.ToDouble(value)");
+			AddCompletion(items, "Convert.ToBoolean", "Convert.ToBoolean(value)");
 			AddCompletion(items, "DateTime.Now", "DateTime.Now");
+			AddCompletion(items, "TimeSpan.FromMilliseconds", "TimeSpan.FromMilliseconds(value)");
 			AddCompletion(items, "string.Format", "string.Format(\"{0}\", value)");
+			AddCompletion(items, "string.IsNullOrWhiteSpace", "string.IsNullOrWhiteSpace(value)");
+			AddCompletion(items, "string.IsNullOrEmpty", "string.IsNullOrEmpty(value)");
 			AddCompletion(items, "List<string>", "List<string> list = new List<string>();");
 			AddCompletion(items, "List<double>", "List<double> list = new List<double>();");
 			AddCompletion(items, "Dictionary<string, object>", "Dictionary<string, object> dict = new Dictionary<string, object>();");
@@ -4341,6 +4847,11 @@ namespace Aron_V3
 
 		private void txtCode_KeyDown(object sender, KeyEventArgs e)
 		{
+			if (HandleCodeEditorShortcut(e))
+			{
+				return;
+			}
+
 			if (e.Control && e.KeyCode == Keys.Space)
 			{
 				ShowCompletion(true);
@@ -4378,6 +4889,23 @@ namespace Aron_V3
 					return;
 				}
 			}
+
+			if (e.KeyCode == Keys.Enter)
+			{
+				InsertSmartNewLine();
+				e.SuppressKeyPress = true;
+				return;
+			}
+
+			if (e.KeyCode == Keys.Tab)
+			{
+				if (txtCode != null && txtCode.SelectionLength > 0 && SelectionSpansMultipleLines())
+				{
+					IndentSelectedLines(!e.Shift);
+					e.SuppressKeyPress = true;
+					return;
+				}
+			}
 		}
 
 		private void txtCode_KeyUp(object sender, KeyEventArgs e)
@@ -4391,6 +4919,8 @@ namespace Aron_V3
 			{
 				return;
 			}
+
+			_formatChordPending = false;
 
 			if (IsTextKey(e.KeyCode) || e.KeyCode == Keys.OemPeriod || e.KeyCode == Keys.Decimal)
 			{
@@ -4417,10 +4947,58 @@ namespace Aron_V3
 
 		private void txtCode_LostFocus(object sender, EventArgs e)
 		{
+			_formatChordPending = false;
 			if (_completionList != null && !_completionList.Focused)
 			{
 				HideCompletion();
 			}
+		}
+
+		private bool HandleCodeEditorShortcut(KeyEventArgs e)
+		{
+			if (txtCode == null)
+			{
+				return false;
+			}
+
+			bool slashKey = e.KeyCode == Keys.OemQuestion || e.KeyCode == Keys.Divide;
+			if (e.Control && !e.Alt && slashKey)
+			{
+				ToggleLineComments();
+				e.SuppressKeyPress = true;
+				_formatChordPending = false;
+				return true;
+			}
+
+			if (e.Control && e.Shift && e.KeyCode == Keys.F)
+			{
+				FormatCodeText();
+				e.SuppressKeyPress = true;
+				_formatChordPending = false;
+				return true;
+			}
+
+			if (e.Control && e.KeyCode == Keys.K)
+			{
+				_formatChordPending = true;
+				e.SuppressKeyPress = true;
+				return true;
+			}
+
+			if (_formatChordPending)
+			{
+				if (e.Control && e.KeyCode == Keys.D)
+				{
+					FormatCodeText();
+					e.SuppressKeyPress = true;
+					_formatChordPending = false;
+					return true;
+				}
+
+				_formatChordPending = false;
+			}
+
+			return false;
 		}
 
 		private void ShowCompletion(bool forceShow)
@@ -4609,6 +5187,355 @@ namespace Aron_V3
 			}
 		}
 
+		private void InsertSmartNewLine()
+		{
+			if (txtCode == null)
+			{
+				return;
+			}
+
+			int selectionStart = txtCode.SelectionStart;
+			string currentLine = GetLineTextAt(selectionStart);
+			string indent = GetLeadingWhitespace(currentLine);
+			string trimmed = currentLine.TrimEnd();
+
+			if (trimmed.EndsWith("{", StringComparison.Ordinal) ||
+				trimmed.EndsWith(":", StringComparison.Ordinal) ||
+				trimmed.EndsWith("(", StringComparison.Ordinal))
+			{
+				indent += "    ";
+			}
+
+			if (txtCode.SelectionLength > 0)
+			{
+				txtCode.SelectedText = string.Empty;
+			}
+
+			txtCode.SelectedText = Environment.NewLine + indent;
+			RequestLineNumberRefresh(false);
+			RequestSyntaxHighlight(false);
+		}
+
+		private string GetLineTextAt(int charIndex)
+		{
+			if (txtCode == null || txtCode.Lines == null || txtCode.Lines.Length <= 0)
+			{
+				return string.Empty;
+			}
+
+			int safeIndex = Math.Max(0, Math.Min(charIndex, Math.Max(0, txtCode.TextLength - 1)));
+			int lineIndex = txtCode.GetLineFromCharIndex(safeIndex);
+			if (lineIndex < 0 || lineIndex >= txtCode.Lines.Length)
+			{
+				return string.Empty;
+			}
+
+			return txtCode.Lines[lineIndex] ?? string.Empty;
+		}
+
+		private string GetLeadingWhitespace(string text)
+		{
+			if (string.IsNullOrEmpty(text))
+			{
+				return string.Empty;
+			}
+
+			int length = 0;
+			while (length < text.Length && (text[length] == ' ' || text[length] == '\t'))
+			{
+				length++;
+			}
+
+			return text.Substring(0, length);
+		}
+
+		private bool SelectionSpansMultipleLines()
+		{
+			if (txtCode == null)
+			{
+				return false;
+			}
+
+			int startLine = txtCode.GetLineFromCharIndex(txtCode.SelectionStart);
+			int endIndex = txtCode.SelectionStart + Math.Max(0, txtCode.SelectionLength - 1);
+			int endLine = txtCode.GetLineFromCharIndex(Math.Min(endIndex, Math.Max(0, txtCode.TextLength)));
+			return endLine > startLine;
+		}
+
+		private void ToggleLineComments()
+		{
+			if (txtCode == null)
+			{
+				return;
+			}
+
+			int selectionStart = txtCode.SelectionStart;
+			int selectionLength = txtCode.SelectionLength;
+			List<int> lineIndexes = GetSelectedLineIndexes();
+			if (lineIndexes.Count <= 0)
+			{
+				return;
+			}
+
+			string[] lines = txtCode.Lines;
+			bool uncomment = lineIndexes
+				.Select(i => i >= 0 && i < lines.Length ? lines[i] : string.Empty)
+				.Where(line => !string.IsNullOrWhiteSpace(line))
+				.All(IsLineCommented);
+
+			foreach (int lineIndex in lineIndexes)
+			{
+				if (lineIndex < 0 || lineIndex >= lines.Length)
+				{
+					continue;
+				}
+
+				lines[lineIndex] = uncomment
+					? UncommentLine(lines[lineIndex])
+					: CommentLine(lines[lineIndex]);
+			}
+
+			ReplaceCodeTextPreserveCaret(string.Join(Environment.NewLine, lines), selectionStart, selectionLength);
+		}
+
+		private List<int> GetSelectedLineIndexes()
+		{
+			List<int> result = new List<int>();
+			if (txtCode == null)
+			{
+				return result;
+			}
+
+			int startLine = txtCode.GetLineFromCharIndex(txtCode.SelectionStart);
+			int endIndex = txtCode.SelectionLength <= 0
+				? txtCode.SelectionStart
+				: txtCode.SelectionStart + txtCode.SelectionLength - 1;
+			endIndex = Math.Max(0, Math.Min(endIndex, Math.Max(0, txtCode.TextLength - 1)));
+			int endLine = txtCode.GetLineFromCharIndex(endIndex);
+
+			for (int i = startLine; i <= endLine; i++)
+			{
+				result.Add(i);
+			}
+
+			return result;
+		}
+
+		private bool IsLineCommented(string line)
+		{
+			string trimmed = (line ?? string.Empty).TrimStart();
+			return trimmed.StartsWith("//", StringComparison.Ordinal);
+		}
+
+		private string CommentLine(string line)
+		{
+			if (string.IsNullOrWhiteSpace(line))
+			{
+				return line ?? string.Empty;
+			}
+
+			string indent = GetLeadingWhitespace(line);
+			return indent + "// " + line.Substring(indent.Length);
+		}
+
+		private string UncommentLine(string line)
+		{
+			if (string.IsNullOrEmpty(line))
+			{
+				return string.Empty;
+			}
+
+			string indent = GetLeadingWhitespace(line);
+			string rest = line.Substring(indent.Length);
+			if (!rest.StartsWith("//", StringComparison.Ordinal))
+			{
+				return line;
+			}
+
+			rest = rest.Substring(2);
+			if (rest.StartsWith(" ", StringComparison.Ordinal))
+			{
+				rest = rest.Substring(1);
+			}
+
+			return indent + rest;
+		}
+
+		private void IndentSelectedLines(bool indent)
+		{
+			if (txtCode == null)
+			{
+				return;
+			}
+
+			int selectionStart = txtCode.SelectionStart;
+			int selectionLength = txtCode.SelectionLength;
+			List<int> lineIndexes = GetSelectedLineIndexes();
+			string[] lines = txtCode.Lines;
+
+			foreach (int lineIndex in lineIndexes)
+			{
+				if (lineIndex < 0 || lineIndex >= lines.Length)
+				{
+					continue;
+				}
+
+				if (indent)
+				{
+					lines[lineIndex] = "    " + lines[lineIndex];
+				}
+				else if (lines[lineIndex].StartsWith("    ", StringComparison.Ordinal))
+				{
+					lines[lineIndex] = lines[lineIndex].Substring(4);
+				}
+				else if (lines[lineIndex].StartsWith("\t", StringComparison.Ordinal))
+				{
+					lines[lineIndex] = lines[lineIndex].Substring(1);
+				}
+			}
+
+			ReplaceCodeTextPreserveCaret(string.Join(Environment.NewLine, lines), selectionStart, selectionLength);
+		}
+
+		private void FormatCodeText()
+		{
+			if (txtCode == null)
+			{
+				return;
+			}
+
+			string formatted = FormatCSharpLikeCode(txtCode.Text);
+			ReplaceCodeTextPreserveCaret(formatted, txtCode.SelectionStart, txtCode.SelectionLength);
+		}
+
+		private string FormatCSharpLikeCode(string text)
+		{
+			if (string.IsNullOrEmpty(text))
+			{
+				return string.Empty;
+			}
+
+			string[] lines = text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+			List<string> result = new List<string>();
+			int indentLevel = 0;
+			bool inBlockComment = false;
+
+			foreach (string rawLine in lines)
+			{
+				string line = (rawLine ?? string.Empty).Trim();
+				if (line.Length == 0)
+				{
+					result.Add(string.Empty);
+					continue;
+				}
+
+				bool startsWithClose = line.StartsWith("}", StringComparison.Ordinal) ||
+					line.StartsWith(")", StringComparison.Ordinal) ||
+					line.StartsWith("]", StringComparison.Ordinal);
+				if (startsWithClose && indentLevel > 0)
+				{
+					indentLevel--;
+				}
+
+				result.Add(new string(' ', indentLevel * 4) + line);
+
+				int delta = GetBraceIndentDelta(line, ref inBlockComment);
+				indentLevel = Math.Max(0, indentLevel + delta);
+			}
+
+			return string.Join(Environment.NewLine, result);
+		}
+
+		private int GetBraceIndentDelta(string line, ref bool inBlockComment)
+		{
+			int delta = 0;
+			bool inString = false;
+			bool inChar = false;
+			bool escaped = false;
+
+			for (int i = 0; i < line.Length; i++)
+			{
+				char c = line[i];
+				char next = i + 1 < line.Length ? line[i + 1] : '\0';
+
+				if (inBlockComment)
+				{
+					if (c == '*' && next == '/')
+					{
+						inBlockComment = false;
+						i++;
+					}
+					continue;
+				}
+
+				if (!inString && !inChar && c == '/' && next == '/')
+				{
+					break;
+				}
+
+				if (!inString && !inChar && c == '/' && next == '*')
+				{
+					inBlockComment = true;
+					i++;
+					continue;
+				}
+
+				if (escaped)
+				{
+					escaped = false;
+					continue;
+				}
+
+				if (c == '\\' && (inString || inChar))
+				{
+					escaped = true;
+					continue;
+				}
+
+				if (!inChar && c == '"')
+				{
+					inString = !inString;
+					continue;
+				}
+
+				if (!inString && c == '\'')
+				{
+					inChar = !inChar;
+					continue;
+				}
+
+				if (inString || inChar)
+				{
+					continue;
+				}
+
+				if (c == '{')
+				{
+					delta++;
+				}
+				else if (c == '}')
+				{
+					delta--;
+				}
+			}
+
+			return delta;
+		}
+
+		private void ReplaceCodeTextPreserveCaret(string text, int selectionStart, int selectionLength)
+		{
+			if (txtCode == null)
+			{
+				return;
+			}
+
+			SetCodeTextSafely(text);
+			txtCode.SelectionStart = Math.Min(Math.Max(0, selectionStart), txtCode.TextLength);
+			txtCode.SelectionLength = Math.Min(Math.Max(0, selectionLength), Math.Max(0, txtCode.TextLength - txtCode.SelectionStart));
+			RequestLineNumberRefresh(true);
+			RequestSyntaxHighlight(true);
+		}
+
 		private class CompletionItem
 		{
 			public string DisplayText { get; private set; }
@@ -4643,6 +5570,8 @@ namespace Aron_V3
 				_lastKnownCodeLineCount = lineCount;
 				RequestLineNumberRefresh(false);
 			}
+
+			RequestSyntaxHighlight(false);
 		}
 
 		private void txtCode_VScroll(object sender, EventArgs e)
@@ -4768,6 +5697,167 @@ namespace Aron_V3
 				ResumeControlRedraw(txtCode);
 				_loadingCodeText = false;
 			}
+
+			RequestSyntaxHighlight(true);
+		}
+
+		private void RequestSyntaxHighlight(bool immediate)
+		{
+			if (txtCode == null || txtCode.IsDisposed || _syntaxHighlighting || _loadingCodeText)
+			{
+				return;
+			}
+
+			if (immediate || !txtCode.IsHandleCreated)
+			{
+				ApplyCommentSyntaxHighlight();
+				return;
+			}
+
+			if (_syntaxHighlightTimer == null)
+			{
+				_syntaxHighlightTimer = new Timer();
+				_syntaxHighlightTimer.Interval = 180;
+				_syntaxHighlightTimer.Tick += delegate
+				{
+					_syntaxHighlightTimer.Stop();
+					ApplyCommentSyntaxHighlight();
+				};
+			}
+
+			_syntaxHighlightTimer.Stop();
+			_syntaxHighlightTimer.Start();
+		}
+
+		private void ApplyCommentSyntaxHighlight()
+		{
+			if (txtCode == null || txtCode.IsDisposed || _syntaxHighlighting)
+			{
+				return;
+			}
+
+			_syntaxHighlighting = true;
+			int selectionStart = txtCode.SelectionStart;
+			int selectionLength = txtCode.SelectionLength;
+			Color selectionColor = txtCode.SelectionColor;
+
+			SuspendControlRedraw(txtCode);
+			try
+			{
+				txtCode.SelectAll();
+				txtCode.SelectionColor = Color.FromArgb(210, 230, 245);
+
+				foreach (TextRange range in FindCommentRanges(txtCode.Text))
+				{
+					if (range.Start < 0 || range.Length <= 0 || range.Start + range.Length > txtCode.TextLength)
+					{
+						continue;
+					}
+
+					txtCode.Select(range.Start, range.Length);
+					txtCode.SelectionColor = _green;
+				}
+
+				txtCode.Select(Math.Min(selectionStart, txtCode.TextLength), Math.Min(selectionLength, Math.Max(0, txtCode.TextLength - selectionStart)));
+				txtCode.SelectionColor = selectionColor;
+			}
+			finally
+			{
+				ResumeControlRedraw(txtCode);
+				_syntaxHighlighting = false;
+			}
+		}
+
+		private List<TextRange> FindCommentRanges(string text)
+		{
+			List<TextRange> result = new List<TextRange>();
+			if (string.IsNullOrEmpty(text))
+			{
+				return result;
+			}
+
+			bool inString = false;
+			bool inChar = false;
+			bool escaped = false;
+
+			for (int i = 0; i < text.Length; i++)
+			{
+				char c = text[i];
+				char next = i + 1 < text.Length ? text[i + 1] : '\0';
+
+				if (escaped)
+				{
+					escaped = false;
+					continue;
+				}
+
+				if ((inString || inChar) && c == '\\')
+				{
+					escaped = true;
+					continue;
+				}
+
+				if (!inChar && c == '"')
+				{
+					inString = !inString;
+					continue;
+				}
+
+				if (!inString && c == '\'')
+				{
+					inChar = !inChar;
+					continue;
+				}
+
+				if (inString || inChar)
+				{
+					continue;
+				}
+
+				if (c == '/' && next == '/')
+				{
+					int start = i;
+					int end = text.IndexOf('\n', i);
+					if (end < 0)
+					{
+						end = text.Length;
+					}
+
+					result.Add(new TextRange(start, end - start));
+					i = end;
+					continue;
+				}
+
+				if (c == '/' && next == '*')
+				{
+					int start = i;
+					int end = text.IndexOf("*/", i + 2, StringComparison.Ordinal);
+					if (end < 0)
+					{
+						end = text.Length;
+						result.Add(new TextRange(start, end - start));
+						break;
+					}
+
+					end += 2;
+					result.Add(new TextRange(start, end - start));
+					i = end - 1;
+				}
+			}
+
+			return result;
+		}
+
+		private struct TextRange
+		{
+			public int Start;
+			public int Length;
+
+			public TextRange(int start, int length)
+			{
+				Start = start;
+				Length = length;
+			}
 		}
 
 		private void panelLineNumbers_Paint(object sender, PaintEventArgs e)
@@ -4836,6 +5926,13 @@ namespace Aron_V3
 				_lineNumberRefreshTimer.Stop();
 				_lineNumberRefreshTimer.Dispose();
 				_lineNumberRefreshTimer = null;
+			}
+
+			if (_syntaxHighlightTimer != null)
+			{
+				_syntaxHighlightTimer.Stop();
+				_syntaxHighlightTimer.Dispose();
+				_syntaxHighlightTimer = null;
 			}
 
 			base.OnHandleDestroyed(e);

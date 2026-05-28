@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Reflection;
@@ -45,6 +46,7 @@ namespace Aron_V3
 			try
 			{
 				string sourceInfo = jobName + " / " + taskName + " / " + step.StepName;
+				bool inspectionOK = ResolveInspectionResult(step, stepRunResult);
 
 				DisplayRuntimeManager.ShowImage(
 					step.DisplaySlotName,
@@ -52,7 +54,12 @@ namespace Aron_V3
 					sourceInfo,
 					step.DisplayMode,
 					selectedImage == null ? null : selectedImage.DisplayRecord,
-					selectedImage == null ? string.Empty : selectedImage.DisplayRecordKey);
+					selectedImage == null ? string.Empty : selectedImage.DisplayRecordKey,
+					inspectionOK,
+					jobName,
+					ResolveContextValue(context, "JobID", "JobID0", "JobID_0", "Comm.JobID0", "TCP/IP.JobID0"),
+					ResolveContextValue(context, "PosID", "PosID0", "PosID_0", "Comm.PosID0", "TCP/IP.PosID0"),
+					ResolveContextValue(context, "Comm.Channel", "Task.CommunicationChannel", "Channel", "EngineID", "EngineID", "Engine", "Comm.EngineID"));
 			}
 			finally
 			{
@@ -205,6 +212,99 @@ namespace Aron_V3
 			{
 				return null;
 			}
+		}
+
+		private static bool ResolveInspectionResult(StepConfig step, StepResult result)
+		{
+			if (step == null ||
+				string.IsNullOrWhiteSpace(step.DisplayResultKey) ||
+				string.Equals(step.DisplayResultKey, "Not Use", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			object value;
+			if (result != null &&
+				result.Outputs != null &&
+				TryGetOutputValue(result.Outputs, step.DisplayResultKey, out value))
+			{
+				return ConvertToBool(value);
+			}
+
+			return false;
+		}
+
+		private static bool TryGetOutputValue(Dictionary<string, object> values, string key, out object value)
+		{
+			value = null;
+
+			if (values == null || string.IsNullOrWhiteSpace(key))
+			{
+				return false;
+			}
+
+			if (values.TryGetValue(key, out value))
+			{
+				return true;
+			}
+
+			foreach (KeyValuePair<string, object> pair in values)
+			{
+				if (!string.IsNullOrEmpty(pair.Key) &&
+					pair.Key.EndsWith("." + key, StringComparison.OrdinalIgnoreCase))
+				{
+					value = pair.Value;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool ConvertToBool(object value)
+		{
+			if (value == null)
+			{
+				return false;
+			}
+
+			bool boolValue;
+			if (bool.TryParse(Convert.ToString(value), out boolValue))
+			{
+				return boolValue;
+			}
+
+			double numericValue;
+			if (double.TryParse(Convert.ToString(value), out numericValue))
+			{
+				return Math.Abs(numericValue) > 0.000001;
+			}
+
+			string text = Convert.ToString(value);
+			return string.Equals(text, "OK", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "PASS", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(text, "TRUE", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string ResolveContextValue(VisionRunContext context, params string[] keys)
+		{
+			if (context == null || keys == null)
+			{
+				return string.Empty;
+			}
+
+			foreach (string key in keys)
+			{
+				object value;
+				if (!string.IsNullOrWhiteSpace(key) &&
+					context.TryGetData(key, out value) &&
+					value != null)
+				{
+					return Convert.ToString(value);
+				}
+			}
+
+			return string.Empty;
 		}
 	}
 
@@ -365,6 +465,97 @@ namespace Aron_V3
 					}
 				}
 			}
+		}
+
+		private static bool ResolveInspectionResult(StepConfig step, StepResult result)
+		{
+			if (step == null ||
+				string.IsNullOrWhiteSpace(step.DisplayResultKey) ||
+				step.DisplayResultKey.Equals("Not Use", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			object value;
+			if (result != null &&
+				result.Outputs != null &&
+				TryGetOutputValue(result.Outputs, step.DisplayResultKey, out value))
+			{
+				return ConvertToBool(value);
+			}
+
+			return false;
+		}
+
+		private static bool TryGetOutputValue(System.Collections.Generic.Dictionary<string, object> values, string key, out object value)
+		{
+			value = null;
+			if (values == null || string.IsNullOrWhiteSpace(key))
+			{
+				return false;
+			}
+
+			if (values.TryGetValue(key, out value))
+			{
+				return true;
+			}
+
+			foreach (System.Collections.Generic.KeyValuePair<string, object> pair in values)
+			{
+				if (pair.Key.EndsWith("." + key, StringComparison.OrdinalIgnoreCase))
+				{
+					value = pair.Value;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool ConvertToBool(object value)
+		{
+			if (value == null)
+			{
+				return false;
+			}
+
+			bool boolValue;
+			if (bool.TryParse(Convert.ToString(value), out boolValue))
+			{
+				return boolValue;
+			}
+
+			double number;
+			if (double.TryParse(Convert.ToString(value), out number))
+			{
+				return Math.Abs(number) > 0.000001;
+			}
+
+			string text = Convert.ToString(value);
+			return text.Equals("OK", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("PASS", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("TRUE", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string ResolveContextValue(VisionRunContext context, params string[] keys)
+		{
+			if (context == null || keys == null)
+			{
+				return string.Empty;
+			}
+
+			foreach (string key in keys)
+			{
+				object value;
+				if (!string.IsNullOrWhiteSpace(key) &&
+					context.TryGetData(key, out value) &&
+					value != null)
+				{
+					return Convert.ToString(value);
+				}
+			}
+
+			return string.Empty;
 		}
 
 		private static byte[] CopyHalconGrayToByteBuffer(IntPtr pointer, int width, int height, string halconType)

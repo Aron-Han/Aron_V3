@@ -81,6 +81,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="GlobalVariableModels.cs" />
+    <Compile Include="ThemedDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="GlobalVariableControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -242,11 +245,15 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <None Include="Script\IncrementAssemblyVersion.ps1" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Communicate\Profinet\" />
     <Folder Include="Communicate\S7\" />
     <Folder Include="Hardware\SDK\" />
   </ItemGroup>
+  <Target Name="IncrementAssemblyVersionBeforeBuild" BeforeTargets="BeforeBuild" Condition="'$(IncrementAssemblyVersion)' == 'true'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)Script\IncrementAssemblyVersion.ps1&quot; -AssemblyInfoPath &quot;$(ProjectDir)Properties\AssemblyInfo.cs&quot;" />
+  </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

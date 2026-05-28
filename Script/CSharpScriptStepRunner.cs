@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CSharp;
 
@@ -423,6 +424,27 @@ namespace Aron_V3
 	/// </summary>
 	public class CSharpScriptStepRunner
 	{
+		private const int MaxCompiledScriptCacheCount = 64;
+		private static readonly object _compiledScriptCacheLock = new object();
+		private static readonly Dictionary<string, CompiledScriptCacheEntry> _compiledScriptCache =
+			new Dictionary<string, CompiledScriptCacheEntry>(StringComparer.Ordinal);
+		private static readonly Queue<string> _compiledScriptCacheOrder = new Queue<string>();
+
+		private sealed class CompiledScriptCacheEntry
+		{
+			public Type MainType { get; set; }
+		}
+
+		private static string PersistentCompiledScriptFolder
+		{
+			get
+			{
+				string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Project", "Config", "Algorithm", "CompiledScripts");
+				Directory.CreateDirectory(path);
+				return path;
+			}
+		}
+
 		public CSharpScriptRunResult CompileAndRun(
 			CSharpScriptStepConfig config,
 			string scriptCode,
@@ -440,27 +462,67 @@ namespace Aron_V3
 				return CSharpScriptRunResult.CompileError("Script code is empty.");
 			}
 
+			Type mainType;
+			string cacheKey = BuildCompileCacheKey(config, scriptCode);
 			Stopwatch compileWatch = Stopwatch.StartNew();
-			CompilerResults compilerResults = Compile(config, scriptCode);
-			compileWatch.Stop();
-			result.CompileCost = compileWatch.Elapsed;
+			bool cacheHit = TryGetCachedScriptType(cacheKey, out mainType);
 
-			if (compilerResults == null)
+			if (!cacheHit && TryLoadCompiledScriptFromDisk(cacheKey, out mainType))
 			{
-				result.IsCompileOK = false;
-				result.IsRunOK = false;
-				result.Message = "Compile failed";
-				result.ErrorDetail = "Compiler result is null.";
-				return result;
+				cacheHit = true;
+				CacheScriptType(cacheKey, mainType);
 			}
 
-			if (compilerResults.Errors.HasErrors)
+			if (!cacheHit)
 			{
-				result.IsCompileOK = false;
-				result.IsRunOK = false;
-				result.Message = "Compile failed";
-				result.ErrorDetail = FormatCompileErrors(compilerResults.Errors);
-				return result;
+				CompilerResults compilerResults = CompileToPersistentCache(config, scriptCode, cacheKey);
+				compileWatch.Stop();
+				result.CompileCost = compileWatch.Elapsed;
+
+				if (compilerResults == null)
+				{
+					result.IsCompileOK = false;
+					result.IsRunOK = false;
+					result.Message = "Compile failed";
+					result.ErrorDetail = "Compiler result is null.";
+					return result;
+				}
+
+				if (compilerResults.Errors.HasErrors)
+				{
+					result.IsCompileOK = false;
+					result.IsRunOK = false;
+					result.Message = "Compile failed";
+					result.ErrorDetail = FormatCompileErrors(compilerResults.Errors);
+					return result;
+				}
+
+				Assembly asm = compilerResults.CompiledAssembly;
+				if (asm == null)
+				{
+					result.IsCompileOK = true;
+					result.IsRunOK = false;
+					result.Message = "Run failed";
+					result.ErrorDetail = "Compiled assembly is null.";
+					return result;
+				}
+
+				mainType = FindScriptMainType(asm);
+				if (mainType == null)
+				{
+					result.IsCompileOK = true;
+					result.IsRunOK = false;
+					result.Message = "Run failed";
+					result.ErrorDetail = "ScriptMain class was not found, or no class implements IScriptMain.";
+					return result;
+				}
+
+				CacheScriptType(cacheKey, mainType);
+			}
+			else
+			{
+				compileWatch.Stop();
+				result.CompileCost = compileWatch.Elapsed;
 			}
 
 			result.IsCompileOK = true;
@@ -468,18 +530,6 @@ namespace Aron_V3
 			try
 			{
 				Stopwatch runWatch = Stopwatch.StartNew();
-
-				Assembly asm = compilerResults.CompiledAssembly;
-				if (asm == null)
-				{
-					return CSharpScriptRunResult.RunError("Compiled assembly is null.");
-				}
-
-				Type mainType = FindScriptMainType(asm);
-				if (mainType == null)
-				{
-					return CSharpScriptRunResult.RunError("ScriptMain class was not found, or no class implements IScriptMain.");
-				}
 
 				object instance = Activator.CreateInstance(mainType);
 				IScriptMain scriptMain = instance as IScriptMain;
@@ -520,7 +570,314 @@ namespace Aron_V3
 			}
 		}
 
+		public CSharpScriptRunResult CompileAndCache(CSharpScriptStepConfig config, string scriptCode)
+		{
+			CSharpScriptRunResult result = new CSharpScriptRunResult();
+
+			if (config == null)
+			{
+				return CSharpScriptRunResult.CompileError("Script config is null.");
+			}
+
+			if (string.IsNullOrWhiteSpace(scriptCode))
+			{
+				return CSharpScriptRunResult.CompileError("Script code is empty.");
+			}
+
+			Type mainType;
+			string cacheKey = BuildCompileCacheKey(config, scriptCode);
+			Stopwatch compileWatch = Stopwatch.StartNew();
+
+			if (TryGetCachedScriptType(cacheKey, out mainType) ||
+				TryLoadCompiledScriptFromDisk(cacheKey, out mainType))
+			{
+				compileWatch.Stop();
+				CacheScriptType(cacheKey, mainType);
+				result.IsCompileOK = true;
+				result.IsRunOK = true;
+				result.CompileCost = compileWatch.Elapsed;
+				result.Message = "Script compile cache ready.";
+				return result;
+			}
+
+			CompilerResults compilerResults = CompileToPersistentCache(config, scriptCode, cacheKey);
+			compileWatch.Stop();
+			result.CompileCost = compileWatch.Elapsed;
+
+			if (compilerResults == null)
+			{
+				result.IsCompileOK = false;
+				result.IsRunOK = false;
+				result.Message = "Compile failed";
+				result.ErrorDetail = "Compiler result is null.";
+				return result;
+			}
+
+			if (compilerResults.Errors.HasErrors)
+			{
+				result.IsCompileOK = false;
+				result.IsRunOK = false;
+				result.Message = "Compile failed";
+				result.ErrorDetail = FormatCompileErrors(compilerResults.Errors);
+				return result;
+			}
+
+			Assembly asm = compilerResults.CompiledAssembly;
+			if (asm == null)
+			{
+				result.IsCompileOK = true;
+				result.IsRunOK = false;
+				result.Message = "Run failed";
+				result.ErrorDetail = "Compiled assembly is null.";
+				return result;
+			}
+
+			mainType = FindScriptMainType(asm);
+			if (mainType == null)
+			{
+				result.IsCompileOK = true;
+				result.IsRunOK = false;
+				result.Message = "Run failed";
+				result.ErrorDetail = "ScriptMain class was not found, or no class implements IScriptMain.";
+				return result;
+			}
+
+			CacheScriptType(cacheKey, mainType);
+			PrunePersistentCompiledScriptCache();
+
+			result.IsCompileOK = true;
+			result.IsRunOK = true;
+			result.Message = "Script compile cache ready.";
+			return result;
+		}
+
+		private string BuildCompileCacheKey(CSharpScriptStepConfig config, string scriptCode)
+		{
+			StringBuilder sb = new StringBuilder();
+			sb.AppendLine(scriptCode ?? string.Empty);
+			sb.Append("CognexLoaded=").AppendLine(IsAssemblyLoaded("Cognex.VisionPro") ? "1" : "0");
+
+			AppendFileSignature(sb, "ScriptRunnerAssembly", typeof(CSharpScriptStepRunner).Assembly.Location);
+			AppendFileSignature(sb, "ScriptInterfaceAssembly", typeof(IScriptMain).Assembly.Location);
+			try
+			{
+				Assembly entry = Assembly.GetEntryAssembly();
+				if (entry != null)
+				{
+					AppendFileSignature(sb, "EntryAssembly", entry.Location);
+				}
+			}
+			catch
+			{
+			}
+
+			AppendFileSignature(sb, "VisionProPMAlign", FindVisionProReferenceDll("Cognex.VisionPro.PMAlign.dll"));
+			AppendFileSignature(sb, "VisionProImageProcessing", FindVisionProReferenceDll("Cognex.VisionPro.ImageProcessing.dll"));
+
+			AppendFileSignature(sb, "UsingConfig", CSharpScriptReferenceManager.UsingConfigFile);
+
+			List<string> namespaces = CSharpScriptReferenceManager.GetAutoUsingNamespaces();
+			foreach (string ns in namespaces.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+			{
+				sb.Append("Using=").AppendLine(ns ?? string.Empty);
+			}
+
+			List<string> globalReferences = CSharpScriptReferenceManager.GetReferenceDllPaths();
+			foreach (string dllPath in globalReferences.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+			{
+				AppendFileSignature(sb, "GlobalReference", dllPath);
+			}
+
+			if (config != null && config.References != null)
+			{
+				foreach (ScriptReferenceConfig reference in config.References)
+				{
+					if (reference == null || !reference.Enable || string.IsNullOrWhiteSpace(reference.DllPath))
+					{
+						continue;
+					}
+
+					AppendFileSignature(sb, "ConfigReference", reference.DllPath);
+				}
+			}
+
+			return sb.ToString();
+		}
+
+		private void AppendFileSignature(StringBuilder sb, string label, string path)
+		{
+			if (sb == null)
+			{
+				return;
+			}
+
+			sb.Append(label ?? string.Empty).Append('=').Append(path ?? string.Empty);
+
+			try
+			{
+				if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+				{
+					FileInfo info = new FileInfo(path);
+					sb.Append('|').Append(info.Length.ToString(CultureInfo.InvariantCulture));
+					sb.Append('|').Append(info.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture));
+				}
+			}
+			catch
+			{
+			}
+
+			sb.AppendLine();
+		}
+
+		private static bool TryGetCachedScriptType(string cacheKey, out Type mainType)
+		{
+			mainType = null;
+			if (string.IsNullOrEmpty(cacheKey))
+			{
+				return false;
+			}
+
+			lock (_compiledScriptCacheLock)
+			{
+				CompiledScriptCacheEntry entry;
+				if (_compiledScriptCache.TryGetValue(cacheKey, out entry) && entry != null && entry.MainType != null)
+				{
+					mainType = entry.MainType;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static void CacheScriptType(string cacheKey, Type mainType)
+		{
+			if (string.IsNullOrEmpty(cacheKey) || mainType == null)
+			{
+				return;
+			}
+
+			lock (_compiledScriptCacheLock)
+			{
+				if (!_compiledScriptCache.ContainsKey(cacheKey))
+				{
+					_compiledScriptCacheOrder.Enqueue(cacheKey);
+				}
+
+				_compiledScriptCache[cacheKey] = new CompiledScriptCacheEntry
+				{
+					MainType = mainType
+				};
+
+				while (_compiledScriptCacheOrder.Count > MaxCompiledScriptCacheCount)
+				{
+					string oldKey = _compiledScriptCacheOrder.Dequeue();
+					_compiledScriptCache.Remove(oldKey);
+				}
+			}
+		}
+
+		private bool TryLoadCompiledScriptFromDisk(string cacheKey, out Type mainType)
+		{
+			mainType = null;
+			string assemblyPath = GetPersistentCompiledAssemblyPath(cacheKey);
+
+			if (string.IsNullOrWhiteSpace(assemblyPath) || !File.Exists(assemblyPath))
+			{
+				return false;
+			}
+
+			try
+			{
+				Assembly asm = Assembly.LoadFrom(assemblyPath);
+				mainType = FindScriptMainType(asm);
+				return mainType != null;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		private CompilerResults CompileToPersistentCache(CSharpScriptStepConfig config, string scriptCode, string cacheKey)
+		{
+			string outputPath = GetPersistentCompiledAssemblyPath(cacheKey);
+			if (string.IsNullOrWhiteSpace(outputPath))
+			{
+				return Compile(config, scriptCode);
+			}
+
+			if (File.Exists(outputPath))
+			{
+				try
+				{
+					File.Delete(outputPath);
+				}
+				catch
+				{
+					outputPath = Path.Combine(PersistentCompiledScriptFolder, "script_" + ComputeSha256Hex(cacheKey + Guid.NewGuid().ToString("N")) + ".dll");
+				}
+			}
+
+			return Compile(config, scriptCode, false, outputPath);
+		}
+
+		private string GetPersistentCompiledAssemblyPath(string cacheKey)
+		{
+			if (string.IsNullOrEmpty(cacheKey))
+			{
+				return string.Empty;
+			}
+
+			return Path.Combine(PersistentCompiledScriptFolder, "script_" + ComputeSha256Hex(cacheKey) + ".dll");
+		}
+
+		private string ComputeSha256Hex(string text)
+		{
+			byte[] bytes = Encoding.UTF8.GetBytes(text ?? string.Empty);
+			using (SHA256 sha = SHA256.Create())
+			{
+				byte[] hash = sha.ComputeHash(bytes);
+				StringBuilder sb = new StringBuilder(hash.Length * 2);
+				foreach (byte b in hash)
+				{
+					sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+				}
+				return sb.ToString();
+			}
+		}
+
+		private void PrunePersistentCompiledScriptCache()
+		{
+			try
+			{
+				DirectoryInfo folder = new DirectoryInfo(PersistentCompiledScriptFolder);
+				FileInfo[] files = folder.GetFiles("script_*.dll", SearchOption.TopDirectoryOnly)
+					.OrderByDescending(x => x.LastWriteTimeUtc)
+					.ToArray();
+
+				for (int i = MaxCompiledScriptCacheCount; i < files.Length; i++)
+				{
+					try
+					{
+						files[i].Delete();
+					}
+					catch
+					{
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+
 		public CompilerResults Compile(CSharpScriptStepConfig config, string scriptCode)
+		{
+			return Compile(config, scriptCode, true, null);
+		}
+
+		private CompilerResults Compile(CSharpScriptStepConfig config, string scriptCode, bool generateInMemory, string outputAssembly)
 		{
 			CSharpScriptReferenceManager.PreloadAllReferenceDlls();
 
@@ -528,11 +885,16 @@ namespace Aron_V3
 			CompilerParameters parameters = new CompilerParameters();
 
 			parameters.GenerateExecutable = false;
-			parameters.GenerateInMemory = true;
+			parameters.GenerateInMemory = generateInMemory;
 			parameters.IncludeDebugInformation = true;
 			parameters.WarningLevel = 4;
 			parameters.TreatWarningsAsErrors = false;
 			parameters.CompilerOptions = "/optimize- /debug+";
+			if (!generateInMemory && !string.IsNullOrWhiteSpace(outputAssembly))
+			{
+				Directory.CreateDirectory(Path.GetDirectoryName(outputAssembly));
+				parameters.OutputAssembly = outputAssembly;
+			}
 
 			AddDefaultReferences(parameters, config);
 
@@ -591,6 +953,8 @@ namespace Aron_V3
 			AddLoadedAssembliesByPrefix(parameters, "Cognex.");
 			AddLoadedAssembliesByPrefix(parameters, "MVTec.");
 			AddLoadedAssembliesByPrefix(parameters, "Halcon");
+			AddVisionProOptionalReference(parameters, "Cognex.VisionPro.PMAlign.dll");
+			AddVisionProOptionalReference(parameters, "Cognex.VisionPro.ImageProcessing.dll");
 
 			// 全局 ScriptReferences 文件夹下的 DLL：所有脚本自动引用。
 			foreach (string dllPath in CSharpScriptReferenceManager.GetReferenceDllPaths())
@@ -652,8 +1016,14 @@ namespace Aron_V3
 			{
 				sb.AppendLine("using Cognex.VisionPro;");
 				sb.AppendLine("using Cognex.VisionPro.ToolBlock;");
-				sb.AppendLine("using Cognex.VisionPro.PMAlign;");
-				sb.AppendLine("using Cognex.VisionPro.ImageProcessing;");
+				if (CanUseVisionProOptionalNamespace("Cognex.VisionPro.PMAlign.dll"))
+				{
+					sb.AppendLine("using Cognex.VisionPro.PMAlign;");
+				}
+				if (CanUseVisionProOptionalNamespace("Cognex.VisionPro.ImageProcessing.dll"))
+				{
+					sb.AppendLine("using Cognex.VisionPro.ImageProcessing;");
+				}
 			}
 
 			sb.AppendLine();
@@ -686,6 +1056,69 @@ namespace Aron_V3
 			}
 
 			return false;
+		}
+
+		private bool CanUseVisionProOptionalNamespace(string dllName)
+		{
+			if (string.IsNullOrWhiteSpace(dllName))
+			{
+				return false;
+			}
+
+			string assemblyName = Path.GetFileNameWithoutExtension(dllName);
+			return IsAssemblyLoaded(assemblyName) || !string.IsNullOrWhiteSpace(FindVisionProReferenceDll(dllName));
+		}
+
+		private void AddVisionProOptionalReference(CompilerParameters parameters, string dllName)
+		{
+			string path = FindVisionProReferenceDll(dllName);
+			if (!string.IsNullOrWhiteSpace(path))
+			{
+				AddReference(parameters, path);
+			}
+		}
+
+		private string FindVisionProReferenceDll(string dllName)
+		{
+			if (string.IsNullOrWhiteSpace(dllName))
+			{
+				return string.Empty;
+			}
+
+			List<string> folders = new List<string>();
+			AddFolderCandidate(folders, AppDomain.CurrentDomain.BaseDirectory);
+			AddFolderCandidate(folders, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Cognex", "VisionPro", "ReferencedAssemblies"));
+			AddFolderCandidate(folders, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Cognex", "VisionPro", "ReferencedAssemblies"));
+
+			foreach (string folder in folders)
+			{
+				try
+				{
+					string path = Path.Combine(folder, dllName);
+					if (File.Exists(path))
+					{
+						return path;
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			return string.Empty;
+		}
+
+		private void AddFolderCandidate(List<string> folders, string folder)
+		{
+			if (folders == null || string.IsNullOrWhiteSpace(folder))
+			{
+				return;
+			}
+
+			if (!folders.Any(x => string.Equals(x, folder, StringComparison.OrdinalIgnoreCase)))
+			{
+				folders.Add(folder);
+			}
 		}
 
 		private void AddReferenceByType(CompilerParameters parameters, Type type)
@@ -812,7 +1245,14 @@ namespace Aron_V3
 		{
 			ScriptRuntimeContext context = new ScriptRuntimeContext();
 
-			if (config == null || config.Inputs == null)
+			if (config == null)
+			{
+				return context;
+			}
+
+			CSharpScriptStepStore.EnsureRequiredInputs(config);
+
+			if (config.Inputs == null)
 			{
 				return context;
 			}
@@ -999,6 +1439,329 @@ namespace Aron_V3
 			}
 
 			return sb.ToString();
+		}
+	}
+
+	public class CSharpScriptWarmupResult
+	{
+		public int TotalScripts { get; set; }
+		public int LoadedScripts { get; set; }
+		public int FailedScripts { get; set; }
+		public TimeSpan Cost { get; set; }
+		public List<string> Warnings { get; private set; }
+
+		public CSharpScriptWarmupResult()
+		{
+			Warnings = new List<string>();
+		}
+	}
+
+	public static class CSharpScriptWarmupService
+	{
+		public static CSharpScriptWarmupResult WarmUp(ProjectFlowConfig flowConfig)
+		{
+			Stopwatch sw = Stopwatch.StartNew();
+			CSharpScriptWarmupResult result = new CSharpScriptWarmupResult();
+
+			if (flowConfig == null || flowConfig.Jobs == null)
+			{
+				sw.Stop();
+				result.Cost = sw.Elapsed;
+				return result;
+			}
+
+			foreach (JobConfig job in flowConfig.Jobs)
+			{
+				if (job == null || job.Tasks == null)
+				{
+					continue;
+				}
+
+				foreach (TaskConfig task in job.Tasks)
+				{
+					WarmUpTask(job, task, result);
+				}
+			}
+
+			sw.Stop();
+			result.Cost = sw.Elapsed;
+			return result;
+		}
+
+		private static void WarmUpTask(JobConfig job, TaskConfig task, CSharpScriptWarmupResult result)
+		{
+			if (job == null || task == null || task.Steps == null || result == null)
+			{
+				return;
+			}
+
+			IEnumerable<StepConfig> scripts = GetTaskFlowScripts(task);
+			foreach (StepConfig step in scripts)
+			{
+				result.TotalScripts++;
+
+				string warning;
+				if (WarmUpScript(job, task, step, out warning))
+				{
+					result.LoadedScripts++;
+				}
+				else
+				{
+					result.FailedScripts++;
+					result.Warnings.Add(warning);
+				}
+			}
+		}
+
+		private static IEnumerable<StepConfig> GetTaskFlowScripts(TaskConfig task)
+		{
+			if (task == null || task.Steps == null)
+			{
+				yield break;
+			}
+
+			HashSet<string> yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			if (task.StepFlow != null)
+			{
+				foreach (StepFlowItem flowItem in task.StepFlow)
+				{
+					if (flowItem == null || !flowItem.Enabled || !flowItem.IsStepBlock || string.IsNullOrWhiteSpace(flowItem.StepName))
+					{
+						continue;
+					}
+
+					StepConfig step = task.Steps.FirstOrDefault(x =>
+						x != null &&
+						x.StepType == StepType.Script &&
+						string.Equals(x.StepName, flowItem.StepName, StringComparison.OrdinalIgnoreCase));
+					if (step == null || !yielded.Add(step.StepName))
+					{
+						continue;
+					}
+
+					yield return step;
+				}
+			}
+
+			foreach (StepConfig step in task.Steps)
+			{
+				if (step == null || step.StepType != StepType.Script || !step.Enabled || !yielded.Add(step.StepName))
+				{
+					continue;
+				}
+
+				yield return step;
+			}
+		}
+
+		private static bool WarmUpScript(JobConfig job, TaskConfig task, StepConfig step, out string warning)
+		{
+			warning = string.Empty;
+
+			try
+			{
+				string protocolName = ResolveProtocolName(job, task);
+				string channelName = ResolveChannelName(job, task);
+				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, job.JobName, task.TaskName);
+				string scriptPath = ResolveScriptPath(taskFolder, step);
+
+				if (string.IsNullOrWhiteSpace(scriptPath) || !File.Exists(scriptPath))
+				{
+					warning = FormatWarning(job, task, step, "script file not found.");
+					return false;
+				}
+
+				string configPath = Path.ChangeExtension(scriptPath, ".script.xml");
+				if (!File.Exists(configPath))
+				{
+					configPath = CSharpScriptStepStore.GetConfigPath(protocolName, channelName, job.JobName, task.TaskName, step.StepName);
+				}
+
+				CSharpScriptStepConfig scriptConfig = CSharpScriptStepStore.Load(configPath);
+				if (scriptConfig == null)
+				{
+					scriptConfig = CSharpScriptStepStore.CreateDefaultConfig();
+				}
+
+				scriptConfig.StepName = step.StepName;
+				scriptConfig.ScriptFileName = Path.GetFileName(scriptPath);
+				scriptConfig.ScriptFilePath = scriptPath;
+				CSharpScriptStepStore.EnsureRequiredInputs(scriptConfig);
+
+				string code = File.ReadAllText(scriptPath, Encoding.UTF8);
+				CSharpScriptRunResult compile = new CSharpScriptStepRunner().CompileAndCache(scriptConfig, code);
+
+				if (!compile.IsCompileOK || !compile.IsRunOK)
+				{
+					string detail = string.IsNullOrWhiteSpace(compile.ErrorDetail) ? compile.Message : compile.ErrorDetail;
+					warning = FormatWarning(job, task, step, detail);
+					return false;
+				}
+
+				return true;
+			}
+			catch (Exception ex)
+			{
+				warning = FormatWarning(job, task, step, ex.Message);
+				return false;
+			}
+		}
+
+		private static string ResolveScriptPath(string taskFolder, StepConfig step)
+		{
+			if (step == null)
+			{
+				return string.Empty;
+			}
+
+			List<string> candidates = new List<string>();
+			AddCandidate(candidates, step.ProjectFilePath);
+			if (step.ScriptFiles != null)
+			{
+				foreach (string file in step.ScriptFiles)
+				{
+					AddCandidate(candidates, file);
+				}
+			}
+			AddCandidate(candidates, step.SourceFilePath);
+
+			foreach (string candidate in candidates)
+			{
+				string resolved = ResolveCandidatePath(taskFolder, candidate);
+				if (IsScriptCodeFile(resolved) && File.Exists(resolved))
+				{
+					return resolved;
+				}
+			}
+
+			string folder = Path.Combine(taskFolder ?? string.Empty, "Script");
+			string safeStepName = MakeSafeName(step.StepName);
+			string[] directNames = new string[]
+			{
+				safeStepName + ".csx",
+				safeStepName + ".cs",
+				safeStepName + ".txt"
+			};
+
+			foreach (string name in directNames)
+			{
+				string path = Path.Combine(folder, name);
+				if (File.Exists(path))
+				{
+					return path;
+				}
+			}
+
+			if (Directory.Exists(folder))
+			{
+				string[] files = Directory.GetFiles(folder, "*.csx", SearchOption.TopDirectoryOnly);
+				if (files.Length > 0) return files[0];
+
+				files = Directory.GetFiles(folder, "*.cs", SearchOption.TopDirectoryOnly);
+				if (files.Length > 0) return files[0];
+
+				files = Directory.GetFiles(folder, "*.txt", SearchOption.TopDirectoryOnly);
+				if (files.Length > 0) return files[0];
+			}
+
+			return string.Empty;
+		}
+
+		private static void AddCandidate(List<string> candidates, string value)
+		{
+			if (candidates == null || string.IsNullOrWhiteSpace(value))
+			{
+				return;
+			}
+
+			if (!candidates.Any(x => string.Equals(x, value, StringComparison.OrdinalIgnoreCase)))
+			{
+				candidates.Add(value);
+			}
+		}
+
+		private static string ResolveCandidatePath(string taskFolder, string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				return string.Empty;
+			}
+
+			if (Path.IsPathRooted(path))
+			{
+				return path;
+			}
+
+			string candidate = Path.Combine(taskFolder ?? string.Empty, path);
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+
+			candidate = Path.Combine(taskFolder ?? string.Empty, "Script", path);
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+
+			return Path.Combine(ProjectPathStore.ProjectRoot, path);
+		}
+
+		private static bool IsScriptCodeFile(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				return false;
+			}
+
+			string ext = Path.GetExtension(path);
+			return ext.Equals(".csx", StringComparison.OrdinalIgnoreCase) ||
+				   ext.Equals(".cs", StringComparison.OrdinalIgnoreCase) ||
+				   ext.Equals(".txt", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string ResolveProtocolName(JobConfig job, TaskConfig task)
+		{
+			if (job != null && !string.IsNullOrWhiteSpace(job.ProtocolName))
+			{
+				return FlowConfigStore.NormalizeProtocolName(job.ProtocolName);
+			}
+
+			return FlowConfigStore.NormalizeProtocolName(task == null ? "TCP/IP" : task.CommunicationProtocol);
+		}
+
+		private static string ResolveChannelName(JobConfig job, TaskConfig task)
+		{
+			if (job != null && !string.IsNullOrWhiteSpace(job.ChannelName))
+			{
+				return FlowConfigStore.NormalizeChannelName(job.ChannelName);
+			}
+
+			return FlowConfigStore.NormalizeChannelName(task == null ? "Channel01" : task.CommunicationChannel);
+		}
+
+		private static string MakeSafeName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return "New";
+			}
+
+			foreach (char c in Path.GetInvalidFileNameChars())
+			{
+				name = name.Replace(c, '_');
+			}
+
+			return name.Trim();
+		}
+
+		private static string FormatWarning(JobConfig job, TaskConfig task, StepConfig step, string detail)
+		{
+			return "Job=" + (job == null ? string.Empty : job.JobName) +
+				", Task=" + (task == null ? string.Empty : task.TaskName) +
+				", Step=" + (step == null ? string.Empty : step.StepName) +
+				", " + (detail ?? string.Empty);
 		}
 	}
 }

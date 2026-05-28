@@ -47,6 +47,14 @@ namespace Aron_V3
 		LessOrEqual = 5
 	}
 
+	public enum TaskConcurrencyPolicy
+	{
+		IgnoreWhenRunning = 0,
+		QueueWhenRunning = 1,
+		AllowParallel = 2,
+		CancelPrevious = 3
+	}
+
 	public interface ICommunicationRuntimeValueProvider
 	{
 		string GetInputValue(string protocol, string tagName);
@@ -57,15 +65,17 @@ namespace Aron_V3
 		public string ProjectRoot { get; private set; }
 
 		public string ConfigRoot { get { return Path.Combine(ProjectRoot, "Config"); } }
-		public string FlowConfigRoot { get { return Path.Combine(ProjectRoot, "Job"); } }
+		public string FlowConfigRoot { get { return Path.Combine(ConfigRoot, "Flow"); } }
+		public string CommunicateRoot { get { return Path.Combine(ProjectRoot, "Communicate"); } }
 		public string HardwareConfigRoot { get { return Path.Combine(ConfigRoot, "Hardware"); } }
 		public string CommunicationConfigRoot { get { return Path.Combine(ConfigRoot, "Communication"); } }
 
-		public string JobRoot { get { return Path.Combine(ProjectRoot, "Job"); } }
+		public string TaskRoot { get { return Path.Combine(ProjectRoot, "Task"); } }
+		public string JobRoot { get { return ProjectRoot; } }
 
 		// 保留 StepsRoot 属性，兼容旧代码调用。
-		// 但新路径不再使用 Project\Steps，而是统一放在 Project\Job\<JobName>\Task\<TaskName> 下。
-		public string StepsRoot { get { return JobRoot; } }
+		// 新路径统一放在 Project\Task\<TaskName>\<ProgramNo> 下。
+		public string StepsRoot { get { return TaskRoot; } }
 
 		public string ImagesRoot { get { return Path.Combine(ProjectRoot, "Images"); } }
 		public string LogsRoot { get { return Path.Combine(ProjectRoot, "Logs"); } }
@@ -83,8 +93,8 @@ namespace Aron_V3
 		public void EnsureProjectFolders()
 		{
 			Directory.CreateDirectory(ProjectRoot);
+			Directory.CreateDirectory(TaskRoot);
 			Directory.CreateDirectory(ConfigRoot);
-			Directory.CreateDirectory(JobRoot);
 			Directory.CreateDirectory(FlowConfigRoot);
 			Directory.CreateDirectory(CommunicationConfigRoot);
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Save"));
@@ -93,18 +103,42 @@ namespace Aron_V3
 
 			// 注意：
 			// 不在这里创建 Config\Hardware。
-			// Hardware 已经改为每个 Job 内部：
-			// Project\Job\<JobName>\Hardware
+			// Hardware 目录按具体配置入口需要时再创建。
 		}
 
 		public string GetJobFolder(string jobName)
+		{
+			return GetJobFolder("TCP/IP", "Channel01", jobName);
+		}
+
+		public string GetProtocolFolder(string protocolName)
+		{
+			if (string.IsNullOrWhiteSpace(protocolName))
+			{
+				protocolName = "TCP_IP";
+			}
+
+			return Path.Combine(CommunicateRoot, MakeSafeName(protocolName.Replace("/", "_")));
+		}
+
+		public string GetChannelFolder(string protocolName, string channelName)
+		{
+			if (string.IsNullOrWhiteSpace(channelName))
+			{
+				channelName = "Channel01";
+			}
+
+			return Path.Combine(GetProtocolFolder(protocolName), MakeSafeName(channelName));
+		}
+
+		public string GetJobFolder(string protocolName, string channelName, string jobName)
 		{
 			if (string.IsNullOrWhiteSpace(jobName))
 			{
 				jobName = "Job_001";
 			}
 
-			return Path.Combine(JobRoot, MakeSafeName(jobName));
+			return Path.Combine(GetChannelFolder(protocolName, channelName), MakeSafeName(jobName));
 		}
 
 		public string GetJobHardwareFolder(string jobName)
@@ -114,26 +148,144 @@ namespace Aron_V3
 
 		public string GetTaskRootFolder(string jobName)
 		{
-			return Path.Combine(GetJobFolder(jobName), "Task");
+			return TaskRoot;
+		}
+
+		public string GetTaskRootFolder(string protocolName, string channelName, string jobName)
+		{
+			return TaskRoot;
 		}
 
 		public string GetTaskFolder(string jobName, string taskName)
+		{
+			return GetTaskFolder("TCP/IP", "Channel01", jobName, taskName);
+		}
+
+		public string GetTaskFolder(string protocolName, string channelName, string jobName, string taskName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				taskName = "Task_New_01";
+			}
+
+			return Path.Combine(TaskRoot, MakeSafeName(taskName), MakeSafeName(jobName));
+		}
+
+		public string GetLegacyProjectRootTaskFolder(string jobName, string taskName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				taskName = "Task_New_01";
+			}
+
+			return Path.Combine(ProjectRoot, MakeSafeName(taskName), MakeSafeName(jobName));
+		}
+
+		public string GetLegacyCommunicationTaskFolder(string protocolName, string channelName, string jobName, string taskName)
 		{
 			if (string.IsNullOrWhiteSpace(taskName))
 			{
 				taskName = "Task_New_01";
 			}
 
-			return Path.Combine(GetTaskRootFolder(jobName), MakeSafeName(taskName));
+			return Path.Combine(GetLegacyCommunicationJobFolder(protocolName, channelName, jobName), "Task", MakeSafeName(taskName));
+		}
+
+		public string GetLegacyCommunicationJobFolder(string protocolName, string channelName, string jobName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			return Path.Combine(GetChannelFolder(protocolName, channelName), MakeSafeName(jobName));
+		}
+
+		public string GetLegacyFlatTaskFolder(string jobName, string taskName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				taskName = "Task_New_01";
+			}
+
+			return Path.Combine(ProjectRoot, "Job", MakeSafeName(jobName), MakeSafeName(taskName));
+		}
+
+		public string GetLegacyFlatTaskRootFolder(string jobName, string taskName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				jobName = "Job_001";
+			}
+
+			if (string.IsNullOrWhiteSpace(taskName))
+			{
+				taskName = "Task_New_01";
+			}
+
+			return Path.Combine(ProjectRoot, "Job", MakeSafeName(jobName), "Task", MakeSafeName(taskName));
+		}
+
+		public List<string> GetTaskFolderCandidates(string protocolName, string channelName, string jobName, string taskName)
+		{
+			List<string> result = new List<string>();
+			AddUniquePath(result, GetTaskFolder(protocolName, channelName, jobName, taskName));
+			AddUniquePath(result, GetLegacyProjectRootTaskFolder(jobName, taskName));
+			AddUniquePath(result, GetLegacyCommunicationTaskFolder(protocolName, channelName, jobName, taskName));
+			AddUniquePath(result, GetLegacyFlatTaskFolder(jobName, taskName));
+			AddUniquePath(result, GetLegacyFlatTaskRootFolder(jobName, taskName));
+			return result;
+		}
+
+		public string ResolveExistingTaskFolder(string protocolName, string channelName, string jobName, string taskName)
+		{
+			foreach (string folder in GetTaskFolderCandidates(protocolName, channelName, jobName, taskName))
+			{
+				if (Directory.Exists(folder))
+				{
+					return folder;
+				}
+			}
+
+			return GetTaskFolder(protocolName, channelName, jobName, taskName);
+		}
+
+		private void AddUniquePath(List<string> paths, string path)
+		{
+			if (paths == null || string.IsNullOrWhiteSpace(path))
+			{
+				return;
+			}
+
+			if (!paths.Any(x => string.Equals(x, path, StringComparison.OrdinalIgnoreCase)))
+			{
+				paths.Add(path);
+			}
 		}
 
 		public string GetStepFolder(string jobName, string taskName, string stepName)
 		{
-			// 新目录结构不再使用 StepName 作为文件夹层级。
-			// 所有当前 Task 使用到的 VPP / Script 放在：
-			// Project\Job\<JobName>\Task\<TaskName>\VPP
-			// Project\Job\<JobName>\Task\<TaskName>\Scripts
-			return GetTaskFolder(jobName, taskName);
+			return GetStepFolder("TCP/IP", "Channel01", jobName, taskName, stepName);
+		}
+
+		public string GetStepFolder(string protocolName, string channelName, string jobName, string taskName, string stepName)
+		{
+			return GetTaskFolder(protocolName, channelName, jobName, taskName);
 		}
 
 		public void EnsureJobFolder(string jobName)
@@ -149,11 +301,16 @@ namespace Aron_V3
 
 		public void EnsureStepFolder(string jobName, string taskName, string stepName)
 		{
-			string taskFolder = GetStepFolder(jobName, taskName, stepName);
+			EnsureStepFolder("TCP/IP", "Channel01", jobName, taskName, stepName);
+		}
+
+		public void EnsureStepFolder(string protocolName, string channelName, string jobName, string taskName, string stepName)
+		{
+			string taskFolder = GetStepFolder(protocolName, channelName, jobName, taskName, stepName);
 
 			Directory.CreateDirectory(taskFolder);
 			Directory.CreateDirectory(Path.Combine(taskFolder, "VPP"));
-			Directory.CreateDirectory(Path.Combine(taskFolder, "Scripts"));
+			Directory.CreateDirectory(Path.Combine(taskFolder, "Script"));
 			Directory.CreateDirectory(Path.Combine(taskFolder, "Hdev"));
 		}
 
@@ -200,6 +357,7 @@ namespace Aron_V3
 		public string Message { get; set; }
 		public double CostMs { get; set; }
 
+		public Dictionary<string, object> Inputs { get; private set; }
 		public Dictionary<string, object> Outputs { get; private set; }
 		public Dictionary<string, VisionImage> OutputImages { get; private set; }
 
@@ -207,8 +365,9 @@ namespace Aron_V3
 		{
 			IsOK = true;
 			Message = string.Empty;
+			Inputs = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 			Outputs = new Dictionary<string, object>();
-			OutputImages = new Dictionary<string, VisionImage>();
+			OutputImages = new Dictionary<string, VisionImage>(StringComparer.OrdinalIgnoreCase);
 		}
 
 		public static StepResult OK()
@@ -449,7 +608,7 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string SourceFilePath { get; set; }
 
-		// 复制到 Project 后的相对路径，例如 VPP\Camera.vpp 或 Scripts\Output.csx
+		// 复制到 Project 后的相对路径，例如 VPP\Camera.vpp 或 Script\Output.csx
 		[XmlAttribute]
 		public string ProjectFilePath { get; set; }
 
@@ -469,6 +628,7 @@ namespace Aron_V3
 
 		public string DisplayOutputKey { get; set; }
 		public string DisplaySlotName { get; set; }
+		public string DisplayResultKey { get; set; }
 		public string DisplayMode { get; set; }
 
 		// Script Step 可选择接收哪些前序模块作为参数对象。
@@ -528,6 +688,7 @@ namespace Aron_V3
 
 			DisplayOutputKey = "Not Use";
 			DisplaySlotName = "Not Show";
+			DisplayResultKey = "Not Use";
 			DisplayMode = "Fit";
 			ScriptInputStepKeys = string.Empty;
 		}
@@ -535,8 +696,49 @@ namespace Aron_V3
 
 	// StepFlowItem 表示右侧“当前 task 中实际执行的算子流程”。
 	// RunOrder 允许重复：1、1、2 代表 RunOrder=1 的 Step 并行执行，全部完成后执行 RunOrder=2。
+	public class SignalOutputBinding
+	{
+		[XmlAttribute]
+		public string OutputName { get; set; }
+
+		[XmlAttribute]
+		public string AssignedValue { get; set; }
+
+		[XmlAttribute]
+		public bool ForceValue { get; set; }
+
+		[XmlAttribute]
+		public bool Enabled { get; set; }
+
+		public SignalOutputBinding()
+		{
+			OutputName = string.Empty;
+			AssignedValue = string.Empty;
+			ForceValue = false;
+			Enabled = false;
+		}
+	}
+
 	public class StepFlowItem
 	{
+		[XmlAttribute]
+		public string FlowItemId { get; set; }
+
+		[XmlAttribute]
+		public string BlockType { get; set; }
+
+		[XmlAttribute]
+		public string BlockName { get; set; }
+
+		[XmlAttribute]
+		public string BlockPath { get; set; }
+
+		[XmlAttribute]
+		public string SignalProtocol { get; set; }
+
+		[XmlAttribute]
+		public string SignalInstanceName { get; set; }
+
 		[XmlAttribute]
 		public string StepName { get; set; }
 
@@ -550,16 +752,40 @@ namespace Aron_V3
 		public bool Enabled { get; set; }
 
 		[XmlAttribute]
+		public bool EnableCommunicationOutput { get; set; }
+
+		[XmlAttribute]
+		public string CommunicationOutputInstanceName { get; set; }
+
+		[XmlAttribute]
+		public string CommunicationOutputProtocol { get; set; }
+
+		[XmlAttribute]
 		public string Remark { get; set; }
 
 		public string DisplayOutputKey { get; set; }
 		public string DisplaySlotName { get; set; }
+		public string DisplayResultKey { get; set; }
 		public string DisplayMode { get; set; }
+
+		[XmlArray("SignalOutputs")]
+		[XmlArrayItem("Output")]
+		public List<SignalOutputBinding> SignalOutputs { get; set; }
 
 		// Script Step 可选择接收哪些前序模块作为参数对象。
 		// 多个 StepName 用英文分号分隔，例如：Inspection;Measure_01。
 		[XmlAttribute]
 		public string ScriptInputStepKeys { get; set; }
+
+		[XmlIgnore]
+		public bool IsStepBlock
+		{
+			get
+			{
+				return string.IsNullOrWhiteSpace(BlockType) ||
+					BlockType.Equals("Step", StringComparison.OrdinalIgnoreCase);
+			}
+		}
 
 		[XmlIgnore]
 		public List<string> ScriptInputStepKeyList
@@ -594,16 +820,70 @@ namespace Aron_V3
 
 		public StepFlowItem()
 		{
+			FlowItemId = Guid.NewGuid().ToString("N");
+			BlockType = "Step";
+			BlockName = string.Empty;
+			BlockPath = string.Empty;
+			SignalProtocol = string.Empty;
+			SignalInstanceName = string.Empty;
 			StepName = "";
 			InputImageKey = "";
 			RunOrder = 1;
 			Enabled = true;
+			EnableCommunicationOutput = false;
+			CommunicationOutputInstanceName = string.Empty;
+			CommunicationOutputProtocol = string.Empty;
 			Remark = "";
 
 			DisplayOutputKey = "Not Use";
 			DisplaySlotName = "Not Show";
+			DisplayResultKey = "Not Use";
 			DisplayMode = "Fit";
+			SignalOutputs = new List<SignalOutputBinding>();
 			ScriptInputStepKeys = string.Empty;
+		}
+	}
+
+	public class TaskCommunicationTriggerBinding
+	{
+		[XmlAttribute]
+		public string CommunicationInstanceName { get; set; }
+
+		[XmlAttribute]
+		public string CommunicationProtocol { get; set; }
+
+		[XmlAttribute]
+		public string CommunicationChannel { get; set; }
+
+		[XmlAttribute]
+		public string TriggerName { get; set; }
+
+		[XmlAttribute]
+		public string TriggerValue { get; set; }
+
+		[XmlAttribute]
+		public TriggerCompareType TriggerCompare { get; set; }
+
+		[XmlAttribute]
+		public string PositionName { get; set; }
+
+		[XmlAttribute]
+		public string PositionValue { get; set; }
+
+		[XmlAttribute]
+		public TriggerCompareType PositionCompare { get; set; }
+
+		public TaskCommunicationTriggerBinding()
+		{
+			CommunicationInstanceName = string.Empty;
+			CommunicationProtocol = string.Empty;
+			CommunicationChannel = "Channel01";
+			TriggerName = string.Empty;
+			TriggerValue = "1";
+			TriggerCompare = TriggerCompareType.Equal;
+			PositionName = "Not Use";
+			PositionValue = "1";
+			PositionCompare = TriggerCompareType.Equal;
 		}
 	}
 
@@ -613,13 +893,22 @@ namespace Aron_V3
 		public string TaskName { get; set; }
 
 		[XmlAttribute]
+		public string CommunicationInstanceName { get; set; }
+
+		[XmlAttribute]
 		public string CommunicationProtocol { get; set; }
+
+		[XmlAttribute]
+		public string CommunicationChannel { get; set; }
 
 		[XmlAttribute]
 		public int RunOrder { get; set; }
 
 		[XmlAttribute]
 		public bool Enabled { get; set; }
+
+		[XmlAttribute]
+		public TaskConcurrencyPolicy ConcurrencyPolicy { get; set; }
 
 		[XmlAttribute]
 		public string TriggerName { get; set; }
@@ -636,6 +925,9 @@ namespace Aron_V3
 		// 原“标志位”改为“位置号”，旧字段 FlagBit 继续保留用于兼容旧 XML。
 		[XmlAttribute]
 		public string PositionName { get; set; }
+
+		[XmlAttribute]
+		public string PositionOptionName { get; set; }
 
 		// 新字段：位置号值。
 		// 原“标志值”改为“位置号值”，旧字段 FlagValue 继续保留用于兼容旧 XML。
@@ -717,16 +1009,24 @@ namespace Aron_V3
 		[XmlArrayItem("Item")]
 		public List<StepFlowItem> StepFlow { get; set; }
 
+		[XmlArray("CommunicationTriggerBindings")]
+		[XmlArrayItem("Binding")]
+		public List<TaskCommunicationTriggerBinding> CommunicationTriggerBindings { get; set; }
+
 		public TaskConfig()
 		{
+			CommunicationInstanceName = string.Empty;
 			CommunicationProtocol = string.Empty;
+			CommunicationChannel = "Channel01";
 			TaskName = string.Empty;
 			RunOrder = 0;
 			Enabled = true;
+			ConcurrencyPolicy = TaskConcurrencyPolicy.IgnoreWhenRunning;
 			TriggerName = string.Empty;
 			TriggerValue = "1";
 			TriggerCompare = TriggerCompareType.Equal;
 			PositionName = "Not Use";
+			PositionOptionName = "Not Use";
 			PositionValue = "1";
 			PositionCompare = TriggerCompareType.Equal;
 			InputAddress = string.Empty;
@@ -736,12 +1036,22 @@ namespace Aron_V3
 			Remark = string.Empty;
 			Steps = new List<StepConfig>();
 			StepFlow = new List<StepFlowItem>();
+			CommunicationTriggerBindings = new List<TaskCommunicationTriggerBinding>();
 		}
 	}
 
 
 	public class JobConfig
 	{
+		[XmlAttribute]
+		public string ProtocolName { get; set; }
+
+		[XmlAttribute]
+		public string ChannelName { get; set; }
+
+		[XmlAttribute]
+		public string ProgramNo { get; set; }
+
 		[XmlAttribute]
 		public string JobName { get; set; }
 
@@ -754,21 +1064,65 @@ namespace Aron_V3
 
 		public JobConfig()
 		{
+			ProtocolName = "TCP/IP";
+			ChannelName = "Channel01";
+			ProgramNo = "1";
 			JobName = string.Empty;
 			Enabled = true;
 			Tasks = new List<TaskConfig>();
 		}
 	}
 
+	public class ChannelFlowConfig
+	{
+		[XmlAttribute]
+		public string ChannelName { get; set; }
+
+		[XmlAttribute]
+		public string ActiveProgramNo { get; set; }
+
+		[XmlArray("Jobs")]
+		[XmlArrayItem("Job")]
+		public List<JobConfig> Jobs { get; set; }
+
+		public ChannelFlowConfig()
+		{
+			ChannelName = "Channel01";
+			ActiveProgramNo = "1";
+			Jobs = new List<JobConfig>();
+		}
+	}
+
+	public class ProtocolFlowConfig
+	{
+		[XmlAttribute]
+		public string ProtocolName { get; set; }
+
+		[XmlArray("Channels")]
+		[XmlArrayItem("Channel")]
+		public List<ChannelFlowConfig> Channels { get; set; }
+
+		public ProtocolFlowConfig()
+		{
+			ProtocolName = "TCP/IP";
+			Channels = new List<ChannelFlowConfig>();
+		}
+	}
+
 	[XmlRoot("ProjectFlowConfig")]
 	public class ProjectFlowConfig
 	{
+		[XmlArray("Protocols")]
+		[XmlArrayItem("Protocol")]
+		public List<ProtocolFlowConfig> Protocols { get; set; }
+
 		[XmlArray("Jobs")]
 		[XmlArrayItem("Job")]
 		public List<JobConfig> Jobs { get; set; }
 
 		public ProjectFlowConfig()
 		{
+			Protocols = new List<ProtocolFlowConfig>();
 			Jobs = new List<JobConfig>();
 		}
 	}
@@ -834,11 +1188,29 @@ namespace Aron_V3
 			get { return Path.Combine(PathManager.FlowConfigRoot, "ProjectFlowConfig.xml"); }
 		}
 
+		private static string LegacyFlowConfigFile
+		{
+			get { return Path.Combine(ProjectRoot, "Job", "ProjectFlowConfig.xml"); }
+		}
+
+		private static string LegacyCommunicationFlowConfigFile
+		{
+			get { return Path.Combine(PathManager.CommunicateRoot, "ProjectFlowConfig.xml"); }
+		}
+
 		public static ProjectFlowConfig LoadOrCreateDefault()
 		{
 			ProjectFlowConfig config = new ProjectFlowConfig();
 
 			string filePath = FlowConfigFile;
+			if (!File.Exists(filePath) && File.Exists(LegacyCommunicationFlowConfigFile))
+			{
+				filePath = LegacyCommunicationFlowConfigFile;
+			}
+			else if (!File.Exists(filePath) && File.Exists(LegacyFlowConfigFile))
+			{
+				filePath = LegacyFlowConfigFile;
+			}
 
 			if (File.Exists(filePath))
 			{
@@ -851,6 +1223,13 @@ namespace Aron_V3
 			}
 
 			NormalizeConfig(config);
+			try
+			{
+				EnsureStepFolders(config);
+			}
+			catch
+			{
+			}
 			return config;
 		}
 
@@ -864,6 +1243,7 @@ namespace Aron_V3
 
 			NormalizeConfig(config);
 			PathManager.EnsureProjectFolders();
+			SyncFlatJobs(config);
 			XmlConfigHelper.Save(FlowConfigFile, config);
 			EnsureStepFolders(config);
 
@@ -876,17 +1256,233 @@ namespace Aron_V3
 
 		public static JobConfig GetOrCreateJob(ProjectFlowConfig config, string jobName)
 		{
-			JobConfig job = config.Jobs.FirstOrDefault(j => string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+			string protocolName = "TCP/IP";
+			string channelName = "Channel01";
+			JobConfig job = GetJobs(config, protocolName, channelName)
+				.FirstOrDefault(j => string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
 
 			if (job == null)
 			{
 				job = new JobConfig();
 				job.JobName = jobName;
+				job.ProtocolName = protocolName;
+				job.ChannelName = channelName;
 				job.Enabled = true;
-				config.Jobs.Add(job);
+				GetOrCreateChannel(config, protocolName, channelName).Jobs.Add(job);
+				SyncFlatJobs(config);
 			}
 
 			return job;
+		}
+
+		public static JobConfig GetOrCreateJob(ProjectFlowConfig config, string protocolName, string channelName, string jobName)
+		{
+			ChannelFlowConfig channel = GetOrCreateChannel(config, protocolName, channelName);
+			JobConfig job = channel.Jobs.FirstOrDefault(j => string.Equals(j.JobName, jobName, StringComparison.OrdinalIgnoreCase));
+
+			if (job == null)
+			{
+				job = new JobConfig();
+				job.JobName = jobName;
+				job.ProtocolName = NormalizeProtocolName(protocolName);
+				job.ChannelName = NormalizeChannelName(channelName);
+				job.Enabled = true;
+				channel.Jobs.Add(job);
+				SyncFlatJobs(config);
+			}
+
+			return job;
+		}
+
+		public static ChannelFlowConfig GetOrCreateChannel(ProjectFlowConfig config, string protocolName, string channelName)
+		{
+			if (config.Protocols == null)
+			{
+				config.Protocols = new List<ProtocolFlowConfig>();
+			}
+
+			protocolName = NormalizeProtocolName(protocolName);
+			channelName = NormalizeChannelName(channelName);
+
+			ProtocolFlowConfig protocol = config.Protocols.FirstOrDefault(x =>
+				x != null && string.Equals(x.ProtocolName, protocolName, StringComparison.OrdinalIgnoreCase));
+			if (protocol == null)
+			{
+				protocol = new ProtocolFlowConfig();
+				protocol.ProtocolName = protocolName;
+				config.Protocols.Add(protocol);
+			}
+
+			if (protocol.Channels == null)
+			{
+				protocol.Channels = new List<ChannelFlowConfig>();
+			}
+
+			ChannelFlowConfig channel = protocol.Channels.FirstOrDefault(x =>
+				x != null && string.Equals(x.ChannelName, channelName, StringComparison.OrdinalIgnoreCase));
+			if (channel == null)
+			{
+				channel = new ChannelFlowConfig();
+				channel.ChannelName = channelName;
+				protocol.Channels.Add(channel);
+			}
+
+			if (channel.Jobs == null)
+			{
+				channel.Jobs = new List<JobConfig>();
+			}
+
+			return channel;
+		}
+
+		public static List<string> GetProtocolNames(ProjectFlowConfig config)
+		{
+			NormalizeConfig(config);
+			return config.Protocols
+				.Where(x => x != null && !string.IsNullOrWhiteSpace(x.ProtocolName))
+				.Select(x => x.ProtocolName)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.OrderBy(x => x)
+				.ToList();
+		}
+
+		public static List<string> GetEnabledProtocolNames(ProjectFlowConfig config)
+		{
+			NormalizeConfig(config);
+
+			try
+			{
+				CommunicationConfig communication = CommunicationConfigStore.LoadOrCreateDefault();
+				List<string> result = new List<string>();
+
+				if (communication.TcpIp != null && communication.TcpIp.Enabled)
+				{
+					result.Add("TCP/IP");
+				}
+
+				if (communication.Profinet != null && communication.Profinet.Enabled)
+				{
+					result.Add("Profinet");
+				}
+
+				if (communication.S7 != null && communication.S7.Enabled)
+				{
+					result.Add("S7");
+				}
+
+				return result
+					.Where(x => !string.IsNullOrWhiteSpace(x))
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.ToList();
+			}
+			catch
+			{
+				return GetProtocolNames(config);
+			}
+		}
+
+		public static List<string> GetChannelNames(ProjectFlowConfig config, string protocolName)
+		{
+			NormalizeConfig(config);
+			protocolName = NormalizeProtocolName(protocolName);
+			ProtocolFlowConfig protocol = config.Protocols.FirstOrDefault(x =>
+				x != null && string.Equals(x.ProtocolName, protocolName, StringComparison.OrdinalIgnoreCase));
+			if (protocol == null || protocol.Channels == null)
+			{
+				return new List<string>();
+			}
+
+			return protocol.Channels
+				.Where(x => x != null && !string.IsNullOrWhiteSpace(x.ChannelName))
+				.Select(x => x.ChannelName)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.OrderBy(x => x)
+				.ToList();
+		}
+
+		public static List<string> GetEnabledChannelNames(ProjectFlowConfig config, string protocolName)
+		{
+			NormalizeConfig(config);
+			protocolName = NormalizeProtocolName(protocolName);
+
+			try
+			{
+				CommunicationConfig communication = CommunicationConfigStore.LoadOrCreateDefault();
+				List<CommunicationChannelConfig> channels = GetCommunicationChannels(communication, protocolName);
+
+				return channels
+					.Where(x => x != null && x.Enabled && !string.IsNullOrWhiteSpace(x.ChannelName))
+					.Select(x => NormalizeChannelName(x.ChannelName))
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.OrderBy(x => x)
+					.ToList();
+			}
+			catch
+			{
+				return GetChannelNames(config, protocolName);
+			}
+		}
+
+		private static List<CommunicationChannelConfig> GetCommunicationChannels(CommunicationConfig communication, string protocolName)
+		{
+			if (communication == null)
+			{
+				return new List<CommunicationChannelConfig>();
+			}
+
+			protocolName = NormalizeProtocolName(protocolName);
+
+			if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
+			{
+				return communication.TcpIp == null || communication.TcpIp.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: communication.TcpIp.Channels;
+			}
+
+			if (protocolName.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return communication.Profinet == null || communication.Profinet.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: communication.Profinet.Channels;
+			}
+
+			if (protocolName.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				return communication.S7 == null || communication.S7.Channels == null
+					? new List<CommunicationChannelConfig>()
+					: communication.S7.Channels;
+			}
+
+			return new List<CommunicationChannelConfig>();
+		}
+
+		public static List<JobConfig> GetJobs(ProjectFlowConfig config, string protocolName, string channelName)
+		{
+			NormalizeConfig(config);
+			protocolName = NormalizeProtocolName(protocolName);
+			channelName = NormalizeChannelName(channelName);
+			ChannelFlowConfig channel = GetChannel(config, protocolName, channelName);
+			return channel == null || channel.Jobs == null ? new List<JobConfig>() : channel.Jobs;
+		}
+
+		public static ChannelFlowConfig GetChannel(ProjectFlowConfig config, string protocolName, string channelName)
+		{
+			if (config == null || config.Protocols == null)
+			{
+				return null;
+			}
+
+			protocolName = NormalizeProtocolName(protocolName);
+			channelName = NormalizeChannelName(channelName);
+			ProtocolFlowConfig protocol = config.Protocols.FirstOrDefault(x =>
+				x != null && string.Equals(x.ProtocolName, protocolName, StringComparison.OrdinalIgnoreCase));
+			if (protocol == null || protocol.Channels == null)
+			{
+				return null;
+			}
+
+			return protocol.Channels.FirstOrDefault(x =>
+				x != null && string.Equals(x.ChannelName, channelName, StringComparison.OrdinalIgnoreCase));
 		}
 
 		public static TaskConfig CreateDefaultTask(string jobName, string taskName, int runOrder)
@@ -930,7 +1526,7 @@ namespace Aron_V3
 			step.RunOrder = runOrder;
 			step.Enabled = true;
 			step.StopWhenNG = true;
-			step.StepFolder = Path.Combine("Job", jobName, "Task", taskName);
+			step.StepFolder = Path.Combine("Task", taskName, jobName);
 			step.Remark = string.Empty;
 
 			if (stepType == StepType.Vpp)
@@ -987,42 +1583,504 @@ namespace Aron_V3
 		{
 			// 不再自动创建 Job_001。
 			// 删除 Project 文件夹后重新启动，流程管理页面应为空。
-			// 只有用户点击“+”新增 Job 时，才创建 Project\Job\Job_xxx。
+			// 只有用户新增 Task/程序号并保存 Step 文件时，才创建 Project\Task\<TaskName>\<ProgramNo>。
 			return new ProjectFlowConfig();
 		}
 
 
 		private static void NormalizeConfig(ProjectFlowConfig config)
 		{
+			if (config == null)
+			{
+				return;
+			}
+
 			if (config.Jobs == null) config.Jobs = new List<JobConfig>();
+			if (config.Protocols == null) config.Protocols = new List<ProtocolFlowConfig>();
+
+			if (config.Protocols.Count <= 0 && config.Jobs.Count > 0)
+			{
+				foreach (JobConfig legacyJob in config.Jobs)
+				{
+					if (legacyJob == null)
+					{
+						continue;
+					}
+
+					string protocolName = ResolveJobProtocol(legacyJob);
+					string channelName = ResolveJobChannel(legacyJob);
+					legacyJob.ProtocolName = protocolName;
+					legacyJob.ChannelName = channelName;
+					GetOrCreateChannel(config, protocolName, channelName).Jobs.Add(legacyJob);
+				}
+			}
+
+			EnsureCommunicationChannels(config);
+
+			foreach (ProtocolFlowConfig protocol in config.Protocols)
+			{
+				if (protocol == null)
+				{
+					continue;
+				}
+
+				protocol.ProtocolName = NormalizeProtocolName(protocol.ProtocolName);
+				if (protocol.Channels == null) protocol.Channels = new List<ChannelFlowConfig>();
+
+				foreach (ChannelFlowConfig channel in protocol.Channels)
+				{
+					if (channel == null)
+					{
+						continue;
+					}
+
+					channel.ChannelName = NormalizeChannelName(channel.ChannelName);
+					if (string.IsNullOrWhiteSpace(channel.ActiveProgramNo)) channel.ActiveProgramNo = "1";
+					if (channel.Jobs == null) channel.Jobs = new List<JobConfig>();
+
+					foreach (JobConfig job in channel.Jobs)
+					{
+						if (job == null)
+						{
+							continue;
+						}
+
+						job.ProtocolName = protocol.ProtocolName;
+						job.ChannelName = channel.ChannelName;
+						if (string.IsNullOrWhiteSpace(job.ProgramNo)) job.ProgramNo = DeriveProgramNo(job.JobName);
+						NormalizeJob(job);
+					}
+				}
+			}
 
 			foreach (JobConfig job in config.Jobs)
 			{
-				if (job.Tasks == null) job.Tasks = new List<TaskConfig>();
+				NormalizeJob(job);
+			}
 
-				foreach (TaskConfig task in job.Tasks)
+			SyncFlatJobs(config);
+		}
+
+		private static void NormalizeJob(JobConfig job)
+		{
+			if (job == null)
+			{
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(job.ProtocolName)) job.ProtocolName = ResolveJobProtocol(job);
+			if (string.IsNullOrWhiteSpace(job.ChannelName)) job.ChannelName = ResolveJobChannel(job);
+			job.ProtocolName = NormalizeProtocolName(job.ProtocolName);
+			job.ChannelName = NormalizeChannelName(job.ChannelName);
+			if (string.IsNullOrWhiteSpace(job.ProgramNo)) job.ProgramNo = DeriveProgramNo(job.JobName);
+			if (job.Tasks == null) job.Tasks = new List<TaskConfig>();
+
+			foreach (TaskConfig task in job.Tasks)
+			{
+				if (task.Steps == null) task.Steps = new List<StepConfig>();
+				if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
+				if (task.CommunicationTriggerBindings == null) task.CommunicationTriggerBindings = new List<TaskCommunicationTriggerBinding>();
+
+				if (string.IsNullOrEmpty(task.CommunicationProtocol)) task.CommunicationProtocol = job.ProtocolName;
+				if (string.IsNullOrEmpty(task.CommunicationChannel)) task.CommunicationChannel = job.ChannelName;
+				if (string.IsNullOrWhiteSpace(task.CommunicationInstanceName)) task.CommunicationInstanceName = GetDefaultCommunicationInstanceName(task.CommunicationProtocol);
+				if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
+				if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = task.FlagBit.ToString();
+				if (string.IsNullOrEmpty(task.PositionOptionName)) task.PositionOptionName = task.PositionName;
+				if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = task.FlagValue;
+				if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = "1";
+
+				task.CommunicationProtocol = job.ProtocolName;
+				task.CommunicationChannel = job.ChannelName;
+				if (string.IsNullOrWhiteSpace(task.CommunicationInstanceName)) task.CommunicationInstanceName = GetDefaultCommunicationInstanceName(task.CommunicationProtocol);
+
+				EnsureLegacyTriggerBinding(task);
+				NormalizeTaskTriggerBindings(task);
+
+				int oldFlagBit;
+				if (int.TryParse(task.PositionName, out oldFlagBit)) task.FlagBit = oldFlagBit;
+				task.FlagValue = task.PositionValue;
+
+				foreach (StepConfig step in task.Steps)
 				{
-					if (task.Steps == null) task.Steps = new List<StepConfig>();
-					if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
+					if (step.VppFiles == null) step.VppFiles = new List<string>();
+					if (step.ScriptFiles == null) step.ScriptFiles = new List<string>();
+					if (step.InputPins == null) step.InputPins = new List<PinConfig>();
+					if (step.OutputPins == null) step.OutputPins = new List<PinConfig>();
+					if (string.IsNullOrWhiteSpace(step.DisplayResultKey)) step.DisplayResultKey = "Not Use";
+					NormalizeStepProjectRelativePaths(step);
+					NormalizeStepSourcePath(job.ProtocolName, job.ChannelName, job.JobName, task.TaskName, step);
+				}
 
-					if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
-					if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = task.FlagBit.ToString();
-					if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = task.FlagValue;
-					if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = "1";
-
-					// 旧字段同步，保证旧代码仍能读取。
-					int oldFlagBit;
-					if (int.TryParse(task.PositionName, out oldFlagBit)) task.FlagBit = oldFlagBit;
-					task.FlagValue = task.PositionValue;
-
-					foreach (StepConfig step in task.Steps)
+				foreach (StepFlowItem flowItem in task.StepFlow)
+				{
+					if (flowItem == null) continue;
+					if (string.IsNullOrWhiteSpace(flowItem.FlowItemId)) flowItem.FlowItemId = Guid.NewGuid().ToString("N");
+					if (flowItem.SignalOutputs == null) flowItem.SignalOutputs = new List<SignalOutputBinding>();
+					foreach (SignalOutputBinding signalOutput in flowItem.SignalOutputs)
 					{
-						if (step.VppFiles == null) step.VppFiles = new List<string>();
-						if (step.ScriptFiles == null) step.ScriptFiles = new List<string>();
-						if (step.InputPins == null) step.InputPins = new List<PinConfig>();
-						if (step.OutputPins == null) step.OutputPins = new List<PinConfig>();
+						if (signalOutput == null) continue;
+						if (signalOutput.OutputName == null) signalOutput.OutputName = string.Empty;
+						if (signalOutput.AssignedValue == null) signalOutput.AssignedValue = string.Empty;
+					}
+					if (string.IsNullOrWhiteSpace(flowItem.BlockType)) flowItem.BlockType = "Step";
+					if (string.IsNullOrWhiteSpace(flowItem.BlockName)) flowItem.BlockName = flowItem.StepName;
+					if (string.IsNullOrWhiteSpace(flowItem.StepName)) flowItem.StepName = flowItem.BlockName;
+					if (!flowItem.IsStepBlock)
+					{
+						flowItem.InputImageKey = string.Empty;
+					}
+					if (string.IsNullOrWhiteSpace(flowItem.DisplayOutputKey)) flowItem.DisplayOutputKey = "Not Use";
+					if (string.IsNullOrWhiteSpace(flowItem.DisplaySlotName)) flowItem.DisplaySlotName = "Not Show";
+					if (string.IsNullOrWhiteSpace(flowItem.DisplayResultKey)) flowItem.DisplayResultKey = "Not Use";
+					if (string.IsNullOrWhiteSpace(flowItem.DisplayMode)) flowItem.DisplayMode = "Fit";
+					if (string.IsNullOrWhiteSpace(flowItem.CommunicationOutputProtocol)) flowItem.CommunicationOutputProtocol = task.CommunicationProtocol;
+					if (string.IsNullOrWhiteSpace(flowItem.CommunicationOutputInstanceName)) flowItem.CommunicationOutputInstanceName = task.CommunicationInstanceName;
+				}
+			}
+		}
+
+		private static string GetDefaultCommunicationInstanceName(string protocolName)
+		{
+			string normalized = NormalizeProtocolName(protocolName);
+
+			if (normalized.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) ||
+				normalized.Equals("TcpIp", StringComparison.OrdinalIgnoreCase))
+			{
+				return "TCPIP_01";
+			}
+
+			if (normalized.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				return "Profinet_01";
+			}
+
+			if (normalized.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				return "S7_01";
+			}
+
+			return string.Empty;
+		}
+
+		private static void EnsureLegacyTriggerBinding(TaskConfig task)
+		{
+			if (task == null)
+			{
+				return;
+			}
+
+			if (task.CommunicationTriggerBindings == null)
+			{
+				task.CommunicationTriggerBindings = new List<TaskCommunicationTriggerBinding>();
+			}
+
+			if (task.CommunicationTriggerBindings.Count > 0)
+			{
+				return;
+			}
+
+			TaskCommunicationTriggerBinding binding = new TaskCommunicationTriggerBinding();
+			binding.CommunicationInstanceName = task.CommunicationInstanceName;
+			binding.CommunicationProtocol = task.CommunicationProtocol;
+			binding.CommunicationChannel = task.CommunicationChannel;
+			binding.TriggerName = task.TriggerName;
+			binding.TriggerValue = task.TriggerValue;
+			binding.TriggerCompare = task.TriggerCompare;
+			binding.PositionName = task.PositionName;
+			binding.PositionValue = task.PositionValue;
+			binding.PositionCompare = task.PositionCompare;
+			task.CommunicationTriggerBindings.Add(binding);
+		}
+
+		private static void NormalizeTaskTriggerBindings(TaskConfig task)
+		{
+			if (task == null || task.CommunicationTriggerBindings == null)
+			{
+				return;
+			}
+
+			foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+			{
+				if (binding == null)
+				{
+					continue;
+				}
+
+				if (string.IsNullOrWhiteSpace(binding.CommunicationProtocol)) binding.CommunicationProtocol = task.CommunicationProtocol;
+				if (string.IsNullOrWhiteSpace(binding.CommunicationChannel)) binding.CommunicationChannel = task.CommunicationChannel;
+				if (string.IsNullOrWhiteSpace(binding.CommunicationInstanceName)) binding.CommunicationInstanceName = GetDefaultCommunicationInstanceName(binding.CommunicationProtocol);
+				if (string.IsNullOrWhiteSpace(binding.TriggerValue)) binding.TriggerValue = "1";
+				if (string.IsNullOrWhiteSpace(binding.PositionName)) binding.PositionName = "Not Use";
+				if (string.IsNullOrWhiteSpace(binding.PositionValue)) binding.PositionValue = "1";
+			}
+		}
+
+		private static void SyncFlatJobs(ProjectFlowConfig config)
+		{
+			if (config == null)
+			{
+				return;
+			}
+
+			if (config.Protocols == null)
+			{
+				config.Protocols = new List<ProtocolFlowConfig>();
+			}
+
+			List<JobConfig> jobs = new List<JobConfig>();
+			foreach (ProtocolFlowConfig protocol in config.Protocols)
+			{
+				if (protocol == null || protocol.Channels == null)
+				{
+					continue;
+				}
+
+				foreach (ChannelFlowConfig channel in protocol.Channels)
+				{
+					if (channel == null || channel.Jobs == null)
+					{
+						continue;
+					}
+
+					foreach (JobConfig job in channel.Jobs)
+					{
+						if (job == null)
+						{
+							continue;
+						}
+
+						job.ProtocolName = NormalizeProtocolName(protocol.ProtocolName);
+						job.ChannelName = NormalizeChannelName(channel.ChannelName);
+						jobs.Add(job);
 					}
 				}
+			}
+
+			config.Jobs = jobs;
+		}
+
+		private static void EnsureCommunicationChannels(ProjectFlowConfig config)
+		{
+			try
+			{
+				CommunicationConfig communication = CommunicationConfigStore.LoadOrCreateDefault();
+				bool added = false;
+				if (communication.TcpIp != null && communication.TcpIp.Enabled)
+				{
+					EnsureProtocolChannels(config, "TCP/IP", communication.TcpIp.Channels);
+					added = true;
+				}
+
+				if (communication.Profinet != null && communication.Profinet.Enabled)
+				{
+					EnsureProtocolChannels(config, "Profinet", communication.Profinet.Channels);
+					added = true;
+				}
+
+				if (communication.S7 != null && communication.S7.Enabled)
+				{
+					EnsureProtocolChannels(config, "S7", communication.S7.Channels);
+					added = true;
+				}
+
+				if (!added)
+				{
+					GetOrCreateChannel(config, "TCP/IP", "Channel01");
+				}
+			}
+			catch
+			{
+				GetOrCreateChannel(config, "TCP/IP", "Channel01");
+			}
+		}
+
+		private static void EnsureProtocolChannels(ProjectFlowConfig config, string protocolName, List<CommunicationChannelConfig> channels)
+		{
+			if (channels == null || channels.Count <= 0)
+			{
+				GetOrCreateChannel(config, protocolName, "Channel01");
+				return;
+			}
+
+			foreach (CommunicationChannelConfig channel in channels)
+			{
+				if (channel == null || !channel.Enabled)
+				{
+					continue;
+				}
+
+				GetOrCreateChannel(config, protocolName, channel.ChannelName);
+			}
+		}
+
+		private static string ResolveJobProtocol(JobConfig job)
+		{
+			if (job == null)
+			{
+				return "TCP/IP";
+			}
+
+			if (!string.IsNullOrWhiteSpace(job.ProtocolName))
+			{
+				return NormalizeProtocolName(job.ProtocolName);
+			}
+
+			TaskConfig task = job.Tasks == null ? null : job.Tasks.FirstOrDefault(x => x != null && !string.IsNullOrWhiteSpace(x.CommunicationProtocol));
+			return NormalizeProtocolName(task == null ? "TCP/IP" : task.CommunicationProtocol);
+		}
+
+		private static string ResolveJobChannel(JobConfig job)
+		{
+			if (job == null)
+			{
+				return "Channel01";
+			}
+
+			if (!string.IsNullOrWhiteSpace(job.ChannelName))
+			{
+				return NormalizeChannelName(job.ChannelName);
+			}
+
+			TaskConfig task = job.Tasks == null ? null : job.Tasks.FirstOrDefault(x => x != null && !string.IsNullOrWhiteSpace(x.CommunicationChannel));
+			return NormalizeChannelName(task == null ? "Channel01" : task.CommunicationChannel);
+		}
+
+		public static string NormalizeProtocolName(string protocolName)
+		{
+			if (string.IsNullOrWhiteSpace(protocolName))
+			{
+				return "TCP/IP";
+			}
+
+			if (protocolName.Equals("TcpIp", StringComparison.OrdinalIgnoreCase) ||
+				protocolName.Replace("/", string.Empty).Equals("TCPIP", StringComparison.OrdinalIgnoreCase))
+			{
+				return "TCP/IP";
+			}
+
+			return protocolName.Trim();
+		}
+
+		public static string NormalizeChannelName(string channelName)
+		{
+			return string.IsNullOrWhiteSpace(channelName) ? "Channel01" : channelName.Trim();
+		}
+
+		private static string DeriveProgramNo(string jobName)
+		{
+			if (string.IsNullOrWhiteSpace(jobName))
+			{
+				return "1";
+			}
+
+			string digits = new string(jobName.Where(char.IsDigit).ToArray());
+			int value;
+			return int.TryParse(digits, out value) && value > 0 ? value.ToString() : "1";
+		}
+
+		private static void NormalizeStepSourcePath(string jobName, string taskName, StepConfig step)
+		{
+			NormalizeStepSourcePath("TCP/IP", "Channel01", jobName, taskName, step);
+		}
+
+		private static void NormalizeStepSourcePath(string protocolName, string channelName, string jobName, string taskName, StepConfig step)
+		{
+			if (step == null || string.IsNullOrWhiteSpace(step.ProjectFilePath))
+			{
+				return;
+			}
+
+			try
+			{
+				string taskFolder = PathManager.GetTaskFolder(protocolName, channelName, jobName, taskName);
+				string projectPath = Path.IsPathRooted(step.ProjectFilePath)
+					? step.ProjectFilePath
+					: Path.Combine(taskFolder, step.ProjectFilePath);
+
+				if (!File.Exists(projectPath))
+				{
+					return;
+				}
+
+				if (string.IsNullOrWhiteSpace(step.SourceFilePath) ||
+					!IsPathUnderFolder(step.SourceFilePath, taskFolder) ||
+					string.Equals(Path.GetFileName(step.SourceFilePath), Path.GetFileName(projectPath), StringComparison.OrdinalIgnoreCase))
+				{
+					step.SourceFilePath = projectPath;
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private static void NormalizeStepProjectRelativePaths(StepConfig step)
+		{
+			if (step == null)
+			{
+				return;
+			}
+
+			step.ProjectFilePath = NormalizeStepProjectRelativePath(step.ProjectFilePath);
+
+			if (step.VppFiles != null)
+			{
+				for (int i = 0; i < step.VppFiles.Count; i++)
+				{
+					step.VppFiles[i] = NormalizeStepProjectRelativePath(step.VppFiles[i]);
+				}
+			}
+
+			if (step.ScriptFiles != null)
+			{
+				for (int i = 0; i < step.ScriptFiles.Count; i++)
+				{
+					step.ScriptFiles[i] = NormalizeStepProjectRelativePath(step.ScriptFiles[i]);
+				}
+			}
+		}
+
+		private static string NormalizeStepProjectRelativePath(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path))
+			{
+				return path;
+			}
+
+			string normalized = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+			string legacyPrefix = "Scripts" + Path.DirectorySeparatorChar;
+
+			if (normalized.StartsWith(legacyPrefix, StringComparison.OrdinalIgnoreCase))
+			{
+				return "Script" + Path.DirectorySeparatorChar + normalized.Substring(legacyPrefix.Length);
+			}
+
+			if (normalized.Equals("Scripts", StringComparison.OrdinalIgnoreCase))
+			{
+				return "Script";
+			}
+
+			return path;
+		}
+
+		private static bool IsPathUnderFolder(string path, string folder)
+		{
+			if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(folder))
+			{
+				return false;
+			}
+
+			try
+			{
+				string fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				string fullFolder = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				return fullPath.StartsWith(fullFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(fullPath, fullFolder, StringComparison.OrdinalIgnoreCase);
+			}
+			catch
+			{
+				return false;
 			}
 		}
 
@@ -1042,9 +2100,6 @@ namespace Aron_V3
 					continue;
 				}
 
-				string jobFolder = path.GetJobFolder(job.JobName);
-				Directory.CreateDirectory(jobFolder);
-
 				if (job.Tasks == null)
 				{
 					continue;
@@ -1058,29 +2113,39 @@ namespace Aron_V3
 					}
 
 					// 新标准路径：
-					// Project\Job\<JobName>\Task\<TaskName>
-					string taskFolder = path.GetTaskFolder(job.JobName, task.TaskName);
+					// Project\Task\<TaskName>\<ProgramNo>
+					string taskFolder = path.GetTaskFolder(job.ProtocolName, job.ChannelName, job.JobName, task.TaskName);
 					Directory.CreateDirectory(taskFolder);
 
 					// 兼容迁移旧路径：
+					// Project\<TaskName>\<ProgramNo>
 					// Project\Job\<JobName>\<TaskName>
-					// 如果旧目录存在，则迁移到：
 					// Project\Job\<JobName>\Task\<TaskName>
-					string legacyTaskFolder = Path.Combine(jobFolder, task.TaskName);
-
-					if (Directory.Exists(legacyTaskFolder) &&
-						!string.Equals(legacyTaskFolder, taskFolder, StringComparison.OrdinalIgnoreCase))
+					// Project\Communicate\<Protocol>\<Channel>\<JobName>\Task\<TaskName>
+					foreach (string legacyTaskFolder in path.GetTaskFolderCandidates(job.ProtocolName, job.ChannelName, job.JobName, task.TaskName))
 					{
+						if (!Directory.Exists(legacyTaskFolder) ||
+							string.Equals(legacyTaskFolder, taskFolder, StringComparison.OrdinalIgnoreCase))
+						{
+							continue;
+						}
+
 						try
 						{
 							MoveDirectoryContent(legacyTaskFolder, taskFolder);
-							Directory.Delete(legacyTaskFolder, true);
+							if (Directory.Exists(legacyTaskFolder) &&
+								Directory.GetFiles(legacyTaskFolder, "*", SearchOption.AllDirectories).Length == 0)
+							{
+								Directory.Delete(legacyTaskFolder, true);
+							}
 						}
 						catch
 						{
 							// 迁移失败不影响软件启动和保存，后续可以手动处理旧目录。
 						}
 					}
+
+					NormalizeTaskStepSubFolders(taskFolder);
 
 					if (task.Steps == null)
 					{
@@ -1098,10 +2163,48 @@ namespace Aron_V3
 							(step.VppFiles != null && step.VppFiles.Count > 0) ||
 							(step.ScriptFiles != null && step.ScriptFiles.Count > 0))
 						{
-							path.EnsureStepFolder(job.JobName, task.TaskName, step.StepName);
+							Directory.CreateDirectory(Path.Combine(taskFolder, "VPP"));
+							Directory.CreateDirectory(Path.Combine(taskFolder, "Script"));
+							Directory.CreateDirectory(Path.Combine(taskFolder, "Hdev"));
 						}
+
+						NormalizeStepSourcePath(job.ProtocolName, job.ChannelName, job.JobName, task.TaskName, step);
 					}
 				}
+			}
+		}
+
+		private static void NormalizeTaskStepSubFolders(string taskFolder)
+		{
+			if (string.IsNullOrWhiteSpace(taskFolder))
+			{
+				return;
+			}
+
+			Directory.CreateDirectory(Path.Combine(taskFolder, "VPP"));
+			Directory.CreateDirectory(Path.Combine(taskFolder, "Script"));
+			Directory.CreateDirectory(Path.Combine(taskFolder, "Hdev"));
+
+			string legacyScripts = Path.Combine(taskFolder, "Scripts");
+			string script = Path.Combine(taskFolder, "Script");
+
+			if (!Directory.Exists(legacyScripts) ||
+				string.Equals(legacyScripts, script, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			try
+			{
+				MoveDirectoryContent(legacyScripts, script);
+				if (Directory.Exists(legacyScripts) &&
+					Directory.GetFiles(legacyScripts, "*", SearchOption.AllDirectories).Length == 0)
+				{
+					Directory.Delete(legacyScripts, true);
+				}
+			}
+			catch
+			{
 			}
 		}
 
@@ -1230,7 +2333,7 @@ namespace Aron_V3
 		private string ResolveVppPath(VisionRunContext context)
 		{
 			List<string> candidates = new List<string>();
-			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(context.JobName, context.TaskName);
+			string taskFolder = GetRuntimeTaskFolder(context);
 			AddFileCandidate(candidates, _config.ProjectFilePath, taskFolder);
 
 			if (_config.VppFiles != null)
@@ -1243,6 +2346,16 @@ namespace Aron_V3
 
 			AddFileCandidate(candidates, _config.SourceFilePath, taskFolder);
 			return candidates.FirstOrDefault(File.Exists) ?? (candidates.Count > 0 ? candidates[0] : string.Empty);
+		}
+
+		private string GetRuntimeTaskFolder(VisionRunContext context)
+		{
+			string protocolName = context == null ? string.Empty : Convert.ToString(context.GetData("Comm.Protocol"));
+			string channelName = context == null ? string.Empty : Convert.ToString(context.GetData("Comm.Channel"));
+			string jobName = context == null ? string.Empty : context.JobName;
+			string taskName = context == null ? string.Empty : context.TaskName;
+
+			return FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, jobName, taskName);
 		}
 
 		private void AddFileCandidate(List<string> candidates, string file, string taskFolder)
@@ -1647,7 +2760,7 @@ namespace Aron_V3
 			try
 			{
 				// TODO:
-				// 后续这里执行 Step 文件夹 Scripts 内部脚本。
+				// 后续这里执行 Step 文件夹 Script 内部脚本。
 				// 第一阶段先做输入输出引脚的数据整理。
 
 				foreach (PinConfig pin in _config.OutputPins)
@@ -1683,8 +2796,17 @@ namespace Aron_V3
 	public class HalconStep : IVisionStep
 	{
 		private readonly StepConfig _config;
+		private static readonly object _halconLoadLock = new object();
+		private static readonly object _programCacheLock = new object();
+		private static readonly Dictionary<string, CachedHalconProgram> _programCache = new Dictionary<string, CachedHalconProgram>(StringComparer.OrdinalIgnoreCase);
 		private static bool _halconAssembliesLoaded;
 		private static string _halconAssemblyLoadMessage = string.Empty;
+
+		private class CachedHalconProgram
+		{
+			public object Program { get; set; }
+			public long LastWriteTicks { get; set; }
+		}
 
 		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 		private static extern bool SetDllDirectory(string lpPathName);
@@ -1717,7 +2839,7 @@ namespace Aron_V3
 					throw new Exception("HALCON .NET runtime was not found. Please check halcondotnet.dll and hdevenginedotnet.dll. " + _halconAssemblyLoadMessage);
 				}
 
-				object program = Activator.CreateInstance(programType, new object[] { filePath });
+				object program = GetOrLoadProgram(filePath, programType);
 				object call = Activator.CreateInstance(callType, new object[] { program });
 
 				ApplyInputPinValues(call);
@@ -1745,9 +2867,74 @@ namespace Aron_V3
 			return result;
 		}
 
+		public static bool WarmUpProgram(string filePath, out string warning)
+		{
+			warning = string.Empty;
+
+			try
+			{
+				if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+				{
+					warning = "Hdev file was not found: " + filePath;
+					return false;
+				}
+
+				Type programType = FindHalconType("HalconDotNet.HDevProgram");
+				Type callType = FindHalconType("HalconDotNet.HDevProgramCall");
+				if (programType == null || callType == null)
+				{
+					warning = "HALCON .NET runtime was not found. " + _halconAssemblyLoadMessage;
+					return false;
+				}
+
+				GetOrLoadProgram(filePath, programType);
+				return true;
+			}
+			catch (Exception ex)
+			{
+				TargetInvocationException targetException = ex as TargetInvocationException;
+				warning = targetException != null && targetException.InnerException != null
+					? targetException.InnerException.Message
+					: ex.Message;
+				return false;
+			}
+		}
+
+		private static object GetOrLoadProgram(string filePath, Type programType)
+		{
+			if (programType == null)
+			{
+				throw new ArgumentNullException("programType");
+			}
+
+			string normalizedPath = Path.GetFullPath(filePath);
+			long lastWriteTicks = File.GetLastWriteTimeUtc(normalizedPath).Ticks;
+
+			lock (_programCacheLock)
+			{
+				CachedHalconProgram cached;
+				if (_programCache.TryGetValue(normalizedPath, out cached) &&
+					cached != null &&
+					cached.Program != null &&
+					cached.LastWriteTicks == lastWriteTicks)
+				{
+					return cached.Program;
+				}
+
+				object program = Activator.CreateInstance(programType, new object[] { normalizedPath });
+				_programCache[normalizedPath] = new CachedHalconProgram
+				{
+					Program = program,
+					LastWriteTicks = lastWriteTicks
+				};
+
+				return program;
+			}
+		}
+
 		private string ResolveHdevPath(VisionRunContext context)
 		{
-			string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(context.JobName, context.TaskName);
+			string taskFolder = GetRuntimeTaskFolder(context);
 			List<string> candidates = new List<string>();
 			AddFileCandidate(candidates, _config.ProjectFilePath, taskFolder);
 
@@ -1758,6 +2945,16 @@ namespace Aron_V3
 
 			AddFileCandidate(candidates, _config.SourceFilePath, taskFolder);
 			return candidates.FirstOrDefault(File.Exists) ?? (candidates.Count > 0 ? candidates[0] : string.Empty);
+		}
+
+		private string GetRuntimeTaskFolder(VisionRunContext context)
+		{
+			string protocolName = context == null ? string.Empty : Convert.ToString(context.GetData("Comm.Protocol"));
+			string channelName = context == null ? string.Empty : Convert.ToString(context.GetData("Comm.Channel"));
+			string jobName = context == null ? string.Empty : context.JobName;
+			string taskName = context == null ? string.Empty : context.TaskName;
+
+			return FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, jobName, taskName);
 		}
 
 		private void AddFileCandidate(List<string> candidates, string file, string taskFolder)
@@ -1774,7 +2971,7 @@ namespace Aron_V3
 			}
 		}
 
-		private Type FindHalconType(string typeName)
+		private static Type FindHalconType(string typeName)
 		{
 			Type type = FindLoadedHalconType(typeName);
 			if (type != null)
@@ -1815,7 +3012,7 @@ namespace Aron_V3
 			return null;
 		}
 
-		private Type FindLoadedHalconType(string typeName)
+		private static Type FindLoadedHalconType(string typeName)
 		{
 			foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
 			{
@@ -1835,33 +3032,41 @@ namespace Aron_V3
 			return null;
 		}
 
-		private void LoadHalconAssemblies()
+		private static void LoadHalconAssemblies()
 		{
 			if (_halconAssembliesLoaded)
 			{
 				return;
 			}
 
-			List<string> messages = new List<string>();
-			ConfigureHalconNativeSearchPath(messages);
-			TryLoadAssemblyByName("HalconDotNet", messages);
-			TryLoadAssemblyByName("hdevenginedotnet", messages);
-
-			foreach (string file in GetHalconAssemblyCandidates("halcondotnet.dll"))
+			lock (_halconLoadLock)
 			{
-				TryLoadAssemblyFromFile(file, messages);
-			}
+				if (_halconAssembliesLoaded)
+				{
+					return;
+				}
 
-			foreach (string file in GetHalconAssemblyCandidates("hdevenginedotnet.dll"))
-			{
-				TryLoadAssemblyFromFile(file, messages);
-			}
+				List<string> messages = new List<string>();
+				ConfigureHalconNativeSearchPath(messages);
+				TryLoadAssemblyByName("HalconDotNet", messages);
+				TryLoadAssemblyByName("hdevenginedotnet", messages);
 
-			_halconAssembliesLoaded = true;
-			_halconAssemblyLoadMessage = string.Join(" ", messages.ToArray());
+				foreach (string file in GetHalconAssemblyCandidates("halcondotnet.dll"))
+				{
+					TryLoadAssemblyFromFile(file, messages);
+				}
+
+				foreach (string file in GetHalconAssemblyCandidates("hdevenginedotnet.dll"))
+				{
+					TryLoadAssemblyFromFile(file, messages);
+				}
+
+				_halconAssembliesLoaded = true;
+				_halconAssemblyLoadMessage = string.Join(" ", messages.ToArray());
+			}
 		}
 
-		private void ConfigureHalconNativeSearchPath(List<string> messages)
+		private static void ConfigureHalconNativeSearchPath(List<string> messages)
 		{
 			foreach (string root in GetHalconRoots())
 			{
@@ -1887,7 +3092,7 @@ namespace Aron_V3
 			}
 		}
 
-		private bool TryLoadAssemblyByName(string assemblyName, List<string> messages)
+		private static bool TryLoadAssemblyByName(string assemblyName, List<string> messages)
 		{
 			try
 			{
@@ -1902,7 +3107,7 @@ namespace Aron_V3
 			}
 		}
 
-		private bool TryLoadAssemblyFromFile(string filePath, List<string> messages)
+		private static bool TryLoadAssemblyFromFile(string filePath, List<string> messages)
 		{
 			if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
 			{
@@ -1922,7 +3127,7 @@ namespace Aron_V3
 			}
 		}
 
-		private IEnumerable<string> GetHalconAssemblyCandidates(string fileName)
+		private static IEnumerable<string> GetHalconAssemblyCandidates(string fileName)
 		{
 			HashSet<string> candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			string baseDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -1938,7 +3143,7 @@ namespace Aron_V3
 			return candidates;
 		}
 
-		private void AddHalconAssemblyCandidate(HashSet<string> candidates, string folder, string fileName)
+		private static void AddHalconAssemblyCandidate(HashSet<string> candidates, string folder, string fileName)
 		{
 			if (string.IsNullOrWhiteSpace(folder))
 			{
@@ -1948,7 +3153,7 @@ namespace Aron_V3
 			candidates.Add(Path.Combine(folder, fileName));
 		}
 
-		private IEnumerable<string> GetHalconRoots()
+		private static IEnumerable<string> GetHalconRoots()
 		{
 			HashSet<string> roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			AddHalconRoot(roots, Environment.GetEnvironmentVariable("HALCONROOT"));
@@ -1957,7 +3162,7 @@ namespace Aron_V3
 			return roots;
 		}
 
-		private void AddHalconRoot(HashSet<string> roots, string root)
+		private static void AddHalconRoot(HashSet<string> roots, string root)
 		{
 			if (!string.IsNullOrWhiteSpace(root))
 			{
@@ -1965,7 +3170,7 @@ namespace Aron_V3
 			}
 		}
 
-		private IEnumerable<string> GetHalconNativeDirs(string root)
+		private static IEnumerable<string> GetHalconNativeDirs(string root)
 		{
 			string arch = Environment.GetEnvironmentVariable("HALCONARCH");
 			if (!string.IsNullOrWhiteSpace(arch))
@@ -2288,6 +3493,303 @@ namespace Aron_V3
 		}
 	}
 
+	public class HalconWarmupResult
+	{
+		public int TotalPrograms { get; set; }
+		public int LoadedPrograms { get; set; }
+		public int FailedPrograms { get; set; }
+		public TimeSpan Cost { get; set; }
+		public List<string> Warnings { get; private set; }
+
+		public HalconWarmupResult()
+		{
+			Warnings = new List<string>();
+		}
+	}
+
+	public static class HalconWarmupService
+	{
+		public static HalconWarmupResult WarmUp(ProjectFlowConfig flowConfig)
+		{
+			Stopwatch sw = Stopwatch.StartNew();
+			HalconWarmupResult result = new HalconWarmupResult();
+			HashSet<string> warmedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			if (flowConfig == null || flowConfig.Jobs == null)
+			{
+				sw.Stop();
+				result.Cost = sw.Elapsed;
+				return result;
+			}
+
+			foreach (JobConfig job in flowConfig.Jobs)
+			{
+				if (job == null || job.Tasks == null)
+				{
+					continue;
+				}
+
+				foreach (TaskConfig task in job.Tasks)
+				{
+					WarmUpTask(job, task, result, warmedPaths);
+				}
+			}
+
+			sw.Stop();
+			result.Cost = sw.Elapsed;
+			return result;
+		}
+
+		private static void WarmUpTask(JobConfig job, TaskConfig task, HalconWarmupResult result, HashSet<string> warmedPaths)
+		{
+			if (job == null || task == null || task.Steps == null || result == null)
+			{
+				return;
+			}
+
+			foreach (StepConfig step in GetTaskFlowHdevSteps(task))
+			{
+				result.TotalPrograms++;
+
+				string warning;
+				if (WarmUpHdev(job, task, step, warmedPaths, out warning))
+				{
+					result.LoadedPrograms++;
+				}
+				else
+				{
+					result.FailedPrograms++;
+					result.Warnings.Add(warning);
+				}
+			}
+		}
+
+		private static IEnumerable<StepConfig> GetTaskFlowHdevSteps(TaskConfig task)
+		{
+			if (task == null || task.Steps == null)
+			{
+				yield break;
+			}
+
+			HashSet<string> yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			if (task.StepFlow != null)
+			{
+				foreach (StepFlowItem flowItem in task.StepFlow)
+				{
+					if (flowItem == null || !flowItem.Enabled || !flowItem.IsStepBlock || string.IsNullOrWhiteSpace(flowItem.StepName))
+					{
+						continue;
+					}
+
+					StepConfig step = task.Steps.FirstOrDefault(x =>
+						x != null &&
+						x.Enabled &&
+						x.StepType == StepType.Halcon &&
+						string.Equals(x.StepName, flowItem.StepName, StringComparison.OrdinalIgnoreCase));
+					if (step == null || !yielded.Add(step.StepName))
+					{
+						continue;
+					}
+
+					yield return step;
+				}
+			}
+
+			foreach (StepConfig step in task.Steps)
+			{
+				if (step == null || step.StepType != StepType.Halcon || !step.Enabled || !yielded.Add(step.StepName))
+				{
+					continue;
+				}
+
+				yield return step;
+			}
+		}
+
+		private static bool WarmUpHdev(JobConfig job, TaskConfig task, StepConfig step, HashSet<string> warmedPaths, out string warning)
+		{
+			warning = string.Empty;
+
+			try
+			{
+				string protocolName = ResolveProtocolName(job, task);
+				string channelName = ResolveChannelName(job, task);
+				string taskFolder = FlowConfigStore.PathManager.GetTaskFolder(protocolName, channelName, job.JobName, task.TaskName);
+				string hdevPath = ResolveHdevPath(taskFolder, step);
+
+				if (string.IsNullOrWhiteSpace(hdevPath) || !File.Exists(hdevPath))
+				{
+					warning = FormatWarning(job, task, step, "Hdev file not found.");
+					return false;
+				}
+
+				string normalizedPath = Path.GetFullPath(hdevPath);
+				if (warmedPaths != null && warmedPaths.Contains(normalizedPath))
+				{
+					return true;
+				}
+
+				if (!HalconStep.WarmUpProgram(normalizedPath, out warning))
+				{
+					warning = FormatWarning(job, task, step, warning);
+					return false;
+				}
+
+				if (warmedPaths != null)
+				{
+					warmedPaths.Add(normalizedPath);
+				}
+
+				return true;
+			}
+			catch (Exception ex)
+			{
+				warning = FormatWarning(job, task, step, ex.Message);
+				return false;
+			}
+		}
+
+		private static string ResolveHdevPath(string taskFolder, StepConfig step)
+		{
+			if (step == null)
+			{
+				return string.Empty;
+			}
+
+			List<string> candidates = new List<string>();
+			AddCandidate(candidates, step.ProjectFilePath);
+
+			if (string.IsNullOrWhiteSpace(step.ProjectFilePath) && !string.IsNullOrWhiteSpace(step.StepName))
+			{
+				AddCandidate(candidates, Path.Combine("Hdev", step.StepName + ".hdev"));
+			}
+
+			AddCandidate(candidates, step.SourceFilePath);
+
+			foreach (string candidate in candidates)
+			{
+				string resolved = ResolveCandidatePath(taskFolder, candidate);
+				if (IsHdevFile(resolved) && File.Exists(resolved))
+				{
+					return resolved;
+				}
+			}
+
+			string folder = Path.Combine(taskFolder ?? string.Empty, "Hdev");
+			string safeStepName = MakeSafeName(step.StepName);
+			string direct = Path.Combine(folder, safeStepName + ".hdev");
+			if (File.Exists(direct))
+			{
+				return direct;
+			}
+
+			if (Directory.Exists(folder))
+			{
+				string[] files = Directory.GetFiles(folder, "*.hdev", SearchOption.TopDirectoryOnly);
+				if (files.Length > 0)
+				{
+					return files[0];
+				}
+			}
+
+			return string.Empty;
+		}
+
+		private static void AddCandidate(List<string> candidates, string value)
+		{
+			if (candidates == null || string.IsNullOrWhiteSpace(value))
+			{
+				return;
+			}
+
+			if (!candidates.Any(x => string.Equals(x, value, StringComparison.OrdinalIgnoreCase)))
+			{
+				candidates.Add(value);
+			}
+		}
+
+		private static string ResolveCandidatePath(string taskFolder, string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				return string.Empty;
+			}
+
+			if (Path.IsPathRooted(path))
+			{
+				return path;
+			}
+
+			string candidate = Path.Combine(taskFolder ?? string.Empty, path);
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+
+			candidate = Path.Combine(taskFolder ?? string.Empty, "Hdev", path);
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+
+			return Path.Combine(ProjectPathStore.ProjectRoot, path);
+		}
+
+		private static bool IsHdevFile(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				return false;
+			}
+
+			return Path.GetExtension(path).Equals(".hdev", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string ResolveProtocolName(JobConfig job, TaskConfig task)
+		{
+			if (job != null && !string.IsNullOrWhiteSpace(job.ProtocolName))
+			{
+				return FlowConfigStore.NormalizeProtocolName(job.ProtocolName);
+			}
+
+			return FlowConfigStore.NormalizeProtocolName(task == null ? "TCP/IP" : task.CommunicationProtocol);
+		}
+
+		private static string ResolveChannelName(JobConfig job, TaskConfig task)
+		{
+			if (job != null && !string.IsNullOrWhiteSpace(job.ChannelName))
+			{
+				return FlowConfigStore.NormalizeChannelName(job.ChannelName);
+			}
+
+			return FlowConfigStore.NormalizeChannelName(task == null ? "Channel01" : task.CommunicationChannel);
+		}
+
+		private static string MakeSafeName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return "New";
+			}
+
+			foreach (char c in Path.GetInvalidFileNameChars())
+			{
+				name = name.Replace(c, '_');
+			}
+
+			return name.Trim();
+		}
+
+		private static string FormatWarning(JobConfig job, TaskConfig task, StepConfig step, string detail)
+		{
+			return "Job=" + (job == null ? string.Empty : job.JobName) +
+				", Task=" + (task == null ? string.Empty : task.TaskName) +
+				", Step=" + (step == null ? string.Empty : step.StepName) +
+				", " + (detail ?? string.Empty);
+		}
+	}
+
 	public static class StepFactory
 	{
 		public static IVisionStep Create(StepConfig config)
@@ -2396,6 +3898,8 @@ namespace Aron_V3
 			context.TaskName = taskConfig.TaskName;
 
 			StepResult finalResult = StepResult.OK();
+			bool previousStepsOK = true;
+			bool taskHadNG = false;
 
 			List<IGrouping<int, StepFlowItem>> groups = taskConfig.StepFlow
 				.Where(x => x.Enabled)
@@ -2405,6 +3909,9 @@ namespace Aron_V3
 
 			foreach (IGrouping<int, StepFlowItem> group in groups)
 			{
+				context.SetData(CSharpScriptStepStore.PreviousStepsOkInputName, previousStepsOK);
+				context.SetData("Task." + CSharpScriptStepStore.PreviousStepsOkInputName, previousStepsOK);
+
 				List<System.Threading.Tasks.Task<StepExecuteResult>> runningTasks =
 					new List<System.Threading.Tasks.Task<StepExecuteResult>>();
 
@@ -2423,7 +3930,7 @@ namespace Aron_V3
 
 				System.Threading.Tasks.Task.WaitAll(runningTasks.ToArray());
 
-				bool hasNgAndStop = false;
+				bool groupOK = true;
 
 				foreach (System.Threading.Tasks.Task<StepExecuteResult> runTask in runningTasks)
 				{
@@ -2464,17 +3971,19 @@ namespace Aron_V3
 
 					finalResult = stepResult;
 
-					if (!stepResult.IsOK && stepConfig.StopWhenNG)
+					if (!stepResult.IsOK)
 					{
-						hasNgAndStop = true;
+						groupOK = false;
+						taskHadNG = true;
 					}
 				}
 
-				// 当前 RunOrder 这一组全部完成后，如果有 NG 且 StopWhenNG=true，后续 RunOrder 不再执行。
-				if (hasNgAndStop)
-				{
-					break;
-				}
+				previousStepsOK = previousStepsOK && groupOK;
+			}
+
+			if (taskHadNG && (finalResult == null || finalResult.IsOK))
+			{
+				finalResult = StepResult.NG("One or more steps failed. Flow continued.");
 			}
 
 			return finalResult;
@@ -2482,6 +3991,7 @@ namespace Aron_V3
 
 		private class StepExecuteResult
 		{
+			public StepFlowItem FlowItem { get; set; }
 			public StepConfig StepConfig { get; set; }
 			public StepResult StepResult { get; set; }
 		}
@@ -2489,6 +3999,59 @@ namespace Aron_V3
 		private StepExecuteResult ExecuteOneStep(TaskConfig taskConfig, StepFlowItem flowItem, VisionRunContext context)
 		{
 			StepExecuteResult executeResult = new StepExecuteResult();
+			executeResult.FlowItem = flowItem;
+
+			if (flowItem != null && !flowItem.IsStepBlock)
+			{
+				string blockName = string.IsNullOrWhiteSpace(flowItem.BlockName) ? flowItem.StepName : flowItem.BlockName;
+				if (string.IsNullOrWhiteSpace(blockName))
+				{
+					blockName = flowItem.BlockType;
+				}
+
+				executeResult.StepConfig = new StepConfig
+				{
+					StepName = blockName,
+					StepType = StepType.Unknown,
+					DisplayOutputKey = "Not Use",
+					DisplaySlotName = "Not Show",
+					DisplayResultKey = "Not Use",
+					DisplayMode = "Fit"
+				};
+				bool blockOk = true;
+				string blockMessage = flowItem.BlockType + " flow block completed.";
+				Dictionary<string, object> signalOutputValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+				Stopwatch blockWatch = Stopwatch.StartNew();
+
+				if (IsSignalFlowBlock(flowItem))
+				{
+					blockOk = SendSignalFlowBlockOutput(taskConfig, flowItem, context, signalOutputValues);
+					blockMessage = blockOk ? "Signal output completed." : "Signal output failed.";
+				}
+
+				blockWatch.Stop();
+
+				executeResult.StepResult = blockOk
+					? StepResult.OK(blockMessage)
+					: StepResult.NG(blockMessage);
+				executeResult.StepResult.CostMs = blockWatch.Elapsed.TotalMilliseconds;
+
+				foreach (KeyValuePair<string, object> output in signalOutputValues)
+				{
+					executeResult.StepResult.Outputs[output.Key] = output.Value;
+				}
+
+				AppendStepLog(
+					RuntimeLogCategory.Step,
+					"Flow block completed. Job=" + context.JobName +
+					", Task=" + context.TaskName +
+					", BlockType=" + flowItem.BlockType +
+					", Block=" + blockName +
+					", RunOrder=" + flowItem.RunOrder +
+					", Cost=" + blockWatch.Elapsed.TotalMilliseconds.ToString("0.0") + " ms");
+
+				return executeResult;
+			}
 
 			StepConfig sourceStepConfig = taskConfig.Steps.FirstOrDefault(s =>
 				string.Equals(s.StepName, flowItem.StepName, StringComparison.OrdinalIgnoreCase));
@@ -2508,28 +4071,443 @@ namespace Aron_V3
 				runStepConfig.InputImageKey = flowItem.InputImageKey;
 			}
 
-			if (!string.IsNullOrEmpty(flowItem.ScriptInputStepKeys))
+			if (runStepConfig.StepType != StepType.Script && !string.IsNullOrEmpty(flowItem.ScriptInputStepKeys))
 			{
 				runStepConfig.ScriptInputStepKeys = flowItem.ScriptInputStepKeys;
 			}
 
+			if (runStepConfig.StepType == StepType.Script)
+			{
+				runStepConfig.ScriptInputStepKeys = string.Empty;
+			}
+
 			runStepConfig.DisplayOutputKey = flowItem.DisplayOutputKey;
 			runStepConfig.DisplaySlotName = flowItem.DisplaySlotName;
+			runStepConfig.DisplayResultKey = flowItem.DisplayResultKey;
 			runStepConfig.DisplayMode = flowItem.DisplayMode;
 
 			executeResult.StepConfig = runStepConfig;
 
 			try
 			{
-				IVisionStep step = StepFactory.Create(runStepConfig);
-				executeResult.StepResult = step.Execute(context);
+				AppendStepLog(
+					RuntimeLogCategory.Step,
+					"Step started. Job=" + context.JobName +
+					", Task=" + context.TaskName +
+					", Step=" + runStepConfig.StepName +
+					", RunOrder=" + flowItem.RunOrder);
+
+				DateTime stepStartTime = DateTime.Now;
+				bool previousStepsOK = GetPreviousStepsOK(context);
+
+				string skipMessage;
+				if (ShouldSkipForMissingInputImage(runStepConfig, context, out skipMessage))
+				{
+					executeResult.StepResult = StepResult.NG(skipMessage);
+					FillDefaultOutputs(runStepConfig, executeResult.StepResult);
+				}
+				else
+				{
+					IVisionStep step = StepFactory.Create(runStepConfig);
+					executeResult.StepResult = step.Execute(context);
+					if (executeResult.StepResult != null && !executeResult.StepResult.IsOK)
+					{
+						FillDefaultOutputs(runStepConfig, executeResult.StepResult);
+					}
+				}
+
+				FillStepInputSnapshot(runStepConfig, executeResult.StepResult, previousStepsOK, context);
+
+				if (runStepConfig.StepType == StepType.Script && !previousStepsOK)
+				{
+					if (executeResult.StepResult != null &&
+						executeResult.StepResult.Outputs != null &&
+						executeResult.StepResult.Outputs.Count > 0)
+					{
+						AppendStepLog(
+							RuntimeLogCategory.Step,
+							"Previous step status was abnormal. Script produced release outputs. Step=" + runStepConfig.StepName);
+					}
+					else
+					{
+						AppendStepLog(
+							RuntimeLogCategory.Step,
+							"Previous step status was abnormal, but script produced no release outputs. Check " +
+							CSharpScriptStepStore.PreviousStepsOkInputName +
+							" handling. Step=" + runStepConfig.StepName);
+					}
+				}
+
+				AppendStepLog(
+					RuntimeLogCategory.Step,
+					"Step finished. Job=" + context.JobName +
+					", Task=" + context.TaskName +
+					", Step=" + runStepConfig.StepName +
+					", Cost=" + (DateTime.Now - stepStartTime).TotalMilliseconds.ToString("0.0") + " ms");
 			}
 			catch (Exception ex)
 			{
 				executeResult.StepResult = StepResult.NG(ex.Message);
+				FillDefaultOutputs(runStepConfig, executeResult.StepResult);
+				AppendStepLog(
+					RuntimeLogCategory.Step,
+					"Step failed. Job=" + context.JobName +
+					", Task=" + context.TaskName +
+					", Step=" + runStepConfig.StepName +
+					", Error=" + ex.Message +
+					". Flow will continue with default outputs.");
 			}
 
 			return executeResult;
+		}
+
+		private bool IsSignalFlowBlock(StepFlowItem flowItem)
+		{
+			return flowItem != null &&
+				string.Equals(flowItem.BlockType, "Signal", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool SendSignalFlowBlockOutput(
+			TaskConfig taskConfig,
+			StepFlowItem flowItem,
+			VisionRunContext context,
+			Dictionary<string, object> outputValues)
+		{
+			if (!TaskRunContext.EnableCommunicationOutput)
+			{
+				return true;
+			}
+
+			if (flowItem == null || flowItem.SignalOutputs == null)
+			{
+				return true;
+			}
+
+			string protocolName = string.IsNullOrWhiteSpace(flowItem.SignalProtocol)
+				? flowItem.CommunicationOutputProtocol
+				: flowItem.SignalProtocol;
+			string instanceName = string.IsNullOrWhiteSpace(flowItem.SignalInstanceName)
+				? flowItem.CommunicationOutputInstanceName
+				: flowItem.SignalInstanceName;
+
+			if (string.IsNullOrWhiteSpace(protocolName) && taskConfig != null)
+			{
+				protocolName = taskConfig.CommunicationProtocol;
+			}
+
+			if (string.IsNullOrWhiteSpace(instanceName) && taskConfig != null)
+			{
+				instanceName = taskConfig.CommunicationInstanceName;
+			}
+
+			if (string.IsNullOrWhiteSpace(protocolName) ||
+				protocolName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				protocolName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			foreach (SignalOutputBinding binding in flowItem.SignalOutputs)
+			{
+				if (binding == null || !binding.Enabled || string.IsNullOrWhiteSpace(binding.OutputName))
+				{
+					continue;
+				}
+
+				string outputName = binding.OutputName.Trim();
+				outputValues[outputName] = binding.ForceValue
+					? ResolveSignalOutputValue(binding.AssignedValue, context)
+					: ResolveCurrentSignalOutputValue(protocolName, instanceName, outputName, context);
+			}
+
+			if (outputValues.Count <= 0)
+			{
+				AppendStepLog(
+					RuntimeLogCategory.Communication,
+					"Signal flow output skipped. Task=" + (taskConfig == null ? string.Empty : taskConfig.TaskName) +
+					", Reason=No checked output values.");
+				return true;
+			}
+
+			RuntimeCommunicationOutputService outputService = new RuntimeCommunicationOutputService();
+			return outputService.SendConfiguredSignalOutput(protocolName, instanceName, outputValues);
+		}
+
+		private object ResolveCurrentSignalOutputValue(
+			string protocolName,
+			string instanceName,
+			string outputName,
+			VisionRunContext context)
+		{
+			CommOutputVariable outputVariable = FindSignalOutputVariable(protocolName, instanceName, outputName);
+			object value;
+
+			if (outputVariable != null && !string.IsNullOrWhiteSpace(outputVariable.GlobalVariableName) &&
+				GlobalVariableStore.TryGetValue(outputVariable.GlobalVariableName, out value))
+			{
+				return value;
+			}
+
+			if (context != null)
+			{
+				if (context.TryGetData(outputName, out value))
+				{
+					return value;
+				}
+
+				if (outputVariable != null && !string.IsNullOrWhiteSpace(outputVariable.GlobalVariableName) &&
+					context.TryGetData(outputVariable.GlobalVariableName, out value))
+				{
+					return value;
+				}
+			}
+
+			if (RuntimeCommunicationOutputService.TryGetLatestOutputValue(protocolName, outputName, out value))
+			{
+				return value;
+			}
+
+			return string.Empty;
+		}
+
+		private CommOutputVariable FindSignalOutputVariable(string protocolName, string instanceName, string outputName)
+		{
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return null;
+			}
+
+			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
+			protocolName = CommunicationRuntimeNaming.NormalizeProtocolName(protocolName);
+			instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, config);
+			CommunicationInstanceConfig instance =
+				CommunicationRuntimeNaming.FindInstance(config, protocolName, instanceName);
+
+			IEnumerable<CommOutputVariable> outputs = null;
+			if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase))
+			{
+				outputs = instance != null && instance.TcpIp != null
+					? instance.TcpIp.OutputVariables
+					: (config.TcpIp == null ? null : config.TcpIp.OutputVariables);
+			}
+			else if (protocolName.Equals("Profinet", StringComparison.OrdinalIgnoreCase))
+			{
+				outputs = instance != null && instance.Profinet != null
+					? instance.Profinet.OutputVariables
+					: (config.Profinet == null ? null : config.Profinet.OutputVariables);
+			}
+			else if (protocolName.Equals("S7", StringComparison.OrdinalIgnoreCase))
+			{
+				outputs = instance != null && instance.S7 != null
+					? instance.S7.OutputVariables
+					: (config.S7 == null ? null : config.S7.OutputVariables);
+			}
+
+			if (outputs == null)
+			{
+				return null;
+			}
+
+			return outputs.FirstOrDefault(x =>
+				x != null &&
+				string.Equals(x.Name, outputName.Trim(), StringComparison.OrdinalIgnoreCase));
+		}
+
+		private object ResolveSignalOutputValue(string assignedValue, VisionRunContext context)
+		{
+			string text = assignedValue == null ? string.Empty : assignedValue.Trim();
+
+			if (text.Length >= 2 && text.StartsWith("{", StringComparison.Ordinal) && text.EndsWith("}", StringComparison.Ordinal))
+			{
+				string key = text.Substring(1, text.Length - 2).Trim();
+				object value;
+				if (TryResolveSignalOutputToken(key, context, out value))
+				{
+					return value;
+				}
+
+				return string.Empty;
+			}
+
+			if (text.StartsWith("$", StringComparison.Ordinal) && text.Length > 1)
+			{
+				string key = text.Substring(1).Trim();
+				object value;
+				if (TryResolveSignalOutputToken(key, context, out value))
+				{
+					return value;
+				}
+
+				return string.Empty;
+			}
+
+			return assignedValue ?? string.Empty;
+		}
+
+		private bool TryResolveSignalOutputToken(string key, VisionRunContext context, out object value)
+		{
+			value = null;
+			if (string.IsNullOrWhiteSpace(key))
+			{
+				return false;
+			}
+
+			if (context != null && context.TryGetData(key, out value))
+			{
+				return true;
+			}
+
+			if (context != null && context.Data != null)
+			{
+				foreach (KeyValuePair<string, object> pair in context.Data)
+				{
+					if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+					{
+						value = pair.Value;
+						return true;
+					}
+				}
+			}
+
+			return GlobalVariableStore.TryGetValue(key, out value);
+		}
+
+		private bool GetPreviousStepsOK(VisionRunContext context)
+		{
+			if (context == null)
+			{
+				return true;
+			}
+
+			object value = context.GetData(CSharpScriptStepStore.PreviousStepsOkInputName);
+			if (value is bool)
+			{
+				return (bool)value;
+			}
+
+			if (value != null)
+			{
+				bool parsed;
+				if (bool.TryParse(Convert.ToString(value), out parsed))
+				{
+					return parsed;
+				}
+			}
+
+			return true;
+		}
+
+		private void FillStepInputSnapshot(
+			StepConfig stepConfig,
+			StepResult result,
+			bool previousStepsOK,
+			VisionRunContext context)
+		{
+			if (result == null || result.Inputs == null)
+			{
+				return;
+			}
+
+			result.Inputs[CSharpScriptStepStore.PreviousStepsOkInputName] = previousStepsOK;
+
+			if (stepConfig == null || stepConfig.InputPins == null)
+			{
+				return;
+			}
+
+			foreach (PinConfig pin in stepConfig.InputPins)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.PinName))
+				{
+					continue;
+				}
+
+				object value = null;
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+				{
+					GlobalVariableStore.TryGetValue(pin.GlobalVariableName, out value);
+				}
+
+				if (value == null && context != null)
+				{
+					value = context.GetData(pin.PinName);
+				}
+
+				if (value != null)
+				{
+					result.Inputs[pin.PinName] = value;
+					if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+					{
+						result.Inputs[pin.GlobalVariableName] = value;
+					}
+				}
+			}
+		}
+
+		private bool ShouldSkipForMissingInputImage(StepConfig stepConfig, VisionRunContext context, out string message)
+		{
+			message = string.Empty;
+
+			if (stepConfig == null ||
+				(stepConfig.StepType != StepType.Vpp && stepConfig.StepType != StepType.Halcon))
+			{
+				return false;
+			}
+
+			List<string> sourceKeys = RuntimeImageSourceParser.SplitImageSources(stepConfig.InputImageKey);
+			if (sourceKeys.Count <= 0)
+			{
+				return false;
+			}
+
+			foreach (string sourceKey in sourceKeys)
+			{
+				VisionImage image;
+				if (context == null || !context.TryGetImage(sourceKey, out image) || image == null || image.RawImage == null)
+				{
+					message = "Step skipped because input image is null. Source=" + sourceKey;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private void FillDefaultOutputs(StepConfig stepConfig, StepResult result)
+		{
+			if (stepConfig == null || result == null || stepConfig.OutputPins == null)
+			{
+				return;
+			}
+
+			foreach (PinConfig pin in stepConfig.OutputPins)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.PinName) || pin.DataType == PinDataType.Image)
+				{
+					continue;
+				}
+
+				if (!result.Outputs.ContainsKey(pin.PinName))
+				{
+					result.Outputs[pin.PinName] = 0;
+				}
+
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName) &&
+					!result.Outputs.ContainsKey(pin.GlobalVariableName))
+				{
+					result.Outputs[pin.GlobalVariableName] = 0;
+				}
+
+				if (!string.IsNullOrWhiteSpace(pin.GlobalVariableName))
+				{
+					GlobalVariableStore.SetValue(pin.GlobalVariableName, 0);
+				}
+			}
+		}
+
+		private void AppendStepLog(RuntimeLogCategory category, string message)
+		{
+			RuntimeLogStore.Append(DateTime.Now, category, message);
 		}
 
 		private StepConfig CloneStepConfig(StepConfig source)
@@ -2549,6 +4527,7 @@ namespace Aron_V3
 			target.ProjectFilePath = source.ProjectFilePath;
 			target.DisplayOutputKey = source.DisplayOutputKey;
 			target.DisplaySlotName = source.DisplaySlotName;
+			target.DisplayResultKey = source.DisplayResultKey;
 			target.DisplayMode = source.DisplayMode;
 			target.ScriptInputStepKeys = source.ScriptInputStepKeys;
 
