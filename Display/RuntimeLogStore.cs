@@ -43,6 +43,8 @@ namespace Aron_V3
 				File.AppendAllText(path, line);
 			}
 
+			DiagnosticLogStore.AppendRuntimeLog(args);
+
 			EventHandler<RuntimeFlowLogEventArgs> handler = LogAppended;
 			if (handler != null)
 			{

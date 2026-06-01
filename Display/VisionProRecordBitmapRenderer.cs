@@ -36,7 +36,7 @@ namespace Aron_V3
 				float displayScale = CalculateDisplayScale(sourceBitmap.Size, displayArea);
 
 				List<GraphicItem> items = new List<GraphicItem>();
-				CollectGraphics(record, image, items);
+				CollectGraphics(record, imageRecord, image, items);
 
 				using (Graphics graphics = Graphics.FromImage(sourceBitmap))
 				{
@@ -141,12 +141,69 @@ namespace Aron_V3
 			return null;
 		}
 
-		private static void CollectGraphics(ICogRecord record, ICogImage image, List<GraphicItem> items)
+		private static void CollectGraphics(ICogRecord rootRecord, ICogRecord imageRecord, ICogImage image, List<GraphicItem> items)
+		{
+			if (imageRecord != null)
+			{
+				CollectAllGraphics(imageRecord, image, items);
+			}
+
+			if (items.Count > 0)
+			{
+				return;
+			}
+
+			string scopeKey = GetRecordScopeKey(imageRecord);
+			if (!string.IsNullOrWhiteSpace(scopeKey))
+			{
+				CollectGraphicsInScope(rootRecord, scopeKey, image, items);
+			}
+		}
+
+		private static string GetRecordScopeKey(ICogRecord imageRecord)
+		{
+			string key = imageRecord == null ? string.Empty : (imageRecord.RecordKey ?? string.Empty).Trim();
+			if (string.IsNullOrWhiteSpace(key))
+			{
+				return string.Empty;
+			}
+
+			if (key.EndsWith(".OutputImage", StringComparison.OrdinalIgnoreCase))
+			{
+				return key.Substring(0, key.Length - ".OutputImage".Length);
+			}
+
+			return key;
+		}
+
+		private static void CollectGraphicsInScope(ICogRecord record, string scopeKey, ICogImage image, List<GraphicItem> items)
+		{
+			if (record == null)
+			{
+				return;
+			}
+
+			string recordKey = record.RecordKey ?? string.Empty;
+			bool inScope = string.Equals(recordKey, scopeKey, StringComparison.OrdinalIgnoreCase) ||
+				(!string.IsNullOrWhiteSpace(recordKey) && recordKey.StartsWith(scopeKey + ".", StringComparison.OrdinalIgnoreCase));
+
+			if (inScope)
+			{
+				CollectContent(record.Content, image, items, string.Empty);
+			}
+
+			foreach (ICogRecord subRecord in record.SubRecords)
+			{
+				CollectGraphicsInScope(subRecord, scopeKey, image, items);
+			}
+		}
+
+		private static void CollectAllGraphics(ICogRecord record, ICogImage image, List<GraphicItem> items)
 		{
 			foreach (ICogRecord subRecord in record.SubRecords)
 			{
 				CollectContent(subRecord.Content, image, items, string.Empty);
-				CollectGraphics(subRecord, image, items);
+				CollectAllGraphics(subRecord, image, items);
 			}
 		}
 
@@ -225,7 +282,7 @@ namespace Aron_V3
 
 			try
 			{
-				return new TransformInfo(image.GetTransform("#", spaceName), true);
+				return new TransformInfo(image.GetTransform(spaceName, "#"), true);
 			}
 			catch
 			{
@@ -235,6 +292,11 @@ namespace Aron_V3
 
 		private static void DrawGraphic(Graphics graphics, GraphicItem item, float displayScale)
 		{
+			if (item == null || item.Graphic == null || !item.Graphic.Visible)
+			{
+				return;
+			}
+
 			GraphicsState state = graphics.Save();
 			try
 			{
@@ -243,12 +305,14 @@ namespace Aron_V3
 					CogPointMarker pointMarker = item.Graphic as CogPointMarker;
 					if (pointMarker != null)
 					{
+						DrawPointMarker(graphics, pointMarker, transform, displayScale);
 						return;
 					}
 
 					CogCoordinateAxes axes = item.Graphic as CogCoordinateAxes;
 					if (axes != null)
 					{
+						DrawCoordinateAxes(graphics, axes, transform, displayScale);
 						return;
 					}
 
@@ -262,60 +326,73 @@ namespace Aron_V3
 					CogLineSegment line = item.Graphic as CogLineSegment;
 					if (line != null)
 					{
+						if (!IsAbnormalDisplayLine(line))
+						{
+							DrawLineSegment(graphics, line, transform, displayScale);
+						}
 						return;
 					}
 
 					CogRectangleAffine affineRectangle = item.Graphic as CogRectangleAffine;
 					if (affineRectangle != null)
 					{
+						DrawAffineRectangle(graphics, affineRectangle, transform, displayScale);
 						return;
 					}
 
 					CogRectangle rectangle = item.Graphic as CogRectangle;
 					if (rectangle != null)
 					{
+						DrawRectangle(graphics, rectangle, transform, displayScale);
 						return;
 					}
 
 					CogCircularAnnulusSection circularSection = item.Graphic as CogCircularAnnulusSection;
 					if (circularSection != null)
 					{
+						DrawCircularAnnulusSection(graphics, circularSection, transform, displayScale);
 						return;
 					}
 
 					CogCircularArc arc = item.Graphic as CogCircularArc;
 					if (arc != null)
 					{
+						DrawCircularArc(graphics, arc, transform, displayScale);
 						return;
 					}
 
 					CogCircle circle = item.Graphic as CogCircle;
 					if (circle != null)
 					{
+						DrawCircle(graphics, circle, transform, displayScale);
 						return;
 					}
 
 					CogPolygon polygon = item.Graphic as CogPolygon;
 					if (polygon != null)
 					{
+						DrawPolygon(graphics, polygon, transform, displayScale);
 						return;
 					}
 
 					CogEllipticalAnnulusSection ellipticalSection = item.Graphic as CogEllipticalAnnulusSection;
 					if (ellipticalSection != null)
 					{
+						DrawEllipticalAnnulusSection(graphics, ellipticalSection, transform, displayScale);
 						return;
 					}
 
 					CogEllipticalArc ellipticalArc = item.Graphic as CogEllipticalArc;
 					if (ellipticalArc != null)
 					{
+						DrawEllipticalArc(graphics, ellipticalArc, transform, displayScale);
 						return;
 					}
 
 					CogEllipse ellipse = item.Graphic as CogEllipse;
 					if (ellipse != null)
 					{
+						DrawEllipse(graphics, ellipse, transform, displayScale);
 						return;
 					}
 				}
@@ -323,6 +400,52 @@ namespace Aron_V3
 			finally
 			{
 				graphics.Restore(state);
+			}
+		}
+
+		private static void DrawLineSegment(Graphics graphics, CogLineSegment line, Matrix transform, float displayScale)
+		{
+			PointF[] points =
+			{
+				new PointF((float)line.StartX, (float)line.StartY),
+				new PointF((float)line.EndX, (float)line.EndY)
+			};
+
+			transform.TransformPoints(points);
+			using (Pen pen = CreatePen(line.Color, line.LineWidthInScreenPixels, displayScale))
+			{
+				graphics.DrawLine(pen, points[0], points[1]);
+			}
+		}
+
+		private static void DrawRectangle(Graphics graphics, CogRectangle rectangle, Matrix transform, float displayScale)
+		{
+			using (Pen pen = CreatePen(rectangle.Color, rectangle.LineWidthInScreenPixels, displayScale))
+			using (GraphicsPath path = new GraphicsPath())
+			{
+				path.AddRectangle(new RectangleF(
+					(float)rectangle.X,
+					(float)rectangle.Y,
+					(float)rectangle.Width,
+					(float)rectangle.Height));
+				path.Transform(transform);
+				graphics.DrawPath(pen, path);
+			}
+		}
+
+		private static void DrawCircle(Graphics graphics, CogCircle circle, Matrix transform, float displayScale)
+		{
+			using (Pen pen = CreatePen(circle.Color, circle.LineWidthInScreenPixels, displayScale))
+			using (GraphicsPath path = new GraphicsPath())
+			{
+				float radius = (float)circle.Radius;
+				path.AddEllipse(
+					(float)circle.CenterX - radius,
+					(float)circle.CenterY - radius,
+					radius * 2F,
+					radius * 2F);
+				path.Transform(transform);
+				graphics.DrawPath(pen, path);
 			}
 		}
 
@@ -368,7 +491,11 @@ namespace Aron_V3
 			try
 			{
 				PointF origin = TransformPoint(transform, axes.OriginX, axes.OriginY);
-				float rotation = GetRotationDegrees(transform) + 180F;
+				float rotation = GetTransformedRotationDegrees(
+					transform,
+					axes.OriginX,
+					axes.OriginY,
+					axes.Rotation);
 				graphics.TranslateTransform(origin.X, origin.Y);
 				graphics.RotateTransform(rotation);
 				using (Pen pen = CreateScreenPen(axes.Color, axes.LineWidthInScreenPixels, displayScale))

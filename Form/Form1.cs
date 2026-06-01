@@ -26,6 +26,7 @@ namespace Aron_V3
 		private UserActivityMessageFilter _activityMessageFilter;
 		private HardwareConfigControl _hardwareConfigPage;
 		private MainDisplayControl _mainDisplayControl;
+		private Image _brandLogoImage;
 
 		private RuntimeFlowOrchestrator runtimeFlow;
 		private readonly List<RuntimeFlowLogEventArgs> _runtimeLogEntries = new List<RuntimeFlowLogEventArgs>();
@@ -216,8 +217,13 @@ namespace Aron_V3
 
 		public Form1()
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
+			StartupSplashController.UpdateCurrent(StartupText("创建主界面控件", "Creating main UI controls"), 16);
 			InitializeComponent();
+			ConfigureBrandLogo();
+			ConfigureApplicationIcon();
 
+			StartupSplashController.UpdateCurrent(StartupText("初始化运行首页", "Initializing runtime page"), 25);
 			EnableTopLevelSmoothPainting();
 			InitMainDisplayArea();
 
@@ -232,23 +238,35 @@ namespace Aron_V3
 			InitRuntimeLogUi();
 			DataDisplayStore.ConfigChanged += DataDisplayStore_ConfigChanged;
 			GlobalVariableStore.VariablesChanged += DataDisplayStore_ConfigChanged;
+			DatabaseRecordWriter.Instance.Start();
 			//BuildCameraLayout(4);
 
 			SelectMainPage(MainPageType.Login, false);
 
+			StartupSplashController.UpdateCurrent(StartupText("加载用户与系统状态", "Loading user and system state"), 42);
 			InitLoginSystem();
 			InitRunStatusButton();
-			ApplyVersionText();
+			ApplyMainLanguage(false);
+			StartupSplashController.UpdateCurrent(StartupText("预加载算法界面", "Preloading algorithm page"), 52);
 			PreCreateAlgorithmPageIfEnabled();
 
+			StartupSplashController.UpdateCurrent(StartupText("编译脚本运行时", "Compiling script runtime"), 62);
 			WarmUpScriptRuntime();
+			StartupSplashController.UpdateCurrent(StartupText("预热Hdev运行时", "Warming Hdev runtime"), 74);
 			WarmUpHalconRuntime();
+			StartupSplashController.UpdateCurrent(StartupText("启动通讯资源", "Starting communication resources"), 84);
 			CommunicationRuntimeManager.Instance.StartFromSavedConfig();
 
+			StartupSplashController.UpdateCurrent(StartupText("启动流程调度器", "Starting flow scheduler"), 88);
 			runtimeFlow = new RuntimeFlowOrchestrator();
 			AlgorithmRuntimeBridge.Provider = AlgorithmRuntimeSnapshotStore.Instance;
 			runtimeFlow.TaskFinished += RuntimeFlow_TaskFinished;
 			runtimeFlow.Start();
+		}
+
+		private string StartupText(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 
 		private void Form1_Load(object sender, EventArgs e)
@@ -376,9 +394,15 @@ namespace Aron_V3
 			cmbLogLevel.SelectedIndexChanged += delegate { RefreshRuntimeLogView(); };
 			cmbLogLevel.Width = 150;
 
-			lstLog.DrawMode = DrawMode.OwnerDrawFixed;
+			lstLog.DrawMode = DrawMode.OwnerDrawVariable;
+			lstLog.HorizontalScrollbar = false;
+			lstLog.IntegralHeight = false;
+			lstLog.MeasureItem -= lstLog_MeasureItem;
+			lstLog.MeasureItem += lstLog_MeasureItem;
 			lstLog.DrawItem -= lstLog_DrawItem;
 			lstLog.DrawItem += lstLog_DrawItem;
+			lstLog.Resize -= lstLog_Resize;
+			lstLog.Resize += lstLog_Resize;
 
 			btnClearLog.Click += delegate
 			{
@@ -436,7 +460,7 @@ namespace Aron_V3
 						entry,
 						entry.Time.ToString("yyyy-MM-dd HH:mm:ss.fff") +
 						"   [" + RuntimeLogStore.GetCategoryText(entry.Category) + "]  " +
-						entry.Message));
+						NormalizeRuntimeLogMessage(entry.Message)));
 				}
 			}
 			finally
@@ -465,6 +489,67 @@ namespace Aron_V3
 			return string.Equals(filter, RuntimeLogStore.GetCategoryText(entry.Category), StringComparison.OrdinalIgnoreCase);
 		}
 
+		private string NormalizeRuntimeLogMessage(string message)
+		{
+			if (string.IsNullOrEmpty(message))
+			{
+				return string.Empty;
+			}
+
+			return message
+				.Replace("\r\n", " | ")
+				.Replace("\n", " | ")
+				.Replace("\r", " | ")
+				.Replace("\t", "    ");
+		}
+
+		private void lstLog_Resize(object sender, EventArgs e)
+		{
+			if (lstLog == null || lstLog.IsDisposed)
+			{
+				return;
+			}
+
+			RefreshRuntimeLogView();
+		}
+
+		private void lstLog_MeasureItem(object sender, MeasureItemEventArgs e)
+		{
+			if (e.Index < 0 || e.Index >= lstLog.Items.Count)
+			{
+				return;
+			}
+
+			RuntimeLogListItem item = lstLog.Items[e.Index] as RuntimeLogListItem;
+			string text = item == null ? Convert.ToString(lstLog.Items[e.Index]) : item.Text;
+			e.ItemHeight = MeasureRuntimeLogItemHeight(text);
+		}
+
+		private int MeasureRuntimeLogItemHeight(string text)
+		{
+			if (lstLog == null || lstLog.IsDisposed)
+			{
+				return 22;
+			}
+
+			int width = Math.Max(120, lstLog.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 12);
+			if (string.IsNullOrEmpty(text))
+			{
+				return Math.Max(22, lstLog.ItemHeight);
+			}
+
+			Size size = TextRenderer.MeasureText(
+				text,
+				lstLog.Font,
+				new Size(width, int.MaxValue),
+				TextFormatFlags.Left |
+				TextFormatFlags.WordBreak |
+				TextFormatFlags.NoPrefix |
+				TextFormatFlags.TextBoxControl);
+
+			return Math.Max(22, size.Height + 6);
+		}
+
 		private void lstLog_DrawItem(object sender, DrawItemEventArgs e)
 		{
 			if (e.Index < 0 || e.Index >= lstLog.Items.Count)
@@ -487,14 +572,23 @@ namespace Aron_V3
 				e.Graphics.FillRectangle(brush, e.Bounds);
 			}
 
-			Rectangle bounds = new Rectangle(e.Bounds.Left + 4, e.Bounds.Top, e.Bounds.Width - 8, e.Bounds.Height);
+			Rectangle bounds = new Rectangle(
+				e.Bounds.Left + 4,
+				e.Bounds.Top + 3,
+				Math.Max(10, e.Bounds.Width - 8),
+				Math.Max(10, e.Bounds.Height - 6));
 			TextRenderer.DrawText(
 				e.Graphics,
 				text,
 				e.Font,
 				bounds,
 				foreColor,
-				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextFormatFlags.Left |
+				TextFormatFlags.Top |
+				TextFormatFlags.WordBreak |
+				TextFormatFlags.NoPrefix |
+				TextFormatFlags.TextBoxControl |
+				TextFormatFlags.NoClipping);
 
 			e.DrawFocusRectangle();
 		}
@@ -593,6 +687,55 @@ namespace Aron_V3
 
 		#region Top Bar / Window
 
+		private void ConfigureBrandLogo()
+		{
+			if (panelBrand == null)
+			{
+				return;
+			}
+			_brandLogoImage = picBrandLogo == null ? null : picBrandLogo.Image;
+			if (_brandLogoImage == null)
+			{
+				_brandLogoImage = AppBrandAssets.LoadImage(AppBrandAssets.BrandLogoFileName);
+			}
+
+			if (_brandLogoImage == null)
+			{
+				if (picBrandLogo != null)
+				{
+					picBrandLogo.Visible = false;
+				}
+
+				return;
+			}
+
+			if (picBrandLogo != null)
+			{
+				picBrandLogo.Dock = DockStyle.None;
+				picBrandLogo.Location = new Point(0, 7);
+				picBrandLogo.Size = new Size(230, 84);
+				picBrandLogo.SizeMode = PictureBoxSizeMode.Zoom;
+				picBrandLogo.Image = _brandLogoImage;
+				picBrandLogo.Visible = true;
+				picBrandLogo.BringToFront();
+			}
+		}
+
+		private void ConfigureApplicationIcon()
+		{
+			try
+			{
+				Icon icon = AppBrandAssets.LoadAppIcon();
+				if (icon != null)
+				{
+					Icon = icon;
+				}
+			}
+			catch
+			{
+			}
+		}
+
 		private void BindTopBarDragEvents()
 		{
 			titlePanel.MouseDown += TopBar_MouseDown;
@@ -605,15 +748,13 @@ namespace Aron_V3
 			panelBrand.MouseUp += TopBar_MouseUp;
 			panelBrand.DoubleClick += TopBar_DoubleClick;
 
-			lblLogo.MouseDown += TopBar_MouseDown;
-			lblLogo.MouseMove += TopBar_MouseMove;
-			lblLogo.MouseUp += TopBar_MouseUp;
-			lblLogo.DoubleClick += TopBar_DoubleClick;
-
-			lblTitle.MouseDown += TopBar_MouseDown;
-			lblTitle.MouseMove += TopBar_MouseMove;
-			lblTitle.MouseUp += TopBar_MouseUp;
-			lblTitle.DoubleClick += TopBar_DoubleClick;
+			if (picBrandLogo != null)
+			{
+				picBrandLogo.MouseDown += TopBar_MouseDown;
+				picBrandLogo.MouseMove += TopBar_MouseMove;
+				picBrandLogo.MouseUp += TopBar_MouseUp;
+				picBrandLogo.DoubleClick += TopBar_DoubleClick;
+			}
 		}
 
 		private void TopBar_MouseDown(object sender, MouseEventArgs e)
@@ -1029,6 +1170,7 @@ namespace Aron_V3
 			{
 				_hardwareConfigPage = new HardwareConfigControl();
 				_hardwareConfigPage.Dock = DockStyle.Fill;
+				ApplyCurrentLanguageToControl(_hardwareConfigPage);
 			}
 
 			ShowCachedPage(_hardwareConfigPage);
@@ -1072,6 +1214,7 @@ namespace Aron_V3
 			if (_algorithmPage == null || _algorithmPage.IsDisposed)
 			{
 				_algorithmPage = new AlgorithmModuleControl();
+				ApplyCurrentLanguageToControl(_algorithmPage);
 			}
 
 			ShowCachedPage(_algorithmPage);
@@ -1085,6 +1228,7 @@ namespace Aron_V3
 				page.Dock = DockStyle.Fill;
 				_communicationPage = page;
 				pageHost.Controls.Add(_communicationPage);
+				ApplyCurrentLanguageToControl(_communicationPage);
 			}
 
 			ShowCachedPage(_communicationPage);
@@ -1093,8 +1237,12 @@ namespace Aron_V3
 
 		private void ShowDatabasePage()
 		{
-			if (_databasePage == null)
-				_databasePage = CreatePlaceholderPage(_isEnglish ? "Database" : "数据库");
+			if (_databasePage == null || _databasePage.IsDisposed)
+			{
+				_databasePage = new DatabaseManagementControl();
+				_databasePage.Dock = DockStyle.Fill;
+				ApplyCurrentLanguageToControl(_databasePage);
+			}
 
 			ShowCachedPage(_databasePage);
 		}
@@ -1105,6 +1253,7 @@ namespace Aron_V3
 			{
 				_systemPage = new SystemManagementControl();
 				_systemPage.Dock = DockStyle.Fill;
+				ApplyCurrentLanguageToControl(_systemPage);
 			}
 
 			ShowCachedPage(_systemPage);
@@ -1291,6 +1440,15 @@ namespace Aron_V3
 		private void btnLanguage_Click(object sender, EventArgs e)
 		{
 			_isEnglish = !_isEnglish;
+			ApplyMainLanguage(true);
+		}
+
+		private void ApplyMainLanguage(bool savePreference)
+		{
+			if (savePreference)
+			{
+				LanguagePreferenceStore.SaveIsEnglish(_isEnglish);
+			}
 
 			if (_isEnglish)
 			{
@@ -1329,6 +1487,7 @@ namespace Aron_V3
 
 			// 不要在语言切换里直接写 btnStop.Text / lblRunStatus.Text。
 			// 运行状态按钮必须由当前 _runState 统一刷新，否则会出现颜色和文字不匹配。
+			UpdateUserMenuLanguage();
 			UpdateLoginUi();
 			ApplyRunStateStyle(_runState);
 
@@ -1344,20 +1503,26 @@ namespace Aron_V3
 		{
 			foreach (Control ctrl in pageHost.Controls)
 			{
-				ILocalizable localizable = ctrl as ILocalizable;
-				if (localizable != null)
-				{
-					localizable.ApplyLanguage(_isEnglish);
-				}
+				ApplyCurrentLanguageToControl(ctrl);
+			}
+		}
 
-				foreach (Control child in ctrl.Controls)
-				{
-					ILocalizable childLocalizable = child as ILocalizable;
-					if (childLocalizable != null)
-					{
-						childLocalizable.ApplyLanguage(_isEnglish);
-					}
-				}
+		private void ApplyCurrentLanguageToControl(Control control)
+		{
+			if (control == null)
+			{
+				return;
+			}
+
+			ILocalizable localizable = control as ILocalizable;
+			if (localizable != null)
+			{
+				localizable.ApplyLanguage(_isEnglish);
+			}
+
+			foreach (Control child in control.Controls)
+			{
+				ApplyCurrentLanguageToControl(child);
 			}
 		}
 
@@ -1392,6 +1557,7 @@ namespace Aron_V3
 			_userMenu.Items.Add("User Management", null, menuUserManagement_Click);
 			_userMenu.Items.Add(new ToolStripSeparator());
 			_userMenu.Items.Add("Logout", null, menuLogout_Click);
+			UpdateUserMenuLanguage();
 
 			_autoLogoutTimer = new Timer();
 			_autoLogoutTimer.Interval = 10000;
@@ -1406,7 +1572,7 @@ namespace Aron_V3
 
 			// 你当前顶部右侧是 lblUser。
 			lblUser.Cursor = Cursors.Hand;
-			lblUser.Text = "♟  Guest ▾";
+			lblUser.Text = "♟  " + (_isEnglish ? "Guest" : "访客") + " ▾";
 			lblUser.Click -= lblUser_Click;
 			lblUser.Click += lblUser_Click;
 
@@ -1454,7 +1620,11 @@ namespace Aron_V3
 		{
 			if (!LoginSession.Permission.CanUserManagement)
 			{
-				MessageBox.Show("No permission.", "User Management", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(
+					_isEnglish ? "No permission." : "当前用户没有权限。",
+					_isEnglish ? "User Management" : "用户管理",
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
 				return;
 			}
 
@@ -1499,10 +1669,22 @@ namespace Aron_V3
 			}
 			else
 			{
-				lblUser.Text = "♟  Guest ▾";
+				lblUser.Text = "♟  " + (_isEnglish ? "Guest" : "访客") + " ▾";
 			}
 
 			ApplyPermissionToUi();
+		}
+
+		private void UpdateUserMenuLanguage()
+		{
+			if (_userMenu == null || _userMenu.Items.Count < 4)
+			{
+				return;
+			}
+
+			_userMenu.Items[0].Text = _isEnglish ? "Change Password" : "修改密码";
+			_userMenu.Items[1].Text = _isEnglish ? "User Management" : "用户管理";
+			_userMenu.Items[3].Text = _isEnglish ? "Logout" : "退出登录";
 		}
 
 		private void ApplyPermissionToUi()
@@ -1532,6 +1714,7 @@ namespace Aron_V3
 					if (_algorithmPage == null || _algorithmPage.IsDisposed)
 					{
 						_algorithmPage = new AlgorithmModuleControl();
+						ApplyCurrentLanguageToControl(_algorithmPage);
 					}
 
 					AlgorithmModuleControl algorithmControl = _algorithmPage as AlgorithmModuleControl;
@@ -1551,6 +1734,8 @@ namespace Aron_V3
 
 		private void Form1_FormClosing(object sender, FormClosingEventArgs e)
 		{
+			LanguagePreferenceStore.SaveIsEnglish(_isEnglish);
+
 			if (runtimeFlow != null)
 			{
 				runtimeFlow.Stop();
@@ -1565,7 +1750,18 @@ namespace Aron_V3
 			GlobalVariableStore.VariablesChanged -= DataDisplayStore_ConfigChanged;
 
 			CommunicationRuntimeManager.Instance.Stop();
+			DatabaseRecordWriter.Instance.Dispose();
 
+			if (picBrandLogo != null)
+			{
+				picBrandLogo.Image = null;
+			}
+
+			if (_brandLogoImage != null)
+			{
+				_brandLogoImage.Dispose();
+				_brandLogoImage = null;
+			}
 		}
 	}
 }

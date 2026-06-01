@@ -56,6 +56,16 @@ namespace Aron_V3
 			}
 		}
 
+		public static string DatabaseRoot
+		{
+			get
+			{
+				string path = Path.Combine(ProjectRoot, "database");
+				Directory.CreateDirectory(path);
+				return path;
+			}
+		}
+
 		public static string JobRoot
 		{
 			get

@@ -16,11 +16,14 @@ namespace Aron_V3
 		private Button btnLogin;
 		private Button btnCancel;
 		private Panel panelMain;
+		private readonly bool _isEnglish;
 
 		public UserAccount LoginUser { get; private set; }
 
 		public LoginForm()
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
+
 			// 先隐藏窗体，等控件全部创建完成后再显示，减少打开时闪烁。
 			this.Opacity = 0;
 			this.SuspendLayout();
@@ -55,7 +58,7 @@ namespace Aron_V3
 
 		private void InitializeUi()
 		{
-			this.Text = "User Login";
+			this.Text = T("用户登录", "User Login");
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
 			this.MaximizeBox = false;
@@ -73,9 +76,9 @@ namespace Aron_V3
 			panelMain.SuspendLayout();
 			SetDoubleBuffered(panelMain);
 
-			Label title = CreateLabel("User Login", 40, 30, 240, 34, 16, true);
-			Label lblUser = CreateLabel("User Name", 45, 92, 100, 24, 9, false);
-			Label lblPassword = CreateLabel("Password", 45, 136, 100, 24, 9, false);
+			Label title = CreateLabel(T("用户登录", "User Login"), 40, 30, 240, 34, 16, true);
+			Label lblUser = CreateLabel(T("用户名", "User Name"), 45, 92, 100, 24, 9, false);
+			Label lblPassword = CreateLabel(T("密码", "Password"), 45, 136, 100, 24, 9, false);
 
 			cmbUser = new ComboBox();
 			cmbUser.Location = new Point(150, 90);
@@ -87,8 +90,8 @@ namespace Aron_V3
 
 			txtPassword = CreateTextBox(150, 134, true);
 
-			btnLogin = CreateButton("Login", 150, 195, true);
-			btnCancel = CreateButton("Cancel", 270, 195, false);
+			btnLogin = CreateButton(T("登录", "Login"), 150, 195, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 270, 195, false);
 
 			btnLogin.Click += btnLogin_Click;
 			btnCancel.Click += btnCancel_Click;
@@ -234,8 +237,8 @@ namespace Aron_V3
 			if (cmbUser.SelectedItem == null)
 			{
 				MessageBox.Show(
-					"Please select user.",
-					"Login",
+					T("请选择用户。", "Please select user."),
+					T("登录", "Login"),
 					MessageBoxButtons.OK,
 					MessageBoxIcon.Warning);
 				return;
@@ -248,8 +251,8 @@ namespace Aron_V3
 			if (user == null)
 			{
 				MessageBox.Show(
-					"Invalid user name or password.",
-					"Login",
+					T("用户名或密码错误。", "Invalid user name or password."),
+					T("登录", "Login"),
 					MessageBoxButtons.OK,
 					MessageBoxIcon.Warning);
 				return;
@@ -264,6 +267,11 @@ namespace Aron_V3
 		{
 			this.DialogResult = DialogResult.Cancel;
 			this.Close();
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 }

@@ -14,15 +14,17 @@ namespace Aron_V3
 		private TextBox txtConfirmPassword;
 		private Button btnOk;
 		private Button btnCancel;
+		private readonly bool _isEnglish;
 
 		public ChangePasswordForm()
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			InitializeUi();
 		}
 
 		private void InitializeUi()
 		{
-			this.Text = "Change Password";
+			this.Text = T("修改密码", "Change Password");
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
 			this.MaximizeBox = false;
@@ -31,17 +33,17 @@ namespace Aron_V3
 			this.BackColor = Color.FromArgb(2, 10, 20);
 			this.Font = new Font("Microsoft YaHei UI", 9F);
 
-			Label title = CreateLabel("Change Password", 40, 28, 240, 28, 15, true);
-			Label lblOld = CreateLabel("Old Password", 45, 90, 120, 24, 9, false);
-			Label lblNew = CreateLabel("New Password", 45, 132, 120, 24, 9, false);
-			Label lblConfirm = CreateLabel("Confirm", 45, 174, 120, 24, 9, false);
+			Label title = CreateLabel(T("修改密码", "Change Password"), 40, 28, 240, 28, 15, true);
+			Label lblOld = CreateLabel(T("旧密码", "Old Password"), 45, 90, 120, 24, 9, false);
+			Label lblNew = CreateLabel(T("新密码", "New Password"), 45, 132, 120, 24, 9, false);
+			Label lblConfirm = CreateLabel(T("确认密码", "Confirm"), 45, 174, 120, 24, 9, false);
 
 			txtOldPassword = CreateTextBox(170, 88);
 			txtNewPassword = CreateTextBox(170, 130);
 			txtConfirmPassword = CreateTextBox(170, 172);
 
-			btnOk = CreateButton("OK", 170, 230, true);
-			btnCancel = CreateButton("Cancel", 290, 230, false);
+			btnOk = CreateButton(T("确定", "OK"), 170, 230, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 290, 230, false);
 
 			btnOk.Click += btnOk_Click;
 			btnCancel.Click += btnCancel_Click;
@@ -106,19 +108,19 @@ namespace Aron_V3
 		{
 			if (!LoginSession.IsLoggedIn)
 			{
-				MessageBox.Show("Please login first.", "Change Password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(T("请先登录。", "Please login first."), T("修改密码", "Change Password"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
 			if (string.IsNullOrWhiteSpace(txtNewPassword.Text))
 			{
-				MessageBox.Show("New password cannot be empty.", "Change Password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(T("新密码不能为空。", "New password cannot be empty."), T("修改密码", "Change Password"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
 			if (txtNewPassword.Text != txtConfirmPassword.Text)
 			{
-				MessageBox.Show("The two new passwords are different.", "Change Password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(T("两次输入的新密码不一致。", "The two new passwords are different."), T("修改密码", "Change Password"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
@@ -126,13 +128,18 @@ namespace Aron_V3
 
 			if (!UserAccountStore.ChangePassword(LoginSession.CurrentUser.UserName, txtOldPassword.Text, txtNewPassword.Text, out error))
 			{
-				MessageBox.Show(error, "Change Password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(error, T("修改密码", "Change Password"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
-			MessageBox.Show("Password changed successfully.", "Change Password", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			MessageBox.Show(T("密码修改成功。", "Password changed successfully."), T("修改密码", "Change Password"), MessageBoxButtons.OK, MessageBoxIcon.Information);
 			this.DialogResult = DialogResult.OK;
 			this.Close();
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 }

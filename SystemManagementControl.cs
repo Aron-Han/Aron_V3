@@ -18,10 +18,13 @@ namespace Aron_V3
 		private TableLayoutPanel _root;
 		private Panel _menuPanel;
 		private Panel _contentPanel;
+		private Label _titleLabel;
+		private bool _isEnglish;
 
 		private Button _btnDisplayLayout;
 		private Button _btnGlobalVariables;
 		private Button _btnDataDisplay;
+		private Button _btnDiagnostics;
 		private Button _btnUserManager;
 		private Button _btnSystemInfo;
 
@@ -29,6 +32,7 @@ namespace Aron_V3
 		private DisplayLayoutControl _displayLayoutPage;
 		private GlobalVariableControl _globalVariablePage;
 		private DataDisplayControl _dataDisplayPage;
+		private DiagnosticManagementControl _diagnosticPage;
 
 		public SystemManagementControl()
 		{
@@ -42,6 +46,13 @@ namespace Aron_V3
 
 		public void ApplyLanguage(bool isEnglish)
 		{
+			_isEnglish = isEnglish;
+
+			if (_titleLabel != null)
+			{
+				_titleLabel.Text = isEnglish ? "System Management" : "系统管理";
+			}
+
 			if (_btnDisplayLayout != null)
 			{
 				_btnDisplayLayout.Text = isEnglish ? "Display Layout" : "显示布局";
@@ -62,6 +73,11 @@ namespace Aron_V3
 				_btnDataDisplay.Text = isEnglish ? "Data Display" : "界面数据显示";
 			}
 
+			if (_btnDiagnostics != null)
+			{
+				_btnDiagnostics.Text = isEnglish ? "Diagnostics" : "诊断日志";
+			}
+
 			if (_btnSystemInfo != null)
 			{
 				_btnSystemInfo.Text = isEnglish ? "System Info" : "系统信息";
@@ -80,6 +96,11 @@ namespace Aron_V3
 			if (_dataDisplayPage != null)
 			{
 				_dataDisplayPage.ApplyLanguage(isEnglish);
+			}
+
+			if (_diagnosticPage != null)
+			{
+				_diagnosticPage.ApplyLanguage(isEnglish);
 			}
 		}
 
@@ -118,37 +139,41 @@ namespace Aron_V3
 		{
 			_menuPanel.Controls.Clear();
 
-			Label title = new Label();
-			title.Text = "系统管理";
-			title.ForeColor = _text;
-			title.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
-			title.TextAlign = ContentAlignment.MiddleLeft;
-			title.Dock = DockStyle.Top;
-			title.Height = 34;
-			title.Padding = new Padding(4, 0, 0, 0);
+			_titleLabel = new Label();
+			_titleLabel.Text = _isEnglish ? "System Management" : "系统管理";
+			_titleLabel.ForeColor = _text;
+			_titleLabel.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+			_titleLabel.TextAlign = ContentAlignment.MiddleLeft;
+			_titleLabel.Dock = DockStyle.Top;
+			_titleLabel.Height = 34;
+			_titleLabel.Padding = new Padding(4, 0, 0, 0);
 
 			_btnDisplayLayout = CreateMenuButton("显示布局");
 			_btnGlobalVariables = CreateMenuButton("全局变量");
 			_btnDataDisplay = CreateMenuButton("界面数据显示");
+			_btnDiagnostics = CreateMenuButton("诊断日志");
 			_btnUserManager = CreateMenuButton("用户管理");
 			_btnSystemInfo = CreateMenuButton("系统信息");
 
 			_btnDisplayLayout.Top = 44;
 			_btnGlobalVariables.Top = 98;
 			_btnDataDisplay.Top = 152;
-			_btnUserManager.Top = 206;
-			_btnSystemInfo.Top = 260;
+			_btnDiagnostics.Top = 206;
+			_btnUserManager.Top = 260;
+			_btnSystemInfo.Top = 314;
 
 			_btnDisplayLayout.Click += delegate { ShowDisplayLayoutPage(); };
 			_btnGlobalVariables.Click += delegate { ShowGlobalVariablePage(); };
 			_btnDataDisplay.Click += delegate { ShowDataDisplayPage(); };
-			_btnUserManager.Click += delegate { ShowPlaceholderPage("用户管理", "后续可接入 UserAccounts.xml、权限、自动登出等设置。"); };
-			_btnSystemInfo.Click += delegate { ShowPlaceholderPage("系统信息", "后续可显示软件版本、项目路径、日志路径、授权状态等信息。"); };
+			_btnDiagnostics.Click += delegate { ShowDiagnosticPage(); };
+			_btnUserManager.Click += delegate { ShowUserManagerPlaceholder(); };
+			_btnSystemInfo.Click += delegate { ShowSystemInfoPlaceholder(); };
 
-			_menuPanel.Controls.Add(title);
+			_menuPanel.Controls.Add(_titleLabel);
 			_menuPanel.Controls.Add(_btnDisplayLayout);
 			_menuPanel.Controls.Add(_btnGlobalVariables);
 			_menuPanel.Controls.Add(_btnDataDisplay);
+			_menuPanel.Controls.Add(_btnDiagnostics);
 			_menuPanel.Controls.Add(_btnUserManager);
 			_menuPanel.Controls.Add(_btnSystemInfo);
 		}
@@ -179,6 +204,7 @@ namespace Aron_V3
 			{
 				_displayLayoutPage = new DisplayLayoutControl();
 				_displayLayoutPage.Dock = DockStyle.Fill;
+				_displayLayoutPage.ApplyLanguage(_isEnglish);
 			}
 
 			ShowPage(_displayLayoutPage);
@@ -191,6 +217,7 @@ namespace Aron_V3
 			{
 				_globalVariablePage = new GlobalVariableControl();
 				_globalVariablePage.Dock = DockStyle.Fill;
+				_globalVariablePage.ApplyLanguage(_isEnglish);
 			}
 
 			ShowPage(_globalVariablePage);
@@ -203,12 +230,46 @@ namespace Aron_V3
 			{
 				_dataDisplayPage = new DataDisplayControl();
 				_dataDisplayPage.Dock = DockStyle.Fill;
+				_dataDisplayPage.ApplyLanguage(_isEnglish);
 			}
 			ShowPage(_dataDisplayPage);
 			SetSelectedButton(_btnDataDisplay);
 		}
 
-		private void ShowPlaceholderPage(string title, string message)
+		private void ShowDiagnosticPage()
+		{
+			if (_diagnosticPage == null || _diagnosticPage.IsDisposed)
+			{
+				_diagnosticPage = new DiagnosticManagementControl();
+				_diagnosticPage.Dock = DockStyle.Fill;
+				_diagnosticPage.ApplyLanguage(_isEnglish);
+			}
+
+			ShowPage(_diagnosticPage);
+			SetSelectedButton(_btnDiagnostics);
+		}
+
+		private void ShowUserManagerPlaceholder()
+		{
+			ShowPlaceholderPage(
+				_isEnglish ? "User Management" : "用户管理",
+				_isEnglish
+					? "User account, permission, and auto logout settings are opened from the user menu."
+					: "用户账号、权限、自动登出等设置可从右上角用户菜单进入。",
+				_btnUserManager);
+		}
+
+		private void ShowSystemInfoPlaceholder()
+		{
+			ShowPlaceholderPage(
+				_isEnglish ? "System Info" : "系统信息",
+				_isEnglish
+					? "Software version, project path, log path, and license status can be shown here later."
+					: "后续可显示软件版本、项目路径、日志路径、授权状态等信息。",
+				_btnSystemInfo);
+		}
+
+		private void ShowPlaceholderPage(string title, string message, Button selectedButton)
 		{
 			Panel page = new Panel();
 			page.Dock = DockStyle.Fill;
@@ -233,15 +294,7 @@ namespace Aron_V3
 			page.Controls.Add(lblTitle);
 
 			ShowPage(page);
-
-			if (title == "用户管理")
-			{
-				SetSelectedButton(_btnUserManager);
-			}
-			else
-			{
-				SetSelectedButton(_btnSystemInfo);
-			}
+			SetSelectedButton(selectedButton);
 		}
 
 		private void ShowPage(Control page)
@@ -273,6 +326,7 @@ namespace Aron_V3
 				_btnDisplayLayout,
 				_btnGlobalVariables,
 				_btnDataDisplay,
+				_btnDiagnostics,
 				_btnUserManager,
 				_btnSystemInfo
 			};
@@ -307,6 +361,7 @@ namespace Aron_V3
 				_btnDisplayLayout.Width = width;
 				_btnGlobalVariables.Width = width;
 				_btnDataDisplay.Width = width;
+				_btnDiagnostics.Width = width;
 				_btnUserManager.Width = width;
 				_btnSystemInfo.Width = width;
 			}

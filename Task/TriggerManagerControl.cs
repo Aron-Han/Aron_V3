@@ -36,6 +36,7 @@ namespace Aron_V3
 			public string OriginalTaskName;
 			public string OriginalProtocol;
 			public string OriginalChannel;
+			public List<TaskExecutionCondition> ExecutionConditions;
 		}
 
 		private Panel panelJobButtons;
@@ -53,10 +54,10 @@ namespace Aron_V3
 		private const int COL_PROTOCOL = 1;
 		private const int COL_CHANNEL = 2;
 		private const int COL_TRIGGER_NAME = 3;
-		private const int COL_TRIGGER_VALUE = 4;
-		private const int COL_IMAGE_SOURCE = 5;
-		private const int COL_POSITION_NAME = 6;
-		private const int COL_POSITION_VALUE = 7;
+		private const int COL_TRIGGER_MODE = 4;
+		private const int COL_TRIGGER_VALUE = 5;
+		private const int COL_IMAGE_SOURCE = 6;
+		private const int COL_EXECUTION_CONDITIONS = 7;
 		private const int COL_REMARK = 8;
 
 		private bool _loading = false;
@@ -207,6 +208,14 @@ namespace Aron_V3
 			colTrigger.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
 			dgvTrigger.Columns.Add(colTrigger);
 
+			DataGridViewComboBoxColumn colTriggerMode = new DataGridViewComboBoxColumn();
+			colTriggerMode.Name = "colTriggerMode";
+			colTriggerMode.HeaderText = "触发模式";
+			colTriggerMode.FillWeight = 105;
+			colTriggerMode.FlatStyle = FlatStyle.Flat;
+			colTriggerMode.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+			dgvTrigger.Columns.Add(colTriggerMode);
+
 			DataGridViewTextBoxColumn colTriggerValue = new DataGridViewTextBoxColumn();
 			colTriggerValue.Name = "colTriggerValue";
 			colTriggerValue.HeaderText = "触发源值";
@@ -224,19 +233,14 @@ namespace Aron_V3
 			colImage.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			dgvTrigger.Columns.Add(colImage);
 
-			DataGridViewComboBoxColumn colPositionName = new DataGridViewComboBoxColumn();
-			colPositionName.Name = "colPositionName";
-			colPositionName.HeaderText = "位置号";
-			colPositionName.FillWeight = 90;
-			colPositionName.FlatStyle = FlatStyle.Flat;
-			colPositionName.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
-			dgvTrigger.Columns.Add(colPositionName);
-
-			DataGridViewTextBoxColumn colPositionValue = new DataGridViewTextBoxColumn();
-			colPositionValue.Name = "colPositionValue";
-			colPositionValue.HeaderText = "位置号值";
-			colPositionValue.FillWeight = 90;
-			dgvTrigger.Columns.Add(colPositionValue);
+			DataGridViewTextBoxColumn colExecutionConditions = new DataGridViewTextBoxColumn();
+			colExecutionConditions.Name = "colExecutionConditions";
+			colExecutionConditions.HeaderText = "执行条件";
+			colExecutionConditions.FillWeight = 130;
+			colExecutionConditions.ReadOnly = true;
+			colExecutionConditions.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+			colExecutionConditions.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			dgvTrigger.Columns.Add(colExecutionConditions);
 
 			DataGridViewTextBoxColumn colRemark = new DataGridViewTextBoxColumn();
 			colRemark.Name = "colRemark";
@@ -262,12 +266,12 @@ namespace Aron_V3
 			dgvTrigger.Columns[COL_PROTOCOL].ReadOnly = true;
 			dgvTrigger.Columns[COL_CHANNEL].ReadOnly = true;
 			dgvTrigger.Columns[COL_TRIGGER_NAME].ReadOnly = true;
+			dgvTrigger.Columns[COL_TRIGGER_MODE].ReadOnly = true;
 			dgvTrigger.Columns[COL_IMAGE_SOURCE].ReadOnly = true;
-			dgvTrigger.Columns[COL_POSITION_NAME].ReadOnly = true;
+			dgvTrigger.Columns[COL_EXECUTION_CONDITIONS].ReadOnly = true;
 
 			// 普通值列需要可以直接编辑。
 			dgvTrigger.Columns[COL_TRIGGER_VALUE].ReadOnly = true;
-			dgvTrigger.Columns[COL_POSITION_VALUE].ReadOnly = false;
 
 			if (dgvTrigger.Columns.Count > COL_REMARK)
 			{
@@ -291,8 +295,9 @@ namespace Aron_V3
 			dgvTrigger.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
 			dgvTrigger.DefaultCellStyle.SelectionForeColor = Color.White;
 			dgvTrigger.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-			dgvTrigger.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+			dgvTrigger.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
 			dgvTrigger.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			dgvTrigger.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
 		}
 
 		private void BuildProtocolNavigation()
@@ -566,6 +571,7 @@ namespace Aron_V3
 		private void RefreshComboColumnOptions()
 		{
 			// 协议列改为双击勾选，不再维护 DataGridViewComboBoxColumn 的 Items。
+			RefreshTriggerModeColumnItems();
 		}
 
 		private void FlowConfigStore_FlowConfigSaved(object sender, EventArgs e)
@@ -779,48 +785,37 @@ namespace Aron_V3
 			}
 			if (string.IsNullOrEmpty(triggerValue)) triggerValue = GetTriggerExpectedValue(protocolSelection, channelName, triggerName);
 			if (string.IsNullOrEmpty(triggerValue)) triggerValue = "1";
+			string triggerDisplay = GetTriggerDisplayValue(protocolSelection, channelName, triggerName, triggerValue);
+			TriggerRunMode triggerRunMode = firstBinding == null ? task.TriggerRunMode : firstBinding.TriggerRunMode;
 
-			string positionName = task.PositionName;
-			if (firstBinding != null && !string.IsNullOrWhiteSpace(firstBinding.PositionName))
-			{
-				positionName = firstBinding.PositionName;
-			}
-			if (string.IsNullOrEmpty(positionName)) positionName = task.PositionOptionName;
-			if (string.IsNullOrEmpty(positionName)) positionName = task.FlagBit.ToString();
-			if (string.IsNullOrEmpty(positionName) || positionName == "0") positionName = GetDefaultPositionSource(protocolSelection, channelName);
-
-			string positionValue = task.PositionValue;
-			if (firstBinding != null && !string.IsNullOrWhiteSpace(firstBinding.PositionValue))
-			{
-				positionValue = firstBinding.PositionValue;
-			}
-			if (string.IsNullOrEmpty(positionValue)) positionValue = task.FlagValue;
-			if (string.IsNullOrEmpty(positionValue)) positionValue = GetPositionExpectedValue(protocolSelection, channelName, positionName);
-			if (string.IsNullOrEmpty(positionValue)) positionValue = "1";
+			List<TaskExecutionCondition> executionConditions = CloneExecutionConditions(
+				firstBinding != null && firstBinding.ExecutionConditions != null && firstBinding.ExecutionConditions.Count > 0
+					? firstBinding.ExecutionConditions
+					: task.ExecutionConditions);
 
 			int rowIndex = dgvTrigger.Rows.Add(
 				task.TaskName,
 				protocolSelection,
 				channelName,
-				triggerName,
+				triggerDisplay,
+				FormatTriggerRunMode(triggerRunMode),
 				triggerValue,
 				"Not Use",
-				positionName,
-				positionValue,
+				FormatExecutionConditions(executionConditions),
 				task.Remark);
 			dgvTrigger.Rows[rowIndex].Tag = new TaskGridRowTag
 			{
 				JobName = job == null ? GetDefaultTaskJobName() : job.JobName,
 				OriginalTaskName = task.TaskName,
 				OriginalProtocol = protocol,
-				OriginalChannel = channelName
+				OriginalChannel = channelName,
+				ExecutionConditions = executionConditions
 			};
 			ShowAllTriggerRows();
 			UpdateTriggerGridRowHeights();
 
 			UpdateChannelCellOptions(rowIndex, protocolSelection, channelName);
-			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channelName, triggerName);
-			UpdatePositionSourceCellOptions(rowIndex, protocolSelection, channelName, positionName);
+			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channelName, triggerDisplay);
 		}
 
 		private void dgvTrigger_CurrentCellDirtyStateChanged(object sender, EventArgs e)
@@ -835,7 +830,7 @@ namespace Aron_V3
 			{
 				RefreshCommunicationOptionCells(e.RowIndex, true);
 			}
-			else if (e.ColumnIndex == COL_CHANNEL || e.ColumnIndex == COL_TRIGGER_NAME || e.ColumnIndex == COL_POSITION_NAME)
+			else if (e.ColumnIndex == COL_CHANNEL || e.ColumnIndex == COL_TRIGGER_NAME)
 			{
 				UpdateChannelDerivedValueCells(e.RowIndex);
 			}
@@ -848,8 +843,8 @@ namespace Aron_V3
 		{
 			return columnIndex == COL_PROTOCOL ||
 				columnIndex == COL_TRIGGER_NAME ||
-				columnIndex == COL_CHANNEL ||
-				columnIndex == COL_POSITION_NAME;
+				columnIndex == COL_TRIGGER_MODE ||
+				columnIndex == COL_CHANNEL;
 		}
 
 		private void dgvTrigger_CellPainting(object sender, DataGridViewCellPaintingEventArgs e)
@@ -971,7 +966,7 @@ namespace Aron_V3
 				{
 					RefreshCommunicationOptionCells(rowIndex, false);
 				}
-				else if (columnIndex == COL_TRIGGER_NAME || columnIndex == COL_POSITION_NAME)
+				else if (columnIndex == COL_TRIGGER_NAME)
 				{
 					UpdateChannelDerivedValueCells(rowIndex);
 				}
@@ -1020,6 +1015,11 @@ namespace Aron_V3
 			if (columnIndex == COL_PROTOCOL)
 			{
 				return LoadCommunicationInstanceOptions();
+			}
+
+			if (columnIndex == COL_TRIGGER_MODE)
+			{
+				return GetTriggerRunModeOptions();
 			}
 
 			DataGridViewCell cell = dgvTrigger.Rows[rowIndex].Cells[columnIndex];
@@ -1120,6 +1120,12 @@ namespace Aron_V3
 				return;
 			}
 
+			if (e.ColumnIndex == COL_EXECUTION_CONDITIONS)
+			{
+				OpenExecutionConditionDialog(e.RowIndex);
+				return;
+			}
+
 			CloseActiveComboPopup();
 
 			if (!dgvTrigger.Rows[e.RowIndex].Cells[e.ColumnIndex].ReadOnly)
@@ -1131,7 +1137,162 @@ namespace Aron_V3
 
 		private void dgvTrigger_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
 		{
-			// 协议、通道、触发源、位置号都通过单击弹出的单选菜单处理。
+			// 协议、通道、触发源通过单击弹出的单选菜单处理。
+		}
+
+		private void OpenExecutionConditionDialog(int rowIndex)
+		{
+			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count)
+			{
+				return;
+			}
+
+			List<TaskExecutionCondition> conditions = GetRowExecutionConditions(dgvTrigger.Rows[rowIndex]);
+			using (TaskExecutionConditionDialog dialog = new TaskExecutionConditionDialog(conditions, _isEnglish))
+			{
+				if (dialog.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+
+				SetRowExecutionConditions(dgvTrigger.Rows[rowIndex], dialog.Conditions);
+				UpdateTriggerGridRowHeights();
+			}
+		}
+
+		private List<TaskExecutionCondition> GetRowExecutionConditions(DataGridViewRow row)
+		{
+			TaskGridRowTag tag = row == null ? null : row.Tag as TaskGridRowTag;
+			return CloneExecutionConditions(tag == null ? null : tag.ExecutionConditions);
+		}
+
+		private void SetRowExecutionConditions(DataGridViewRow row, List<TaskExecutionCondition> conditions)
+		{
+			if (row == null)
+			{
+				return;
+			}
+
+			TaskGridRowTag tag = row.Tag as TaskGridRowTag;
+			if (tag == null)
+			{
+				tag = new TaskGridRowTag();
+				row.Tag = tag;
+			}
+
+			tag.ExecutionConditions = CloneExecutionConditions(conditions);
+			row.Cells[COL_EXECUTION_CONDITIONS].Value = FormatExecutionConditions(tag.ExecutionConditions);
+		}
+
+		private string FormatExecutionConditions(List<TaskExecutionCondition> conditions)
+		{
+			List<TaskExecutionCondition> list = CloneExecutionConditions(conditions);
+			if (list.Count <= 0)
+			{
+				return _isEnglish ? "Run Directly" : "直接执行";
+			}
+
+			List<string> parts = new List<string>();
+			foreach (TaskExecutionCondition condition in list)
+			{
+				parts.Add(condition.GlobalVariableName + "=" + (condition.ExpectedValue ?? string.Empty));
+			}
+
+			return string.Join(Environment.NewLine, parts.ToArray());
+		}
+
+		private static List<TaskExecutionCondition> CloneExecutionConditions(List<TaskExecutionCondition> source)
+		{
+			List<TaskExecutionCondition> result = new List<TaskExecutionCondition>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (TaskExecutionCondition condition in source)
+			{
+				if (condition == null || string.IsNullOrWhiteSpace(condition.GlobalVariableName))
+				{
+					continue;
+				}
+
+				result.Add(new TaskExecutionCondition
+				{
+					GlobalVariableName = condition.GlobalVariableName.Trim(),
+					ExpectedValue = condition.ExpectedValue == null ? string.Empty : condition.ExpectedValue.Trim(),
+					Compare = condition.Compare
+				});
+			}
+
+			return result;
+		}
+
+		private List<string> GetTriggerRunModeOptions()
+		{
+			return new List<string>
+			{
+				FormatTriggerRunMode(TriggerRunMode.OnReceive),
+				FormatTriggerRunMode(TriggerRunMode.OnChanged)
+			};
+		}
+
+		private string FormatTriggerRunMode(TriggerRunMode mode)
+		{
+			if (mode == TriggerRunMode.OnChanged)
+			{
+				return _isEnglish ? "On Change" : "值变化时执行";
+			}
+
+			return _isEnglish ? "On Receive" : "接收到值执行";
+		}
+
+		private TriggerRunMode ParseTriggerRunMode(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return TriggerRunMode.OnReceive;
+			}
+
+			string text = value.Trim();
+			if (text.Equals("值变化时执行", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("发生变化时执行", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("On Change", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("OnChanged", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("Changed", StringComparison.OrdinalIgnoreCase))
+			{
+				return TriggerRunMode.OnChanged;
+			}
+
+			return TriggerRunMode.OnReceive;
+		}
+
+		private void RefreshTriggerModeColumnItems()
+		{
+			if (dgvTrigger == null || dgvTrigger.Columns.Count <= COL_TRIGGER_MODE)
+			{
+				return;
+			}
+
+			DataGridViewComboBoxColumn column = dgvTrigger.Columns[COL_TRIGGER_MODE] as DataGridViewComboBoxColumn;
+			if (column != null)
+			{
+				column.Items.Clear();
+				foreach (string item in GetTriggerRunModeOptions())
+				{
+					column.Items.Add(item);
+				}
+			}
+
+			foreach (DataGridViewRow row in dgvTrigger.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				row.Cells[COL_TRIGGER_MODE].Value = FormatTriggerRunMode(
+					ParseTriggerRunMode(GetCellString(row, COL_TRIGGER_MODE)));
+			}
 		}
 
 		private void OpenImageSourceMultiSelectDialog(int rowIndex)
@@ -1593,26 +1754,6 @@ namespace Aron_V3
 			dgvTrigger.Rows[rowIndex].Cells[COL_CHANNEL] = cell;
 		}
 
-		private void UpdatePositionSourceCellOptions(int rowIndex, string protocol, string channelName, string currentValue)
-		{
-			if (rowIndex < 0 || rowIndex >= dgvTrigger.Rows.Count) return;
-
-			DataGridViewComboBoxCell cell = new DataGridViewComboBoxCell();
-			cell.FlatStyle = FlatStyle.Flat;
-
-			List<string> positions = LoadPositionSourceOptionsForProtocols(protocol, channelName);
-			foreach (string position in positions) cell.Items.Add(position);
-
-			if (string.IsNullOrEmpty(currentValue) || !positions.Contains(currentValue))
-			{
-				currentValue = positions.Count > 0 ? positions[0] : string.Empty;
-			}
-
-			cell.Value = currentValue;
-			dgvTrigger.Rows[rowIndex].Cells[COL_POSITION_NAME] = cell;
-			UpdateChannelDerivedValueCells(rowIndex);
-		}
-
 		private List<string> LoadEnabledProtocolOptions()
 		{
 			List<string> result = new List<string>();
@@ -1764,7 +1905,25 @@ namespace Aron_V3
 				if (!string.IsNullOrWhiteSpace(customTriggerGlobal) &&
 					!result.Any(x => string.Equals(x, customTriggerGlobal, StringComparison.OrdinalIgnoreCase)))
 				{
-					result.Add(customTriggerGlobal);
+					result.Add(FormatTriggerOption(customTriggerGlobal, channel.CustomTriggerExpectedValue));
+				}
+
+				if (channel.CustomTriggers != null)
+				{
+					foreach (CommunicationCustomTriggerOption customTrigger in channel.CustomTriggers)
+					{
+						if (customTrigger == null ||
+							string.IsNullOrWhiteSpace(customTrigger.Name))
+						{
+							continue;
+						}
+
+						string option = FormatTriggerOption(customTrigger.Name, customTrigger.ExpectedValue);
+						if (!result.Any(x => string.Equals(x, option, StringComparison.OrdinalIgnoreCase)))
+						{
+							result.Add(option);
+						}
+					}
 				}
 			}
 			if (result.Count == 0) result.Add("Not Use");
@@ -1914,6 +2073,75 @@ namespace Aron_V3
 			return option == null ? string.Empty : option.ExpectedValue;
 		}
 
+		private string FormatTriggerOption(string triggerName, string expectedValue)
+		{
+			triggerName = NormalizeConfiguredCommunicationValue(triggerName);
+			if (string.IsNullOrWhiteSpace(triggerName))
+			{
+				return string.Empty;
+			}
+
+			return triggerName + "=" + (expectedValue ?? string.Empty).Trim();
+		}
+
+		private bool TryParseTriggerOption(string triggerOption, out string triggerName, out string expectedValue)
+		{
+			triggerName = NormalizeConfiguredCommunicationValue(triggerOption);
+			expectedValue = string.Empty;
+
+			if (string.IsNullOrWhiteSpace(triggerName))
+			{
+				return false;
+			}
+
+			int index = triggerName.LastIndexOf('=');
+			if (index <= 0)
+			{
+				return false;
+			}
+
+			expectedValue = triggerName.Substring(index + 1).Trim();
+			triggerName = triggerName.Substring(0, index).Trim();
+			return !string.IsNullOrWhiteSpace(triggerName);
+		}
+
+		private string GetTriggerNameFromSelection(string triggerSelection)
+		{
+			string triggerName;
+			string expectedValue;
+			if (TryParseTriggerOption(triggerSelection, out triggerName, out expectedValue))
+			{
+				return triggerName;
+			}
+
+			return NormalizeConfiguredCommunicationValue(triggerSelection);
+		}
+
+		private string GetTriggerDisplayValue(string protocol, string channelName, string triggerName, string triggerValue)
+		{
+			string normalizedTrigger = NormalizeConfiguredCommunicationValue(triggerName);
+			if (string.IsNullOrWhiteSpace(normalizedTrigger))
+			{
+				return GetDefaultTriggerSource(protocol, channelName);
+			}
+
+			List<string> options = LoadTriggerSourceOptionsForProtocols(protocol, channelName);
+			string optionValue = FormatTriggerOption(normalizedTrigger, triggerValue);
+			string matched = options.FirstOrDefault(x => string.Equals(x, optionValue, StringComparison.OrdinalIgnoreCase));
+			if (!string.IsNullOrWhiteSpace(matched))
+			{
+				return matched;
+			}
+
+			matched = options.FirstOrDefault(x => string.Equals(GetTriggerNameFromSelection(x), normalizedTrigger, StringComparison.OrdinalIgnoreCase));
+			if (!string.IsNullOrWhiteSpace(matched))
+			{
+				return matched;
+			}
+
+			return normalizedTrigger;
+		}
+
 		private string GetTriggerExpectedValue(string protocol, string channelName, string triggerName)
 		{
 			CommunicationChannelConfig channel = GetChannelByNameForSelection(CommunicationConfigStore.LoadOrCreateDefault(), protocol, channelName);
@@ -1922,10 +2150,28 @@ namespace Aron_V3
 				return string.Empty;
 			}
 
-			string selectedTrigger = NormalizeConfiguredCommunicationValue(triggerName);
+			string selectedTrigger;
+			string parsedExpectedValue;
+			if (TryParseTriggerOption(triggerName, out selectedTrigger, out parsedExpectedValue))
+			{
+				return parsedExpectedValue;
+			}
+
+			selectedTrigger = NormalizeConfiguredCommunicationValue(triggerName);
 			if (string.IsNullOrWhiteSpace(selectedTrigger))
 			{
 				return string.Empty;
+			}
+
+			if (channel.CustomTriggers != null)
+			{
+				CommunicationCustomTriggerOption customOption = channel.CustomTriggers.FirstOrDefault(x =>
+					x != null &&
+					string.Equals(selectedTrigger, NormalizeConfiguredCommunicationValue(x.Name), StringComparison.OrdinalIgnoreCase));
+				if (customOption != null)
+				{
+					return customOption.ExpectedValue;
+				}
 			}
 
 			string customTriggerGlobal = NormalizeConfiguredCommunicationValue(channel.CustomTriggerGlobalVariableName);
@@ -1970,8 +2216,6 @@ namespace Aron_V3
 			string triggerName = resetDerivedSelections ? string.Empty : GetCellString(row, COL_TRIGGER_NAME);
 			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channelName, triggerName);
 
-			string positionName = resetDerivedSelections ? string.Empty : GetCellString(row, COL_POSITION_NAME);
-			UpdatePositionSourceCellOptions(rowIndex, protocolSelection, channelName, positionName);
 			UpdateChannelDerivedValueCells(rowIndex);
 		}
 
@@ -2006,18 +2250,6 @@ namespace Aron_V3
 				row.Cells[COL_TRIGGER_VALUE].Value = GetTriggerExpectedValue(protocolSelection, channelName, triggerName);
 			}
 
-			string positionName = GetCellString(row, COL_POSITION_NAME);
-			string expectedValue = GetPositionExpectedValue(protocolSelection, channelName, positionName);
-			string currentPositionValue = GetCellString(row, COL_POSITION_VALUE);
-			if (string.IsNullOrWhiteSpace(currentPositionValue) && !string.IsNullOrEmpty(expectedValue))
-			{
-				row.Cells[COL_POSITION_VALUE].Value = expectedValue;
-			}
-			else if (string.IsNullOrWhiteSpace(currentPositionValue) &&
-				string.Equals(positionName, "Not Use", StringComparison.OrdinalIgnoreCase))
-			{
-				row.Cells[COL_POSITION_VALUE].Value = string.Empty;
-			}
 		}
 
 		private List<CommunicationChannelConfig> GetChannelsByProtocol(CommunicationConfig config, string protocol)
@@ -2542,23 +2774,32 @@ namespace Aron_V3
 				channel = channels.Count > 0 ? channels[0] : "Channel01";
 			}
 			string trigger = GetDefaultTriggerSource(protocolSelection, channel);
-			string position = GetDefaultPositionSource(protocolSelection, channel);
 			CommunicationChannelConfig channelConfig = GetChannelByNameForSelection(CommunicationConfigStore.LoadOrCreateDefault(), protocolSelection, channel);
-			string triggerValue = channelConfig == null
-				? "1"
-				: channelConfig.TriggerExpectedValue;
-			string positionValue = GetPositionExpectedValue(protocolSelection, channel, position);
-			if (string.IsNullOrEmpty(positionValue)) positionValue = "1";
-			int rowIndex = dgvTrigger.Rows.Add("Task_New_" + (dgvTrigger.Rows.Count + 1).ToString("00"), protocolSelection, channel, trigger, triggerValue, "Not Use", position, positionValue, string.Empty);
+			string triggerValue = GetTriggerExpectedValue(protocolSelection, channel, trigger);
+			if (string.IsNullOrWhiteSpace(triggerValue) && channelConfig != null)
+			{
+				triggerValue = channelConfig.TriggerExpectedValue;
+			}
+			if (string.IsNullOrWhiteSpace(triggerValue)) triggerValue = "1";
+			int rowIndex = dgvTrigger.Rows.Add(
+				"Task_New_" + (dgvTrigger.Rows.Count + 1).ToString("00"),
+				protocolSelection,
+				channel,
+				trigger,
+				FormatTriggerRunMode(TriggerRunMode.OnReceive),
+				triggerValue,
+				"Not Use",
+				FormatExecutionConditions(null),
+				string.Empty);
 			UpdateChannelCellOptions(rowIndex, protocolSelection, channel);
 			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channel, trigger);
-			UpdatePositionSourceCellOptions(rowIndex, protocolSelection, channel, position);
 			dgvTrigger.Rows[rowIndex].Tag = new TaskGridRowTag
 			{
 				JobName = GetDefaultTaskJobName(),
 				OriginalTaskName = string.Empty,
 				OriginalProtocol = protocol,
-				OriginalChannel = channel
+				OriginalChannel = channel,
+				ExecutionConditions = new List<TaskExecutionCondition>()
 			};
 		}
 
@@ -2948,21 +3189,21 @@ namespace Aron_V3
 				task.CommunicationChannel = rowChannel;
 				if (string.IsNullOrEmpty(task.CommunicationChannel)) task.CommunicationChannel = "Channel01";
 				task.CommunicationInstanceName = primaryInstanceName;
-				task.TriggerName = GetCellString(row, COL_TRIGGER_NAME);
+				string triggerSelection = GetCellString(row, COL_TRIGGER_NAME);
+				task.TriggerName = GetTriggerNameFromSelection(triggerSelection);
 				task.TriggerValue = GetCellString(row, COL_TRIGGER_VALUE);
+				if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = GetTriggerExpectedValue(protocolSelection, rowChannel, triggerSelection);
 				if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
+				task.TriggerRunMode = ParseTriggerRunMode(GetCellString(row, COL_TRIGGER_MODE));
 				task.ImageSourceKey = "Not Use";
 				task.InputAddress = string.Empty;
-				task.PositionName = GetCellString(row, COL_POSITION_NAME);
-				task.PositionOptionName = task.PositionName;
-				task.PositionValue = GetCellString(row, COL_POSITION_VALUE);
-				if (string.IsNullOrEmpty(task.PositionName)) task.PositionName = "Not Use";
-				if (string.IsNullOrEmpty(task.PositionValue)) task.PositionValue = "1";
+				task.PositionName = "Not Use";
+				task.PositionOptionName = "Not Use";
+				task.PositionValue = "1";
+				task.ExecutionConditions = GetRowExecutionConditions(row);
 
 				// 旧字段同步保留，避免旧代码读取 FlagBit / FlagValue 时失效。
-				int oldFlagBit;
-				if (int.TryParse(task.PositionName, out oldFlagBit)) task.FlagBit = oldFlagBit;
-				else task.FlagBit = 0;
+				task.FlagBit = 0;
 				task.FlagValue = task.PositionValue;
 				task.Remark = GetCellString(row, COL_REMARK);
 				if (task.Steps == null) task.Steps = new List<StepConfig>();
@@ -3166,9 +3407,11 @@ namespace Aron_V3
 				binding.TriggerName = task.TriggerName;
 				binding.TriggerValue = task.TriggerValue;
 				binding.TriggerCompare = task.TriggerCompare;
-				binding.PositionName = task.PositionName;
-				binding.PositionValue = task.PositionValue;
+				binding.TriggerRunMode = task.TriggerRunMode;
+				binding.PositionName = "Not Use";
+				binding.PositionValue = "1";
 				binding.PositionCompare = task.PositionCompare;
+				binding.ExecutionConditions = CloneExecutionConditions(task.ExecutionConditions);
 				result.Add(binding);
 			}
 
@@ -3429,12 +3672,10 @@ namespace Aron_V3
 					string protocol = GetCellString(row, COL_PROTOCOL);
 					string channel = GetCellString(row, COL_CHANNEL);
 					string triggerName = GetCellString(row, COL_TRIGGER_NAME);
-					string positionName = GetCellString(row, COL_POSITION_NAME);
 
 					UpdateChannelCellOptions(i, protocol, channel);
 					channel = GetCellString(row, COL_CHANNEL);
 					UpdateTriggerSourceCellOptions(i, protocol, channel, triggerName);
-					UpdatePositionSourceCellOptions(i, protocol, channel, positionName);
 				}
 
 				dgvTrigger.Invalidate();
@@ -3929,9 +4170,9 @@ namespace Aron_V3
 				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "Protocol";
 				dgvTrigger.Columns[COL_CHANNEL].HeaderText = "Channel";
 				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "Trigger Source";
+				dgvTrigger.Columns[COL_TRIGGER_MODE].HeaderText = "Trigger Mode";
 				dgvTrigger.Columns[COL_TRIGGER_VALUE].HeaderText = "Trigger Value";
-				dgvTrigger.Columns[COL_POSITION_NAME].HeaderText = "Position No.";
-				dgvTrigger.Columns[COL_POSITION_VALUE].HeaderText = "Position Value";
+				dgvTrigger.Columns[COL_EXECUTION_CONDITIONS].HeaderText = "Execution Conditions";
 				dgvTrigger.Columns[COL_REMARK].HeaderText = "Remark";
 				btnAddTask.Text = "+ Add Task";
 				btnDeleteSelected.Text = "Delete";
@@ -3945,15 +4186,248 @@ namespace Aron_V3
 				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "协议";
 				dgvTrigger.Columns[COL_CHANNEL].HeaderText = "通道";
 				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "触发源";
+				dgvTrigger.Columns[COL_TRIGGER_MODE].HeaderText = "触发模式";
 				dgvTrigger.Columns[COL_TRIGGER_VALUE].HeaderText = "触发源值";
-				dgvTrigger.Columns[COL_POSITION_NAME].HeaderText = "位置号";
-				dgvTrigger.Columns[COL_POSITION_VALUE].HeaderText = "位置号值";
+				dgvTrigger.Columns[COL_EXECUTION_CONDITIONS].HeaderText = "执行条件";
 				dgvTrigger.Columns[COL_REMARK].HeaderText = "备注";
 				btnAddTask.Text = "+ 新增 task";
 				btnDeleteSelected.Text = "▦ 删除选中";
 				btnSave.Text = "▣ 保存";
 				if (btnTestTask != null) btnTestTask.Text = "▶ Task测试";
 			}
+
+			RefreshTriggerModeColumnItems();
+
+			foreach (DataGridViewRow row in dgvTrigger.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				row.Cells[COL_TRIGGER_MODE].Value = FormatTriggerRunMode(
+					ParseTriggerRunMode(GetCellString(row, COL_TRIGGER_MODE)));
+				row.Cells[COL_EXECUTION_CONDITIONS].Value = FormatExecutionConditions(GetRowExecutionConditions(row));
+			}
+		}
+	}
+
+
+	public class TaskExecutionConditionDialog : Form
+	{
+		private readonly DataGridView _grid;
+		private readonly Button _btnAdd;
+		private readonly Button _btnDelete;
+		private readonly Button _btnOk;
+		private readonly Button _btnCancel;
+		private readonly bool _isEnglish;
+
+		public List<TaskExecutionCondition> Conditions { get; private set; }
+
+		public TaskExecutionConditionDialog(List<TaskExecutionCondition> conditions, bool isEnglish)
+		{
+			_isEnglish = isEnglish;
+			Conditions = CloneConditions(conditions);
+
+			Text = _isEnglish ? "Execution Conditions" : "执行条件";
+			StartPosition = FormStartPosition.CenterParent;
+			FormBorderStyle = FormBorderStyle.FixedDialog;
+			MaximizeBox = false;
+			MinimizeBox = false;
+			ClientSize = new Size(720, 470);
+			BackColor = Color.FromArgb(2, 10, 20);
+			ForeColor = Color.White;
+
+			Label title = new Label();
+			title.Text = _isEnglish
+				? "Run task only when all conditions are matched"
+				: "满足以下全部条件时执行 Task";
+			title.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+			title.ForeColor = Color.White;
+			title.Location = new Point(18, 18);
+			title.Size = new Size(640, 28);
+			Controls.Add(title);
+
+			_grid = new DataGridView();
+			_grid.Location = new Point(18, 58);
+			_grid.Size = new Size(684, 320);
+			_grid.AllowUserToAddRows = false;
+			_grid.AllowUserToResizeRows = false;
+			_grid.RowHeadersVisible = false;
+			_grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+			_grid.MultiSelect = true;
+			_grid.BackgroundColor = Color.FromArgb(2, 10, 20);
+			_grid.BorderStyle = BorderStyle.FixedSingle;
+			_grid.EnableHeadersVisualStyles = false;
+			_grid.GridColor = Color.FromArgb(45, 70, 95);
+			_grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
+			_grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+			_grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			_grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			_grid.DefaultCellStyle.BackColor = Color.FromArgb(2, 10, 20);
+			_grid.DefaultCellStyle.ForeColor = Color.White;
+			_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
+			_grid.DefaultCellStyle.SelectionForeColor = Color.White;
+			_grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			_grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+			_grid.CellContentClick += Grid_CellContentClick;
+
+			_grid.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn(
+				"colGlobalVariable",
+				_isEnglish ? "Global Variable" : "全局变量",
+				340));
+
+			DataGridViewTextBoxColumn valueColumn = new DataGridViewTextBoxColumn();
+			valueColumn.Name = "colExpectedValue";
+			valueColumn.HeaderText = _isEnglish ? "Target Value" : "目标值";
+			valueColumn.Width = 260;
+			_grid.Columns.Add(valueColumn);
+			Controls.Add(_grid);
+
+			_btnAdd = CreateButton(_isEnglish ? "+ Add" : "+ 添加", 18, 405, 120);
+			_btnAdd.Click += delegate { AddConditionRow(string.Empty, "1"); };
+			Controls.Add(_btnAdd);
+
+			_btnDelete = CreateButton(_isEnglish ? "Delete" : "删除选中", 150, 405, 130);
+			_btnDelete.Click += BtnDelete_Click;
+			Controls.Add(_btnDelete);
+
+			_btnOk = CreateButton(_isEnglish ? "OK" : "确定", 470, 405, 100);
+			_btnOk.BackColor = Color.FromArgb(0, 120, 220);
+			_btnOk.DialogResult = DialogResult.OK;
+			_btnOk.Click += BtnOk_Click;
+			Controls.Add(_btnOk);
+
+			_btnCancel = CreateButton(_isEnglish ? "Cancel" : "取消", 590, 405, 100);
+			_btnCancel.DialogResult = DialogResult.Cancel;
+			Controls.Add(_btnCancel);
+
+			LoadRows();
+		}
+
+		private Button CreateButton(string text, int x, int y, int width)
+		{
+			Button button = new Button();
+			button.Text = text;
+			button.Location = new Point(x, y);
+			button.Size = new Size(width, 36);
+			button.FlatStyle = FlatStyle.Flat;
+			button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			button.ForeColor = Color.White;
+			button.BackColor = Color.FromArgb(2, 10, 20);
+			button.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			return button;
+		}
+
+		private void LoadRows()
+		{
+			_grid.Rows.Clear();
+			foreach (TaskExecutionCondition condition in Conditions)
+			{
+				AddConditionRow(condition.GlobalVariableName, condition.ExpectedValue);
+			}
+		}
+
+		private void AddConditionRow(string globalVariableName, string expectedValue)
+		{
+			int rowIndex = _grid.Rows.Add(string.Empty, expectedValue);
+			GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colGlobalVariable", globalVariableName);
+		}
+
+		private void Grid_CellContentClick(object sender, DataGridViewCellEventArgs e)
+		{
+			if (e.RowIndex < 0 || e.ColumnIndex < 0)
+			{
+				return;
+			}
+
+			if (_grid.Columns[e.ColumnIndex].Name == "colGlobalVariable")
+			{
+				GlobalVariableBindingUi.SelectForCell(this, _grid.Rows[e.RowIndex], "colGlobalVariable");
+			}
+		}
+
+		private void BtnDelete_Click(object sender, EventArgs e)
+		{
+			foreach (DataGridViewRow row in _grid.SelectedRows)
+			{
+				if (!row.IsNewRow)
+				{
+					_grid.Rows.Remove(row);
+				}
+			}
+		}
+
+		private void BtnOk_Click(object sender, EventArgs e)
+		{
+			_grid.EndEdit();
+			Conditions = ReadRows();
+			DialogResult = DialogResult.OK;
+			Close();
+		}
+
+		private List<TaskExecutionCondition> ReadRows()
+		{
+			List<TaskExecutionCondition> result = new List<TaskExecutionCondition>();
+			foreach (DataGridViewRow row in _grid.Rows)
+			{
+				if (row.IsNewRow)
+				{
+					continue;
+				}
+
+				string name = GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable");
+				if (string.IsNullOrWhiteSpace(name))
+				{
+					continue;
+				}
+
+				result.Add(new TaskExecutionCondition
+				{
+					GlobalVariableName = name.Trim(),
+					ExpectedValue = GetCellString(row, "colExpectedValue"),
+					Compare = TriggerCompareType.Equal
+				});
+			}
+
+			return result;
+		}
+
+		private string GetCellString(DataGridViewRow row, string columnName)
+		{
+			if (row == null || row.DataGridView == null || !row.DataGridView.Columns.Contains(columnName))
+			{
+				return string.Empty;
+			}
+
+			object value = row.Cells[columnName].Value;
+			return value == null ? string.Empty : value.ToString().Trim();
+		}
+
+		private static List<TaskExecutionCondition> CloneConditions(List<TaskExecutionCondition> source)
+		{
+			List<TaskExecutionCondition> result = new List<TaskExecutionCondition>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (TaskExecutionCondition condition in source)
+			{
+				if (condition == null || string.IsNullOrWhiteSpace(condition.GlobalVariableName))
+				{
+					continue;
+				}
+
+				result.Add(new TaskExecutionCondition
+				{
+					GlobalVariableName = condition.GlobalVariableName.Trim(),
+					ExpectedValue = condition.ExpectedValue == null ? string.Empty : condition.ExpectedValue.Trim(),
+					Compare = condition.Compare
+				});
+			}
+
+			return result;
 		}
 	}
 
@@ -3964,6 +4438,7 @@ namespace Aron_V3
 		private readonly TextBox _textBox;
 		private readonly Button _btnOk;
 		private readonly Button _btnCancel;
+		private readonly bool _isEnglish;
 
 		public string InputValue
 		{
@@ -3972,6 +4447,7 @@ namespace Aron_V3
 
 		public InputTextDialog(string title, string labelText, string defaultValue)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			this.Text = title;
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -4001,8 +4477,8 @@ namespace Aron_V3
 			_textBox.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular);
 			_textBox.Margin = new Padding(0);
 
-			_btnOk = CreateDialogButton("OK", 170, 135, true);
-			_btnCancel = CreateDialogButton("Cancel", 310, 135, false);
+			_btnOk = CreateDialogButton(T("确定", "OK"), 170, 135, true);
+			_btnCancel = CreateDialogButton(T("取消", "Cancel"), 310, 135, false);
 
 			_btnOk.Click += btnOk_Click;
 
@@ -4032,7 +4508,7 @@ namespace Aron_V3
 		{
 			if (string.IsNullOrWhiteSpace(_textBox.Text))
 			{
-				MessageBox.Show("Job name cannot be empty.", "Add Job", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(T("名称不能为空。", "Name cannot be empty."), this.Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				_textBox.Focus();
 				return;
 			}
@@ -4057,6 +4533,11 @@ namespace Aron_V3
 			button.Cursor = Cursors.Hand;
 			button.UseVisualStyleBackColor = false;
 			return button;
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 
@@ -4223,14 +4704,16 @@ namespace Aron_V3
 		private readonly Button _btnCancel;
 		private readonly Button _btnClear;
 		private readonly Label _lblTitle;
+		private readonly bool _isEnglish;
 
 		public List<string> SelectedImageSources { get; private set; }
 
 		public ImageSourceMultiSelectForm(List<string> allSources, List<string> selectedSources)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			SelectedImageSources = new List<string>();
 
-			this.Text = "Select Image Sources";
+			this.Text = T("选择图像源", "Select Image Sources");
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
 			this.MaximizeBox = false;
@@ -4240,7 +4723,7 @@ namespace Aron_V3
 			this.Font = new Font("Microsoft YaHei UI", 9F);
 
 			_lblTitle = new Label();
-			_lblTitle.Text = "Select one or more image sources";
+			_lblTitle.Text = T("选择一个或多个图像源", "Select one or more image sources");
 			_lblTitle.ForeColor = Color.FromArgb(220, 235, 245);
 			_lblTitle.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
 			_lblTitle.Location = new Point(22, 18);
@@ -4254,9 +4737,9 @@ namespace Aron_V3
 			_list.Location = new Point(22, 58);
 			_list.Size = new Size(476, 360);
 
-			_btnClear = CreateButton("Clear", 22, 450, false);
-			_btnOk = CreateButton("OK", 300, 450, true);
-			_btnCancel = CreateButton("Cancel", 408, 450, false);
+			_btnClear = CreateButton(T("清空", "Clear"), 22, 450, false);
+			_btnOk = CreateButton(T("确定", "OK"), 300, 450, true);
+			_btnCancel = CreateButton(T("取消", "Cancel"), 408, 450, false);
 
 			_btnClear.Click += delegate
 			{
@@ -4336,6 +4819,11 @@ namespace Aron_V3
 			button.BackColor = primary ? Color.FromArgb(0, 95, 220) : Color.FromArgb(3, 14, 27);
 			button.ForeColor = Color.White;
 			return button;
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 

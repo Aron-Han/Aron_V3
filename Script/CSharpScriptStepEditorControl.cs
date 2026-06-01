@@ -820,9 +820,21 @@ namespace Aron_V3
 		}
 
 		private const int WM_SETREDRAW = 0x000B;
+		private const int EM_GETSCROLLPOS = 0x04DD;
+		private const int EM_SETSCROLLPOS = 0x04DE;
+
+		[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+		private struct NativePoint
+		{
+			public int X;
+			public int Y;
+		}
 
 		[System.Runtime.InteropServices.DllImport("user32.dll")]
 		private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref NativePoint lParam);
 
 		private void SuspendControlRedraw(Control control)
 		{
@@ -1532,6 +1544,54 @@ namespace Aron_V3
 					continue;
 				}
 			}
+		}
+
+		private NativePoint GetCodeScrollPosition()
+		{
+			NativePoint point = new NativePoint();
+			if (txtCode == null || !txtCode.IsHandleCreated)
+			{
+				return point;
+			}
+
+			try
+			{
+				SendMessage(txtCode.Handle, EM_GETSCROLLPOS, IntPtr.Zero, ref point);
+			}
+			catch
+			{
+			}
+
+			return point;
+		}
+
+		private void SetCodeScrollPosition(NativePoint point)
+		{
+			if (txtCode == null || !txtCode.IsHandleCreated)
+			{
+				return;
+			}
+
+			try
+			{
+				SendMessage(txtCode.Handle, EM_SETSCROLLPOS, IntPtr.Zero, ref point);
+			}
+			catch
+			{
+			}
+		}
+
+		private void ResetCodeHorizontalScroll()
+		{
+			NativePoint point = GetCodeScrollPosition();
+			if (point.X == 0)
+			{
+				return;
+			}
+
+			point.X = 0;
+			SetCodeScrollPosition(point);
+			RequestLineNumberRefresh(false);
 		}
 
 		private void RemoveLegacyAutoLinkedInputs()
@@ -5212,6 +5272,7 @@ namespace Aron_V3
 			}
 
 			txtCode.SelectedText = Environment.NewLine + indent;
+			ResetCodeHorizontalScroll();
 			RequestLineNumberRefresh(false);
 			RequestSyntaxHighlight(false);
 		}
@@ -5740,6 +5801,7 @@ namespace Aron_V3
 			int selectionStart = txtCode.SelectionStart;
 			int selectionLength = txtCode.SelectionLength;
 			Color selectionColor = txtCode.SelectionColor;
+			NativePoint scrollPosition = GetCodeScrollPosition();
 
 			SuspendControlRedraw(txtCode);
 			try
@@ -5760,10 +5822,12 @@ namespace Aron_V3
 
 				txtCode.Select(Math.Min(selectionStart, txtCode.TextLength), Math.Min(selectionLength, Math.Max(0, txtCode.TextLength - selectionStart)));
 				txtCode.SelectionColor = selectionColor;
+				SetCodeScrollPosition(scrollPosition);
 			}
 			finally
 			{
 				ResumeControlRedraw(txtCode);
+				SetCodeScrollPosition(scrollPosition);
 				_syntaxHighlighting = false;
 			}
 		}
@@ -5977,6 +6041,7 @@ namespace Aron_V3
 		private Button btnClose;
 		private string _folder;
 		private string _usingFile;
+		private readonly bool _isEnglish;
 
 		public ScriptReferenceInfoForm(
 			List<ScriptReferenceViewItem> references,
@@ -5984,6 +6049,7 @@ namespace Aron_V3
 			string folder,
 			string usingFile)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			_folder = folder ?? string.Empty;
 			_usingFile = usingFile ?? string.Empty;
 
@@ -5994,7 +6060,7 @@ namespace Aron_V3
 
 		private void InitializeUi()
 		{
-			Text = "Script Reference Info";
+			Text = T("脚本引用信息", "Script Reference Info");
 			StartPosition = FormStartPosition.CenterParent;
 			Size = new Size(1080, 680);
 			MinimumSize = new Size(920, 560);
@@ -6018,7 +6084,7 @@ namespace Aron_V3
 			lblTitle.TextAlign = ContentAlignment.MiddleLeft;
 			lblTitle.ForeColor = Color.White;
 			lblTitle.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
-			lblTitle.Text = "当前脚本编译引用 DLL / Current script compile references";
+			lblTitle.Text = T("当前脚本编译引用 DLL", "Current script compile references");
 
 			txtFolder = new TextBox();
 			txtFolder.Dock = DockStyle.Fill;
@@ -6027,7 +6093,7 @@ namespace Aron_V3
 			txtFolder.BackColor = Color.FromArgb(1, 8, 16);
 			txtFolder.ForeColor = Color.FromArgb(210, 230, 245);
 			txtFolder.Font = new Font("Consolas", 9F);
-			txtFolder.Text = "DLL Folder: " + _folder;
+			txtFolder.Text = T("DLL 目录: ", "DLL Folder: ") + _folder;
 
 			grid = new DataGridView();
 			grid.Dock = DockStyle.Fill;
@@ -6054,10 +6120,10 @@ namespace Aron_V3
 			grid.DefaultCellStyle.SelectionForeColor = Color.White;
 			grid.RowTemplate.Height = 24;
 
-			grid.Columns.Add("Source", "来源");
-			grid.Columns.Add("Name", "名称");
-			grid.Columns.Add("Exists", "存在");
-			grid.Columns.Add("Path", "路径");
+			grid.Columns.Add("Source", T("来源", "Source"));
+			grid.Columns.Add("Name", T("名称", "Name"));
+			grid.Columns.Add("Exists", T("存在", "Exists"));
+			grid.Columns.Add("Path", T("路径", "Path"));
 
 			grid.Columns["Source"].FillWeight = 135;
 			grid.Columns["Name"].FillWeight = 170;
@@ -6078,9 +6144,9 @@ namespace Aron_V3
 			buttonPanel.Dock = DockStyle.Fill;
 			buttonPanel.BackColor = BackColor;
 
-			btnOpenFolder = CreateButton("打开DLL目录", 10, 8, 130);
-			btnImportDll = CreateButton("导入DLL", 150, 8, 120);
-			btnClose = CreateButton("关闭", 930, 8, 100);
+			btnOpenFolder = CreateButton(T("打开DLL目录", "Open DLL Folder"), 10, 8, 130);
+			btnImportDll = CreateButton(T("导入DLL", "Import DLL"), 150, 8, 120);
+			btnClose = CreateButton(T("关闭", "Close"), 930, 8, 100);
 			btnClose.Anchor = AnchorStyles.Right | AnchorStyles.Top;
 
 			btnOpenFolder.Click += btnOpenFolder_Click;
@@ -6134,7 +6200,7 @@ namespace Aron_V3
 				int row = grid.Rows.Add(
 					item.Source,
 					item.Name,
-					item.Exists ? "Yes" : "No",
+					item.Exists ? T("是", "Yes") : T("否", "No"),
 					item.Path);
 
 				if (!item.Exists)
@@ -6147,7 +6213,7 @@ namespace Aron_V3
 		private void LoadUsings(List<string> usings)
 		{
 			StringBuilder sb = new StringBuilder();
-			sb.AppendLine("Auto using namespaces used during compilation:");
+			sb.AppendLine(T("编译时自动使用的 using namespace：", "Auto using namespaces used during compilation:"));
 
 			if (usings != null)
 			{
@@ -6161,10 +6227,12 @@ namespace Aron_V3
 			}
 
 			sb.AppendLine();
-			sb.AppendLine("Using config file:");
+			sb.AppendLine(T("Using 配置文件：", "Using config file:"));
 			sb.AppendLine(_usingFile);
 			sb.AppendLine();
-			sb.AppendLine("说明：如果 DLL 的真实 namespace 和文件名不同，请手动编辑 ScriptUsings.txt，每行写一个 namespace。");
+			sb.AppendLine(T(
+				"说明：如果 DLL 的真实 namespace 和文件名不同，请手动编辑 ScriptUsings.txt，每行写一个 namespace。",
+				"Note: If the real namespace of a DLL differs from its file name, edit ScriptUsings.txt manually and write one namespace per line."));
 			txtUsings.Text = sb.ToString();
 		}
 
@@ -6184,6 +6252,11 @@ namespace Aron_V3
 		{
 			DialogResult = DialogResult.Cancel;
 			Close();
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 

@@ -176,6 +176,25 @@ namespace Aron_V3
 		}
 	}
 
+	public class CommunicationCustomTriggerOption
+	{
+		[XmlAttribute]
+		public string Name { get; set; }
+
+		[XmlAttribute]
+		public string ExpectedValue { get; set; }
+
+		[XmlAttribute]
+		public string Remark { get; set; }
+
+		public CommunicationCustomTriggerOption()
+		{
+			Name = string.Empty;
+			ExpectedValue = "1";
+			Remark = string.Empty;
+		}
+	}
+
 	public class ProgramJobMapItem
 	{
 		[XmlAttribute]
@@ -214,6 +233,10 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string CustomTriggerExpectedValue { get; set; }
 
+		[XmlArray("CustomTriggers")]
+		[XmlArrayItem("Trigger")]
+		public List<CommunicationCustomTriggerOption> CustomTriggers { get; set; }
+
 		[XmlAttribute]
 		public string PositionSourceName { get; set; }
 
@@ -232,6 +255,18 @@ namespace Aron_V3
 		[XmlAttribute]
 		public string ProgramSwitchFailName { get; set; }
 
+		[XmlAttribute]
+		public string ChannelReadyOutputName { get; set; }
+
+		[XmlAttribute]
+		public string ChannelReadyBusyValue { get; set; }
+
+		[XmlAttribute]
+		public string ChannelReadyDoneValue { get; set; }
+
+		[XmlAttribute]
+		public string ProgramNoOutputName { get; set; }
+
 		[XmlArray("PositionOptions")]
 		[XmlArrayItem("Position")]
 		public List<CommunicationPositionOption> PositionOptions { get; set; }
@@ -249,12 +284,17 @@ namespace Aron_V3
 			TriggerGlobalVariableName = string.Empty;
 			CustomTriggerGlobalVariableName = string.Empty;
 			CustomTriggerExpectedValue = "1";
+			CustomTriggers = new List<CommunicationCustomTriggerOption>();
 			PositionSourceName = "Not Use";
 			PositionGlobalVariableName = string.Empty;
 			ProgramNoAddressName = "JobID";
 			ProgramSwitchEnableName = string.Empty;
 			ProgramSwitchDoneName = string.Empty;
 			ProgramSwitchFailName = string.Empty;
+			ChannelReadyOutputName = string.Empty;
+			ChannelReadyBusyValue = "0";
+			ChannelReadyDoneValue = "1";
+			ProgramNoOutputName = string.Empty;
 			PositionOptions = new List<CommunicationPositionOption>();
 			ProgramJobMap = new List<ProgramJobMapItem>();
 		}
@@ -538,6 +578,11 @@ namespace Aron_V3
 			FlowConfigStore.PathManager.EnsureProjectFolders();
 			XmlConfigHelper.Save(ConfigFile, config);
 
+			DiagnosticLogStore.Append(
+				DiagnosticLogLevel.Info,
+				"Config",
+				"Communication config saved.",
+				new Dictionary<string, string> { { "path", ConfigFile } });
 
 			CommunicationConfigChangedHub.RaiseConfigChanged();
 		}
@@ -923,9 +968,18 @@ namespace Aron_V3
 				if (channel.TriggerGlobalVariableName == null) channel.TriggerGlobalVariableName = string.Empty;
 				if (channel.CustomTriggerGlobalVariableName == null) channel.CustomTriggerGlobalVariableName = string.Empty;
 				if (string.IsNullOrWhiteSpace(channel.CustomTriggerExpectedValue)) channel.CustomTriggerExpectedValue = "1";
+				if (channel.CustomTriggers == null) channel.CustomTriggers = new List<CommunicationCustomTriggerOption>();
+				MigrateLegacyCustomTrigger(channel);
 				if (string.IsNullOrWhiteSpace(channel.PositionSourceName)) channel.PositionSourceName = "Not Use";
 				if (channel.PositionGlobalVariableName == null) channel.PositionGlobalVariableName = string.Empty;
 				if (string.IsNullOrWhiteSpace(channel.ProgramNoAddressName)) channel.ProgramNoAddressName = "JobID";
+				if (channel.ProgramSwitchEnableName == null) channel.ProgramSwitchEnableName = string.Empty;
+				if (channel.ProgramSwitchDoneName == null) channel.ProgramSwitchDoneName = string.Empty;
+				if (channel.ProgramSwitchFailName == null) channel.ProgramSwitchFailName = string.Empty;
+				if (channel.ChannelReadyOutputName == null) channel.ChannelReadyOutputName = string.Empty;
+				if (string.IsNullOrWhiteSpace(channel.ChannelReadyBusyValue)) channel.ChannelReadyBusyValue = "0";
+				if (string.IsNullOrWhiteSpace(channel.ChannelReadyDoneValue)) channel.ChannelReadyDoneValue = "1";
+				if (channel.ProgramNoOutputName == null) channel.ProgramNoOutputName = string.Empty;
 				if (channel.PositionOptions == null) channel.PositionOptions = new List<CommunicationPositionOption>();
 				if (channel.ProgramJobMap == null) channel.ProgramJobMap = new List<ProgramJobMapItem>();
 				if (!channel.PositionOptions.Any(x => x != null && string.Equals(x.Name, "Not Use", StringComparison.OrdinalIgnoreCase)))
@@ -940,7 +994,52 @@ namespace Aron_V3
 					if (option.ExpectedValue == null) option.ExpectedValue = string.Empty;
 					if (option.Remark == null) option.Remark = string.Empty;
 				}
+
+				for (int i = channel.CustomTriggers.Count - 1; i >= 0; i--)
+				{
+					CommunicationCustomTriggerOption option = channel.CustomTriggers[i];
+					if (option == null || string.IsNullOrWhiteSpace(option.Name))
+					{
+						channel.CustomTriggers.RemoveAt(i);
+						continue;
+					}
+
+					option.Name = option.Name.Trim();
+					if (option.ExpectedValue == null) option.ExpectedValue = string.Empty;
+					if (option.Remark == null) option.Remark = string.Empty;
+				}
+
+				CommunicationCustomTriggerOption firstCustomTrigger = channel.CustomTriggers.FirstOrDefault();
+				if (firstCustomTrigger != null)
+				{
+					channel.CustomTriggerGlobalVariableName = firstCustomTrigger.Name;
+					channel.CustomTriggerExpectedValue = string.IsNullOrWhiteSpace(firstCustomTrigger.ExpectedValue)
+						? "1"
+						: firstCustomTrigger.ExpectedValue;
+				}
 			}
+		}
+
+		private static void MigrateLegacyCustomTrigger(CommunicationChannelConfig channel)
+		{
+			if (channel == null || channel.CustomTriggers == null)
+			{
+				return;
+			}
+
+			if (channel.CustomTriggers.Count > 0 ||
+				string.IsNullOrWhiteSpace(channel.CustomTriggerGlobalVariableName))
+			{
+				return;
+			}
+
+			channel.CustomTriggers.Add(new CommunicationCustomTriggerOption
+			{
+				Name = channel.CustomTriggerGlobalVariableName.Trim(),
+				ExpectedValue = string.IsNullOrWhiteSpace(channel.CustomTriggerExpectedValue)
+					? "1"
+					: channel.CustomTriggerExpectedValue.Trim()
+			});
 		}
 
 		private static void EnsureEngineName(List<CommInputVariable> list)

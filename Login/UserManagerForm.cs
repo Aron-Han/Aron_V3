@@ -26,9 +26,11 @@ namespace Aron_V3
 		private Button btnResetPassword;
 		private Button btnSave;
 		private Button btnClose;
+		private readonly bool _isEnglish;
 
 		public UserManagerForm()
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			this.Opacity = 0;
 			this.SuspendLayout();
 
@@ -61,7 +63,7 @@ namespace Aron_V3
 
 		private void InitializeUi()
 		{
-			this.Text = "User Management";
+			this.Text = T("用户管理", "User Management");
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.Sizable;
 			this.ClientSize = new Size(1050, 620);
@@ -84,7 +86,7 @@ namespace Aron_V3
 			SetDoubleBuffered(panelHeader);
 
 			Label title = new Label();
-			title.Text = "User Management / Permission Setting";
+			title.Text = T("用户管理 / 权限设置", "User Management / Permission Setting");
 			title.ForeColor = Color.White;
 			title.BackColor = Color.Transparent;
 			title.Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold);
@@ -93,7 +95,7 @@ namespace Aron_V3
 			SetDoubleBuffered(title);
 
 			Label lblAutoLogout = new Label();
-			lblAutoLogout.Text = "Auto Logout Minutes";
+			lblAutoLogout.Text = T("自动登出分钟数", "Auto Logout Minutes");
 			lblAutoLogout.ForeColor = Color.White;
 			lblAutoLogout.BackColor = Color.Transparent;
 			lblAutoLogout.Location = new Point(0, 48);
@@ -119,11 +121,11 @@ namespace Aron_V3
 			panelButtonBar.BackColor = Color.FromArgb(2, 10, 20);
 			SetDoubleBuffered(panelButtonBar);
 
-			btnAdd = CreateButton("+ Add User", 0, 12, 115, false);
-			btnDelete = CreateButton("Delete", 125, 12, 115, false);
-			btnResetPassword = CreateButton("Reset Password", 250, 12, 135, false);
-			btnSave = CreateButton("Save", 0, 12, 115, true);
-			btnClose = CreateButton("Close", 125, 12, 115, false);
+			btnAdd = CreateButton(T("+ 新增用户", "+ Add User"), 0, 12, 115, false);
+			btnDelete = CreateButton(T("删除", "Delete"), 125, 12, 115, false);
+			btnResetPassword = CreateButton(T("重置密码", "Reset Password"), 250, 12, 135, false);
+			btnSave = CreateButton(T("保存", "Save"), 0, 12, 115, true);
+			btnClose = CreateButton(T("关闭", "Close"), 125, 12, 115, false);
 
 			btnSave.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 			btnClose.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -178,18 +180,18 @@ namespace Aron_V3
 			dgvUsers.DataError -= dgvUsers_DataError;
 			dgvUsers.DataError += dgvUsers_DataError;
 
-			dgvUsers.Columns.Add(CreateTextColumn("UserName", "User Name", 110, true));
-			dgvUsers.Columns.Add(CreateTextColumn("DisplayName", "Display Name", 130, false));
-			dgvUsers.Columns.Add(CreateTextColumn("Role", "Role", 100, false));
-			dgvUsers.Columns.Add(CreateCheckColumn("Enabled", "Enabled", 80));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanRun", "Run", 70));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanHardwareConfig", "Hardware", 90));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanAlgorithmConfig", "Algorithm", 90));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanFlowConfig", "Flow", 80));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanCommunicationConfig", "Comm", 80));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanDatabaseConfig", "Database", 90));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanSystemConfig", "System", 80));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanUserManagement", "Users", 80));
+			dgvUsers.Columns.Add(CreateTextColumn("UserName", T("用户名", "User Name"), 110, true));
+			dgvUsers.Columns.Add(CreateTextColumn("DisplayName", T("显示名称", "Display Name"), 130, false));
+			dgvUsers.Columns.Add(CreateTextColumn("Role", T("角色", "Role"), 100, false));
+			dgvUsers.Columns.Add(CreateCheckColumn("Enabled", T("启用", "Enabled"), 80));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanRun", T("运行", "Run"), 70));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanHardwareConfig", T("硬件", "Hardware"), 90));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanAlgorithmConfig", T("算法", "Algorithm"), 90));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanFlowConfig", T("流程", "Flow"), 80));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanCommunicationConfig", T("通讯", "Comm"), 80));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanDatabaseConfig", T("数据库", "Database"), 90));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanSystemConfig", T("系统", "System"), 80));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanUserManagement", T("用户", "Users"), 80));
 
 			// Dock 顺序很重要：
 			// 先加入 Fill 的 dgv，再加入 Bottom 的按钮栏和 Top 的标题栏，避免按钮被 DataGridView 覆盖。
@@ -325,11 +327,11 @@ namespace Aron_V3
 
 			if (string.Equals(userName, "admin", StringComparison.OrdinalIgnoreCase))
 			{
-				MessageBox.Show("Default admin cannot be deleted.", "User Management", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(T("默认 admin 用户不能删除。", "Default admin cannot be deleted."), T("用户管理", "User Management"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
-			if (MessageBox.Show("Delete selected user?", "User Management", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+			if (MessageBox.Show(T("确定删除选中的用户？", "Delete selected user?"), T("用户管理", "User Management"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 			{
 				return;
 			}
@@ -367,11 +369,11 @@ namespace Aron_V3
 
 			if (UserAccountStore.ResetPasswordByAdmin(userName, "123456", out error))
 			{
-				MessageBox.Show("Password has been reset to 123456.", "User Management", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				MessageBox.Show(T("密码已重置为 123456。", "Password has been reset to 123456."), T("用户管理", "User Management"), MessageBoxButtons.OK, MessageBoxIcon.Information);
 			}
 			else
 			{
-				MessageBox.Show(error, "User Management", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(error, T("用户管理", "User Management"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			}
 		}
 
@@ -429,7 +431,7 @@ namespace Aron_V3
 				EndPageUpdate();
 			}
 
-			MessageBox.Show("User configuration saved.", "User Management", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			MessageBox.Show(T("用户配置已保存。", "User configuration saved."), T("用户管理", "User Management"), MessageBoxButtons.OK, MessageBoxIcon.Information);
 		}
 
 		private bool ToBool(object value)
@@ -539,6 +541,11 @@ namespace Aron_V3
 			{
 			}
 		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
 	}
 
 	public class RegisterUserForm : Form
@@ -550,9 +557,11 @@ namespace Aron_V3
 		private Button btnOk;
 		private Button btnCancel;
 		private Panel panelMain;
+		private readonly bool _isEnglish;
 
 		public RegisterUserForm()
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			this.Opacity = 0;
 			this.SuspendLayout();
 
@@ -585,7 +594,7 @@ namespace Aron_V3
 
 		private void InitializeUi()
 		{
-			this.Text = "Register User";
+			this.Text = T("新增用户", "Register User");
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
 			this.ClientSize = new Size(430, 320);
@@ -602,10 +611,10 @@ namespace Aron_V3
 			SetDoubleBuffered(panelMain);
 			panelMain.SuspendLayout();
 
-			AddLabel("User Name", 45, 55);
-			AddLabel("Display Name", 45, 100);
-			AddLabel("Password", 45, 145);
-			AddLabel("Role", 45, 190);
+			AddLabel(T("用户名", "User Name"), 45, 55);
+			AddLabel(T("显示名称", "Display Name"), 45, 100);
+			AddLabel(T("密码", "Password"), 45, 145);
+			AddLabel(T("角色", "Role"), 45, 190);
 
 			txtUserName = AddTextBox(165, 52);
 			txtDisplayName = AddTextBox(165, 97);
@@ -623,8 +632,8 @@ namespace Aron_V3
 			cmbRole.Items.Add("Admin");
 			cmbRole.SelectedIndex = 0;
 
-			btnOk = CreateButton("OK", 165, 245, true);
-			btnCancel = CreateButton("Cancel", 285, 245, false);
+			btnOk = CreateButton(T("确定", "OK"), 165, 245, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 285, 245, false);
 
 			btnOk.Click += btnOk_Click;
 			btnCancel.Click += delegate { this.DialogResult = DialogResult.Cancel; this.Close(); };
@@ -700,11 +709,11 @@ namespace Aron_V3
 
 			if (!UserAccountStore.AddUser(txtUserName.Text, txtDisplayName.Text, txtPassword.Text, cmbRole.Text, permission, out error))
 			{
-				MessageBox.Show(error, "Register User", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(error, T("新增用户", "Register User"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
-			MessageBox.Show("User registered successfully.", "Register User", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			MessageBox.Show(T("用户新增成功。", "User registered successfully."), T("新增用户", "Register User"), MessageBoxButtons.OK, MessageBoxIcon.Information);
 			this.DialogResult = DialogResult.OK;
 			this.Close();
 		}
@@ -731,6 +740,11 @@ namespace Aron_V3
 			catch
 			{
 			}
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 }

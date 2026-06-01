@@ -47,6 +47,12 @@ namespace Aron_V3
 		LessOrEqual = 5
 	}
 
+	public enum TriggerRunMode
+	{
+		OnReceive = 0,
+		OnChanged = 1
+	}
+
 	public enum TaskConcurrencyPolicy
 	{
 		IgnoreWhenRunning = 0,
@@ -72,6 +78,7 @@ namespace Aron_V3
 
 		public string TaskRoot { get { return Path.Combine(ProjectRoot, "Task"); } }
 		public string JobRoot { get { return ProjectRoot; } }
+		public string DatabaseRoot { get { return Path.Combine(ProjectRoot, "database"); } }
 
 		// 保留 StepsRoot 属性，兼容旧代码调用。
 		// 新路径统一放在 Project\Task\<TaskName>\<ProgramNo> 下。
@@ -100,6 +107,7 @@ namespace Aron_V3
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Save"));
 			Directory.CreateDirectory(Path.Combine(ImagesRoot, "Replay"));
 			Directory.CreateDirectory(LogsRoot);
+			Directory.CreateDirectory(DatabaseRoot);
 
 			// 注意：
 			// 不在这里创建 Config\Hardware。
@@ -719,6 +727,33 @@ namespace Aron_V3
 		}
 	}
 
+	public class DatabaseInputBinding
+	{
+		[XmlAttribute]
+		public string InputName { get; set; }
+
+		[XmlAttribute]
+		public string GlobalVariableName { get; set; }
+
+		[XmlAttribute]
+		public string AssignedValue { get; set; }
+
+		[XmlAttribute]
+		public bool ForceValue { get; set; }
+
+		[XmlAttribute]
+		public bool Enabled { get; set; }
+
+		public DatabaseInputBinding()
+		{
+			InputName = string.Empty;
+			GlobalVariableName = string.Empty;
+			AssignedValue = string.Empty;
+			ForceValue = false;
+			Enabled = true;
+		}
+	}
+
 	public class StepFlowItem
 	{
 		[XmlAttribute]
@@ -771,6 +806,10 @@ namespace Aron_V3
 		[XmlArray("SignalOutputs")]
 		[XmlArrayItem("Output")]
 		public List<SignalOutputBinding> SignalOutputs { get; set; }
+
+		[XmlArray("DatabaseInputs")]
+		[XmlArrayItem("Input")]
+		public List<DatabaseInputBinding> DatabaseInputs { get; set; }
 
 		// Script Step 可选择接收哪些前序模块作为参数对象。
 		// 多个 StepName 用英文分号分隔，例如：Inspection;Measure_01。
@@ -840,6 +879,7 @@ namespace Aron_V3
 			DisplayResultKey = "Not Use";
 			DisplayMode = "Fit";
 			SignalOutputs = new List<SignalOutputBinding>();
+			DatabaseInputs = new List<DatabaseInputBinding>();
 			ScriptInputStepKeys = string.Empty;
 		}
 	}
@@ -865,6 +905,9 @@ namespace Aron_V3
 		public TriggerCompareType TriggerCompare { get; set; }
 
 		[XmlAttribute]
+		public TriggerRunMode TriggerRunMode { get; set; }
+
+		[XmlAttribute]
 		public string PositionName { get; set; }
 
 		[XmlAttribute]
@@ -872,6 +915,10 @@ namespace Aron_V3
 
 		[XmlAttribute]
 		public TriggerCompareType PositionCompare { get; set; }
+
+		[XmlArray("ExecutionConditions")]
+		[XmlArrayItem("Condition")]
+		public List<TaskExecutionCondition> ExecutionConditions { get; set; }
 
 		public TaskCommunicationTriggerBinding()
 		{
@@ -881,9 +928,30 @@ namespace Aron_V3
 			TriggerName = string.Empty;
 			TriggerValue = "1";
 			TriggerCompare = TriggerCompareType.Equal;
+			TriggerRunMode = TriggerRunMode.OnReceive;
 			PositionName = "Not Use";
 			PositionValue = "1";
 			PositionCompare = TriggerCompareType.Equal;
+			ExecutionConditions = new List<TaskExecutionCondition>();
+		}
+	}
+
+	public class TaskExecutionCondition
+	{
+		[XmlAttribute]
+		public string GlobalVariableName { get; set; }
+
+		[XmlAttribute]
+		public string ExpectedValue { get; set; }
+
+		[XmlAttribute]
+		public TriggerCompareType Compare { get; set; }
+
+		public TaskExecutionCondition()
+		{
+			GlobalVariableName = string.Empty;
+			ExpectedValue = string.Empty;
+			Compare = TriggerCompareType.Equal;
 		}
 	}
 
@@ -921,6 +989,9 @@ namespace Aron_V3
 		[XmlAttribute]
 		public TriggerCompareType TriggerCompare { get; set; }
 
+		[XmlAttribute]
+		public TriggerRunMode TriggerRunMode { get; set; }
+
 		// 新字段：位置号。
 		// 原“标志位”改为“位置号”，旧字段 FlagBit 继续保留用于兼容旧 XML。
 		[XmlAttribute]
@@ -936,6 +1007,10 @@ namespace Aron_V3
 
 		[XmlAttribute]
 		public TriggerCompareType PositionCompare { get; set; }
+
+		[XmlArray("ExecutionConditions")]
+		[XmlArrayItem("Condition")]
+		public List<TaskExecutionCondition> ExecutionConditions { get; set; }
 
 		// 旧字段保留，避免旧 XML 或旧代码报错。
 		// 新逻辑里它可以不再代表 PLC 输入地址。
@@ -1025,10 +1100,12 @@ namespace Aron_V3
 			TriggerName = string.Empty;
 			TriggerValue = "1";
 			TriggerCompare = TriggerCompareType.Equal;
+			TriggerRunMode = TriggerRunMode.OnReceive;
 			PositionName = "Not Use";
 			PositionOptionName = "Not Use";
 			PositionValue = "1";
 			PositionCompare = TriggerCompareType.Equal;
+			ExecutionConditions = new List<TaskExecutionCondition>();
 			InputAddress = string.Empty;
 			ImageSourceKey = "Not Use";
 			FlagBit = 0;
@@ -1246,6 +1323,12 @@ namespace Aron_V3
 			SyncFlatJobs(config);
 			XmlConfigHelper.Save(FlowConfigFile, config);
 			EnsureStepFolders(config);
+
+			DiagnosticLogStore.Append(
+				DiagnosticLogLevel.Info,
+				"Config",
+				"Flow config saved.",
+				new Dictionary<string, string> { { "path", FlowConfigFile } });
 
 			EventHandler handler = FlowConfigSaved;
 			if (handler != null)
@@ -1494,6 +1577,7 @@ namespace Aron_V3
 			task.TriggerName = "Trigger_" + (runOrder - 1).ToString();
 			task.TriggerValue = "1";
 			task.TriggerCompare = TriggerCompareType.Equal;
+			task.TriggerRunMode = TriggerRunMode.OnReceive;
 			task.PositionName = "Not Use";
 			task.PositionValue = "1";
 			task.PositionCompare = TriggerCompareType.Equal;
@@ -1680,6 +1764,8 @@ namespace Aron_V3
 				if (task.Steps == null) task.Steps = new List<StepConfig>();
 				if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
 				if (task.CommunicationTriggerBindings == null) task.CommunicationTriggerBindings = new List<TaskCommunicationTriggerBinding>();
+				if (task.ExecutionConditions == null) task.ExecutionConditions = new List<TaskExecutionCondition>();
+				NormalizeExecutionConditions(task.ExecutionConditions);
 
 				if (string.IsNullOrEmpty(task.CommunicationProtocol)) task.CommunicationProtocol = job.ProtocolName;
 				if (string.IsNullOrEmpty(task.CommunicationChannel)) task.CommunicationChannel = job.ChannelName;
@@ -1717,11 +1803,19 @@ namespace Aron_V3
 					if (flowItem == null) continue;
 					if (string.IsNullOrWhiteSpace(flowItem.FlowItemId)) flowItem.FlowItemId = Guid.NewGuid().ToString("N");
 					if (flowItem.SignalOutputs == null) flowItem.SignalOutputs = new List<SignalOutputBinding>();
+					if (flowItem.DatabaseInputs == null) flowItem.DatabaseInputs = new List<DatabaseInputBinding>();
 					foreach (SignalOutputBinding signalOutput in flowItem.SignalOutputs)
 					{
 						if (signalOutput == null) continue;
 						if (signalOutput.OutputName == null) signalOutput.OutputName = string.Empty;
 						if (signalOutput.AssignedValue == null) signalOutput.AssignedValue = string.Empty;
+					}
+					foreach (DatabaseInputBinding databaseInput in flowItem.DatabaseInputs)
+					{
+						if (databaseInput == null) continue;
+						if (databaseInput.InputName == null) databaseInput.InputName = string.Empty;
+						if (databaseInput.GlobalVariableName == null) databaseInput.GlobalVariableName = string.Empty;
+						if (databaseInput.AssignedValue == null) databaseInput.AssignedValue = string.Empty;
 					}
 					if (string.IsNullOrWhiteSpace(flowItem.BlockType)) flowItem.BlockType = "Step";
 					if (string.IsNullOrWhiteSpace(flowItem.BlockName)) flowItem.BlockName = flowItem.StepName;
@@ -1787,9 +1881,11 @@ namespace Aron_V3
 			binding.TriggerName = task.TriggerName;
 			binding.TriggerValue = task.TriggerValue;
 			binding.TriggerCompare = task.TriggerCompare;
+			binding.TriggerRunMode = task.TriggerRunMode;
 			binding.PositionName = task.PositionName;
 			binding.PositionValue = task.PositionValue;
 			binding.PositionCompare = task.PositionCompare;
+			binding.ExecutionConditions = CloneExecutionConditions(task.ExecutionConditions);
 			task.CommunicationTriggerBindings.Add(binding);
 		}
 
@@ -1813,7 +1909,56 @@ namespace Aron_V3
 				if (string.IsNullOrWhiteSpace(binding.TriggerValue)) binding.TriggerValue = "1";
 				if (string.IsNullOrWhiteSpace(binding.PositionName)) binding.PositionName = "Not Use";
 				if (string.IsNullOrWhiteSpace(binding.PositionValue)) binding.PositionValue = "1";
+				if (binding.ExecutionConditions == null) binding.ExecutionConditions = new List<TaskExecutionCondition>();
+				NormalizeExecutionConditions(binding.ExecutionConditions);
 			}
+		}
+
+		private static void NormalizeExecutionConditions(List<TaskExecutionCondition> conditions)
+		{
+			if (conditions == null)
+			{
+				return;
+			}
+
+			for (int i = conditions.Count - 1; i >= 0; i--)
+			{
+				TaskExecutionCondition condition = conditions[i];
+				if (condition == null || string.IsNullOrWhiteSpace(condition.GlobalVariableName))
+				{
+					conditions.RemoveAt(i);
+					continue;
+				}
+
+				condition.GlobalVariableName = condition.GlobalVariableName.Trim();
+				condition.ExpectedValue = condition.ExpectedValue == null ? string.Empty : condition.ExpectedValue.Trim();
+			}
+		}
+
+		private static List<TaskExecutionCondition> CloneExecutionConditions(List<TaskExecutionCondition> source)
+		{
+			List<TaskExecutionCondition> result = new List<TaskExecutionCondition>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (TaskExecutionCondition condition in source)
+			{
+				if (condition == null || string.IsNullOrWhiteSpace(condition.GlobalVariableName))
+				{
+					continue;
+				}
+
+				result.Add(new TaskExecutionCondition
+				{
+					GlobalVariableName = condition.GlobalVariableName.Trim(),
+					ExpectedValue = condition.ExpectedValue == null ? string.Empty : condition.ExpectedValue.Trim(),
+					Compare = condition.Compare
+				});
+			}
+
+			return result;
 		}
 
 		private static void SyncFlatJobs(ProjectFlowConfig config)
@@ -2458,14 +2603,21 @@ namespace Aron_V3
 		{
 			string outputKey = _config.DisplayOutputKey;
 			if (string.IsNullOrWhiteSpace(outputKey) ||
-				outputKey.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				result.OutputImages.ContainsKey(outputKey))
+				outputKey.Equals("Not Use", StringComparison.OrdinalIgnoreCase))
 			{
 				return;
 			}
 
+			VisionImage existingImage;
+			if (result.OutputImages.TryGetValue(outputKey, out existingImage) && existingImage != null)
+			{
+				AttachLastRunDisplayRecord(toolBlock, outputKey, existingImage);
+				return;
+			}
+
 			object displayRecord;
-			object value = TryGetLastRunImage(toolBlock, outputKey, out displayRecord);
+			string displayRecordKey;
+			object value = TryGetLastRunImage(toolBlock, outputKey, out displayRecord, out displayRecordKey);
 			if (value == null)
 			{
 				return;
@@ -2477,44 +2629,72 @@ namespace Aron_V3
 			image.SourceStep = _config.StepName;
 			image.RawImage = value;
 			image.DisplayRecord = displayRecord;
-			image.DisplayRecordKey = outputKey.Substring("LastRun.".Length);
+			image.DisplayRecordKey = displayRecordKey;
 			result.OutputImages[outputKey] = image;
 		}
 
-		private object TryGetLastRunImage(object toolBlock, string outputKey, out object displayRecord)
+		private void AttachLastRunDisplayRecord(object toolBlock, string outputKey, VisionImage image)
+		{
+			if (image == null || image.DisplayRecord != null)
+			{
+				return;
+			}
+
+			object displayRecord;
+			string displayRecordKey;
+			object value = TryGetLastRunImage(toolBlock, outputKey, out displayRecord, out displayRecordKey);
+			if (displayRecord == null || string.IsNullOrWhiteSpace(displayRecordKey))
+			{
+				return;
+			}
+
+			image.DisplayRecord = displayRecord;
+			image.DisplayRecordKey = displayRecordKey;
+			if (image.RawImage == null && value != null)
+			{
+				image.RawImage = value;
+			}
+		}
+
+		private object TryGetLastRunImage(object toolBlock, string outputKey, out object displayRecord, out string displayRecordKey)
 		{
 			displayRecord = null;
+			displayRecordKey = string.Empty;
 			if (toolBlock == null || string.IsNullOrWhiteSpace(outputKey) ||
-				!outputKey.StartsWith("LastRun.", StringComparison.OrdinalIgnoreCase))
+				(outputKey.StartsWith("LastRun.", StringComparison.OrdinalIgnoreCase) &&
+				 outputKey.Length <= "LastRun.".Length))
 			{
 				return null;
 			}
 
-			object record = null;
-			MethodInfo createRecord = toolBlock.GetType().GetMethod("CreateLastRunRecord", Type.EmptyTypes);
-			if (createRecord != null)
-			{
-				record = createRecord.Invoke(toolBlock, null);
-			}
-
-			if (record == null)
-			{
-				record = GetPropertyValue(toolBlock, "LastRunRecord");
-			}
-
+			object record = CreateLastRunRecord(toolBlock);
 			if (record == null)
 			{
 				return null;
 			}
 
 			object rootRecord = record;
-			string relativeKey = outputKey.Substring("LastRun.".Length);
+			string relativeKey = outputKey.StartsWith("LastRun.", StringComparison.OrdinalIgnoreCase)
+				? outputKey.Substring("LastRun.".Length)
+				: outputKey.Trim();
+
 			object imageRecord = FindRecordByKey(record, relativeKey);
+			if (!IsImageRecord(imageRecord))
+			{
+				imageRecord = FindPreferredLastRunImageRecord(record, relativeKey);
+			}
+
 			if (imageRecord != null)
 			{
 				displayRecord = rootRecord;
+				displayRecordKey = Convert.ToString(GetPropertyValue(imageRecord, "RecordKey"));
 				object imageContent = GetPropertyValue(imageRecord, "Content");
 				return imageContent ?? GetPropertyValue(imageRecord, "Image");
+			}
+
+			if (!outputKey.StartsWith("LastRun.", StringComparison.OrdinalIgnoreCase))
+			{
+				return null;
 			}
 
 			string[] parts = relativeKey
@@ -2530,8 +2710,149 @@ namespace Aron_V3
 			}
 
 			displayRecord = rootRecord;
+			displayRecordKey = Convert.ToString(GetPropertyValue(record, "RecordKey"));
 			object content = GetPropertyValue(record, "Content");
 			return content ?? GetPropertyValue(record, "Image");
+		}
+
+		private object CreateLastRunRecord(object toolBlock)
+		{
+			if (toolBlock == null)
+			{
+				return null;
+			}
+
+			object record = null;
+			MethodInfo createRecord = toolBlock.GetType().GetMethod("CreateLastRunRecord", Type.EmptyTypes);
+			if (createRecord != null)
+			{
+				record = createRecord.Invoke(toolBlock, null);
+			}
+
+			return record ?? GetPropertyValue(toolBlock, "LastRunRecord");
+		}
+
+		private object FindPreferredLastRunImageRecord(object record, string outputKey)
+		{
+			List<object> imageRecords = new List<object>();
+			CollectImageRecords(record, imageRecords);
+			if (imageRecords.Count <= 0)
+			{
+				return null;
+			}
+
+			string normalizedOutputKey = NormalizeRecordKey(outputKey);
+			if (!string.IsNullOrWhiteSpace(normalizedOutputKey))
+			{
+				foreach (object imageRecord in imageRecords)
+				{
+					string recordKey = NormalizeRecordKey(Convert.ToString(GetPropertyValue(imageRecord, "RecordKey")));
+					if (!string.IsNullOrWhiteSpace(recordKey) &&
+						(recordKey.Contains(normalizedOutputKey) || normalizedOutputKey.Contains(recordKey)))
+					{
+						return imageRecord;
+					}
+				}
+			}
+
+			foreach (object imageRecord in imageRecords)
+			{
+				string recordKey = Convert.ToString(GetPropertyValue(imageRecord, "RecordKey"));
+				if (!string.IsNullOrWhiteSpace(recordKey) &&
+					recordKey.EndsWith(".OutputImage", StringComparison.OrdinalIgnoreCase))
+				{
+					return imageRecord;
+				}
+			}
+
+			return imageRecords[0];
+		}
+
+		private void CollectImageRecords(object record, List<object> imageRecords)
+		{
+			if (record == null || imageRecords == null)
+			{
+				return;
+			}
+
+			if (IsImageRecord(record))
+			{
+				imageRecords.Add(record);
+			}
+
+			object subRecords = GetPropertyValue(record, "SubRecords");
+			IEnumerable values = subRecords as IEnumerable;
+			if (values == null)
+			{
+				return;
+			}
+
+			foreach (object child in values)
+			{
+				CollectImageRecords(child, imageRecords);
+			}
+		}
+
+		private bool IsImageRecord(object record)
+		{
+			if (record == null)
+			{
+				return false;
+			}
+
+			object content = GetPropertyValue(record, "Content") ?? GetPropertyValue(record, "Image");
+			return IsVisionImageValue(content);
+		}
+
+		private bool IsVisionImageValue(object value)
+		{
+			if (value == null)
+			{
+				return false;
+			}
+
+			Type type = value.GetType();
+			string fullName = type.FullName ?? string.Empty;
+			if (fullName.IndexOf("CogImage", StringComparison.OrdinalIgnoreCase) >= 0 ||
+				fullName.IndexOf("Bitmap", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return true;
+			}
+
+			foreach (Type interfaceType in type.GetInterfaces())
+			{
+				if ((interfaceType.FullName ?? string.Empty).IndexOf("ICogImage", StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private string NormalizeRecordKey(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+			{
+				return string.Empty;
+			}
+
+			StringBuilder builder = new StringBuilder();
+			foreach (char c in value)
+			{
+				if (char.IsLetterOrDigit(c))
+				{
+					builder.Append(char.ToLowerInvariant(c));
+				}
+			}
+
+			string text = builder.ToString();
+			if (text.StartsWith("lastrun", StringComparison.OrdinalIgnoreCase))
+			{
+				text = text.Substring("lastrun".Length);
+			}
+
+			return text;
 		}
 
 		private object FindRecordChild(object record, string name)
@@ -3836,20 +4157,65 @@ namespace Aron_V3
 				return false;
 			}
 
-			string triggerActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.TriggerName);
-			bool triggerOk = CompareValue(triggerActualValue, taskConfig.TriggerValue, taskConfig.TriggerCompare);
-
-			if (string.IsNullOrWhiteSpace(taskConfig.PositionName) ||
-				taskConfig.PositionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				taskConfig.PositionName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			string triggerName = taskConfig.TriggerName;
+			string triggerValue = taskConfig.TriggerValue;
+			string parsedTriggerName;
+			string parsedTriggerValue;
+			if (TryParseTriggerOption(triggerName, out parsedTriggerName, out parsedTriggerValue))
 			{
-				return triggerOk;
+				triggerName = parsedTriggerName;
+				triggerValue = parsedTriggerValue;
 			}
 
-			string positionActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, taskConfig.PositionName);
-			bool positionOk = CompareValue(positionActualValue, taskConfig.PositionValue, taskConfig.PositionCompare);
+			string triggerActualValue = valueProvider.GetInputValue(taskConfig.CommunicationProtocol, triggerName);
+			bool triggerOk = CompareValue(triggerActualValue, triggerValue, taskConfig.TriggerCompare);
 
-			return triggerOk && positionOk;
+			return triggerOk && AreExecutionConditionsMatched(taskConfig.ExecutionConditions);
+		}
+
+		public static bool AreExecutionConditionsMatched(List<TaskExecutionCondition> conditions)
+		{
+			if (conditions == null || conditions.Count <= 0)
+			{
+				return true;
+			}
+
+			foreach (TaskExecutionCondition condition in conditions)
+			{
+				if (condition == null || string.IsNullOrWhiteSpace(condition.GlobalVariableName))
+				{
+					return false;
+				}
+
+				string actualValue = GlobalVariableStore.GetValueText(condition.GlobalVariableName);
+				if (!CompareValue(actualValue, condition.ExpectedValue, condition.Compare))
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		private static bool TryParseTriggerOption(string triggerOption, out string triggerName, out string expectedValue)
+		{
+			triggerName = triggerOption == null ? string.Empty : triggerOption.Trim();
+			expectedValue = string.Empty;
+
+			if (string.IsNullOrWhiteSpace(triggerName))
+			{
+				return false;
+			}
+
+			int index = triggerName.LastIndexOf('=');
+			if (index <= 0)
+			{
+				return false;
+			}
+
+			expectedValue = triggerName.Substring(index + 1).Trim();
+			triggerName = triggerName.Substring(0, index).Trim();
+			return !string.IsNullOrWhiteSpace(triggerName);
 		}
 
 		public static bool CompareValue(string actual, string expected, TriggerCompareType compare)
@@ -4021,12 +4387,21 @@ namespace Aron_V3
 				bool blockOk = true;
 				string blockMessage = flowItem.BlockType + " flow block completed.";
 				Dictionary<string, object> signalOutputValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+				Dictionary<string, VisionImage> hardwareOutputImages = new Dictionary<string, VisionImage>(StringComparer.OrdinalIgnoreCase);
 				Stopwatch blockWatch = Stopwatch.StartNew();
 
-				if (IsSignalFlowBlock(flowItem))
+				if (IsHardwareFlowBlock(flowItem))
+				{
+					blockOk = AcquireHardwareFlowBlockImage(flowItem, context, hardwareOutputImages, out blockMessage);
+				}
+				else if (IsSignalFlowBlock(flowItem))
 				{
 					blockOk = SendSignalFlowBlockOutput(taskConfig, flowItem, context, signalOutputValues);
 					blockMessage = blockOk ? "Signal output completed." : "Signal output failed.";
+				}
+				else if (IsDatabaseFlowBlock(flowItem))
+				{
+					blockOk = EnqueueDatabaseFlowBlockWrite(taskConfig, flowItem, context, out blockMessage);
 				}
 
 				blockWatch.Stop();
@@ -4039,6 +4414,11 @@ namespace Aron_V3
 				foreach (KeyValuePair<string, object> output in signalOutputValues)
 				{
 					executeResult.StepResult.Outputs[output.Key] = output.Value;
+				}
+
+				foreach (KeyValuePair<string, VisionImage> image in hardwareOutputImages)
+				{
+					executeResult.StepResult.OutputImages[image.Key] = image.Value;
 				}
 
 				AppendStepLog(
@@ -4165,6 +4545,315 @@ namespace Aron_V3
 		{
 			return flowItem != null &&
 				string.Equals(flowItem.BlockType, "Signal", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool IsHardwareFlowBlock(StepFlowItem flowItem)
+		{
+			return flowItem != null &&
+				string.Equals(flowItem.BlockType, "Hardware", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool IsDatabaseFlowBlock(StepFlowItem flowItem)
+		{
+			return flowItem != null &&
+				string.Equals(flowItem.BlockType, "Database", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private bool AcquireHardwareFlowBlockImage(
+			StepFlowItem flowItem,
+			VisionRunContext context,
+			Dictionary<string, VisionImage> outputImages,
+			out string message)
+		{
+			message = string.Empty;
+
+			if (flowItem == null)
+			{
+				message = "Hardware flow block is empty.";
+				return false;
+			}
+
+			if (context == null)
+			{
+				message = "Runtime context is empty.";
+				return false;
+			}
+
+			string sourceKey = ResolveHardwareFlowImageSourceKey(flowItem);
+			if (string.IsNullOrWhiteSpace(sourceKey))
+			{
+				message = "Hardware image source is empty.";
+				return false;
+			}
+
+			VisionImage existing;
+			if (context.TryGetImage(sourceKey, out existing) && existing != null && existing.RawImage != null)
+			{
+				if (outputImages != null)
+				{
+					outputImages[sourceKey] = existing;
+				}
+
+				message = "Hardware image already available. Source=" + sourceKey;
+				return true;
+			}
+
+			RuntimeImageAcquireResult acquireResult =
+				new RuntimeImageAcquireService().Acquire(context.JobName, sourceKey);
+
+			if (acquireResult == null)
+			{
+				message = "Hardware image acquire returned null. Source=" + sourceKey;
+				return false;
+			}
+
+			if (!acquireResult.Success || acquireResult.Image == null || acquireResult.Image.RawImage == null)
+			{
+				message = "Hardware image acquire failed. Source=" + sourceKey +
+					", Error=" + (acquireResult.Message ?? string.Empty);
+				return false;
+			}
+
+			string acquiredSourceKey = string.IsNullOrWhiteSpace(acquireResult.SourceKey)
+				? sourceKey
+				: acquireResult.SourceKey.Trim();
+
+			StoreRuntimeImage(context, acquiredSourceKey, acquireResult.Image);
+
+			if (!string.Equals(acquiredSourceKey, sourceKey, StringComparison.OrdinalIgnoreCase))
+			{
+				StoreRuntimeImage(context, sourceKey, acquireResult.Image);
+			}
+
+			if (!string.IsNullOrWhiteSpace(acquireResult.Image.OutputImageKey))
+			{
+				StoreRuntimeImage(context, acquireResult.Image.OutputImageKey.Trim(), acquireResult.Image);
+			}
+
+			if (outputImages != null)
+			{
+				outputImages[sourceKey] = acquireResult.Image;
+			}
+
+			message = "Hardware image acquired. Source=" + sourceKey;
+			return true;
+		}
+
+		private string ResolveHardwareFlowImageSourceKey(StepFlowItem flowItem)
+		{
+			if (flowItem == null)
+			{
+				return string.Empty;
+			}
+
+			if (!string.IsNullOrWhiteSpace(flowItem.BlockName))
+			{
+				return flowItem.BlockName.Trim();
+			}
+
+			if (!string.IsNullOrWhiteSpace(flowItem.StepName))
+			{
+				return flowItem.StepName.Trim();
+			}
+
+			return ConvertHardwarePathToImageSourceKey(flowItem.BlockPath);
+		}
+
+		private string ConvertHardwarePathToImageSourceKey(string blockPath)
+		{
+			if (string.IsNullOrWhiteSpace(blockPath))
+			{
+				return string.Empty;
+			}
+
+			string sourceKey = blockPath.Trim()
+				.Replace(Path.DirectorySeparatorChar, '.')
+				.Replace(Path.AltDirectorySeparatorChar, '.');
+
+			while (sourceKey.Contains(".."))
+			{
+				sourceKey = sourceKey.Replace("..", ".");
+			}
+
+			return sourceKey.Trim('.');
+		}
+
+		private void StoreRuntimeImage(VisionRunContext context, string key, VisionImage image)
+		{
+			if (context == null || string.IsNullOrWhiteSpace(key) || image == null)
+			{
+				return;
+			}
+
+			string normalizedKey = key.Trim();
+			context.SetImage(normalizedKey, image);
+			context.SetData(normalizedKey, image.RawImage);
+			context.SetData(normalizedKey + ".RawImage", image.RawImage);
+		}
+
+		private bool EnqueueDatabaseFlowBlockWrite(
+			TaskConfig taskConfig,
+			StepFlowItem flowItem,
+			VisionRunContext context,
+			out string message)
+		{
+			message = "Database write queued.";
+
+			try
+			{
+				DatabaseConfig databaseConfig = DatabaseConfigStore.LoadOrCreateDefault();
+				Dictionary<string, object> values = BuildDatabaseWriteValues(databaseConfig, taskConfig, flowItem, context);
+				bool queued = DatabaseRecordWriter.Instance.Enqueue(values);
+				message = queued ? "Database write queued." : "Database write skipped.";
+				return true;
+			}
+			catch (Exception ex)
+			{
+				RuntimeLogStore.Append(
+					DateTime.Now,
+					RuntimeLogCategory.Step,
+					"Database flow write skipped. Error=" + ex.Message,
+					true);
+				message = "Database write skipped. Error=" + ex.Message;
+				return true;
+			}
+		}
+
+		private Dictionary<string, object> BuildDatabaseWriteValues(
+			DatabaseConfig databaseConfig,
+			TaskConfig taskConfig,
+			StepFlowItem flowItem,
+			VisionRunContext context)
+		{
+			Dictionary<string, object> values = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+			AddDatabaseSystemValue(values, "TaskName", context == null ? (taskConfig == null ? string.Empty : taskConfig.TaskName) : context.TaskName);
+			AddDatabaseSystemValue(values, "JobName", context == null ? string.Empty : context.JobName);
+			AddDatabaseSystemValue(values, "TriggerName", context == null ? (taskConfig == null ? string.Empty : taskConfig.TriggerName) : context.TriggerName);
+
+			if (databaseConfig == null || databaseConfig.Fields == null)
+			{
+				return values;
+			}
+
+			Dictionary<string, DatabaseInputBinding> bindingMap =
+				new Dictionary<string, DatabaseInputBinding>(StringComparer.OrdinalIgnoreCase);
+			if (flowItem != null && flowItem.DatabaseInputs != null)
+			{
+				foreach (DatabaseInputBinding binding in flowItem.DatabaseInputs)
+				{
+					if (binding == null || string.IsNullOrWhiteSpace(binding.InputName))
+					{
+						continue;
+					}
+
+					bindingMap[binding.InputName.Trim()] = binding;
+				}
+			}
+
+			foreach (DatabaseFieldConfig field in databaseConfig.Fields.Where(x => x != null && x.Enabled))
+			{
+				if (string.IsNullOrWhiteSpace(field.InputName))
+				{
+					continue;
+				}
+
+				DatabaseInputBinding binding;
+				if (bindingMap.TryGetValue(field.InputName, out binding) && binding != null)
+				{
+					if (!binding.Enabled)
+					{
+						continue;
+					}
+
+					if (binding.ForceValue)
+					{
+						values[field.InputName] = ResolveSignalOutputValue(binding.AssignedValue, context);
+						continue;
+					}
+
+					object boundValue;
+					if (!string.IsNullOrWhiteSpace(binding.GlobalVariableName) &&
+						TryResolveDatabaseSourceValue(binding.GlobalVariableName, context, out boundValue))
+					{
+						values[field.InputName] = boundValue;
+						continue;
+					}
+				}
+
+				object implicitValue;
+				if (TryResolveDatabaseSourceValue(field.InputName, context, out implicitValue))
+				{
+					values[field.InputName] = implicitValue;
+				}
+			}
+
+			return values;
+		}
+
+		private void AddDatabaseSystemValue(Dictionary<string, object> values, string key, object value)
+		{
+			if (values == null || string.IsNullOrWhiteSpace(key))
+			{
+				return;
+			}
+
+			values[key] = value ?? string.Empty;
+		}
+
+		private bool TryResolveDatabaseSourceValue(string key, VisionRunContext context, out object value)
+		{
+			value = null;
+			if (string.IsNullOrWhiteSpace(key))
+			{
+				return false;
+			}
+
+			string normalizedKey = key.Trim();
+			if (context != null)
+			{
+				if (string.Equals(normalizedKey, "TaskName", StringComparison.OrdinalIgnoreCase))
+				{
+					value = context.TaskName;
+					return true;
+				}
+
+				if (string.Equals(normalizedKey, "JobName", StringComparison.OrdinalIgnoreCase))
+				{
+					value = context.JobName;
+					return true;
+				}
+
+				if (string.Equals(normalizedKey, "TriggerName", StringComparison.OrdinalIgnoreCase))
+				{
+					value = context.TriggerName;
+					return true;
+				}
+
+				if (context.TryGetData(normalizedKey, out value))
+				{
+					return true;
+				}
+
+				try
+				{
+					if (context.Data != null)
+					{
+						foreach (KeyValuePair<string, object> pair in context.Data)
+						{
+							if (string.Equals(pair.Key, normalizedKey, StringComparison.OrdinalIgnoreCase))
+							{
+								value = pair.Value;
+								return true;
+							}
+						}
+					}
+				}
+				catch
+				{
+				}
+			}
+
+			return GlobalVariableStore.TryGetValue(normalizedKey, out value);
 		}
 
 		private bool SendSignalFlowBlockOutput(

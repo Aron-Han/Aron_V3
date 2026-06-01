@@ -23,6 +23,7 @@ namespace Aron_V3
 		private object _currentVproAcqTool;
 		private bool _loading;
 		private bool _isLoadingVpro;
+		private bool _isEnglish;
 
 		private TableLayoutPanel _root;
 		private Panel _leftPanel;
@@ -31,11 +32,21 @@ namespace Aron_V3
 		private Label _lblCurrentCamera;
 		private Panel _modeHost;
 		private Label _lblBottomStatus;
+		private Label _lblCameraTitle;
+		private Button _btnAddCamera;
+		private Button _btnDeleteCamera;
+		private Button _btnRefreshCamera;
+		private Button _btnBottomRefresh;
+		private Button _btnBottomSave;
+		private Button _btnBottomApply;
 
 		private Panel _vproEditorHost;
 		private Button _btnLoadVpro;
 		private Button _btnNewVpro;
 		private Button _btnSaveVpro;
+		private Button _btnLoadSdk;
+		private Button _btnNewSdk;
+		private Button _btnSaveSdk;
 
 		private ISdkCameraConfigPanel _currentSdkPanel;
 
@@ -69,7 +80,7 @@ namespace Aron_V3
 			_leftPanel.Padding = new Padding(12);
 			BuildLeftCameraPanel();
 
-			_rightGroup = CreateGroupBox("相机配置");
+			_rightGroup = CreateGroupBox(T("相机配置", "Camera Config"));
 			_rightGroup.Padding = new Padding(10);
 			BuildRightContent();
 
@@ -95,23 +106,23 @@ namespace Aron_V3
 			layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
 			layout.BackColor = _panel;
 
-			Label title = CreateTitleLabel("相机管理");
+			_lblCameraTitle = CreateTitleLabel(T("相机管理", "Camera Management"));
 
 			Panel toolbar = new Panel();
 			toolbar.Dock = DockStyle.Fill;
 			toolbar.BackColor = _panel;
 
-			Button btnAdd = CreateActionButton("+ 添加相机", 0, 0, 92);
-			Button btnDelete = CreateActionButton("删除", 98, 0, 72);
-			Button btnRefresh = CreateActionButton("刷新", 176, 0, 72);
+			_btnAddCamera = CreateActionButton(T("+ 添加相机", "+ Add"), 0, 0, 92);
+			_btnDeleteCamera = CreateActionButton(T("删除", "Delete"), 98, 0, 72);
+			_btnRefreshCamera = CreateActionButton(T("刷新", "Refresh"), 176, 0, 72);
 
-			btnAdd.Click += btnAddCamera_Click;
-			btnDelete.Click += btnDeleteCamera_Click;
-			btnRefresh.Click += delegate { LoadConfigToUi(); };
+			_btnAddCamera.Click += btnAddCamera_Click;
+			_btnDeleteCamera.Click += btnDeleteCamera_Click;
+			_btnRefreshCamera.Click += delegate { LoadConfigToUi(); };
 
-			toolbar.Controls.Add(btnAdd);
-			toolbar.Controls.Add(btnDelete);
-			toolbar.Controls.Add(btnRefresh);
+			toolbar.Controls.Add(_btnAddCamera);
+			toolbar.Controls.Add(_btnDeleteCamera);
+			toolbar.Controls.Add(_btnRefreshCamera);
 
 			_cameraListHost = new Panel();
 			_cameraListHost.Dock = DockStyle.Fill;
@@ -124,7 +135,7 @@ namespace Aron_V3
 			foot.TextAlign = ContentAlignment.MiddleLeft;
 			foot.Name = "lblCameraCount";
 
-			layout.Controls.Add(title, 0, 0);
+			layout.Controls.Add(_lblCameraTitle, 0, 0);
 			layout.Controls.Add(toolbar, 0, 1);
 			layout.Controls.Add(_cameraListHost, 0, 2);
 			layout.Controls.Add(foot, 0, 3);
@@ -180,32 +191,32 @@ namespace Aron_V3
 			bottom.BackColor = _panel;
 			bottom.Padding = new Padding(12, 6, 12, 6);
 
-			Button btnRefresh = CreateBottomButton("刷新设备");
-			btnRefresh.Click += delegate { LoadConfigToUi(); };
+			_btnBottomRefresh = CreateBottomButton(T("刷新设备", "Refresh"));
+			_btnBottomRefresh.Click += delegate { LoadConfigToUi(); };
 
-			Button btnSave = CreateBottomButton("保存配置");
-			btnSave.Click += delegate
+			_btnBottomSave = CreateBottomButton(T("保存配置", "Save"));
+			_btnBottomSave.Click += delegate
 			{
 				if (!HardwareConfigStore.HasCurrentJob)
 				{
-					MessageBox.Show("Please create or select a Job first. Hardware files are saved under Project\\Job\\[JobName]\\Hardware.", "Hardware", MessageBoxButtons.OK, MessageBoxIcon.Information);
+					MessageBox.Show(T("请先创建或选择程序号。硬件文件会保存到 Project\\Job\\[JobName]\\Hardware。", "Please create or select a Job first. Hardware files are saved under Project\\Job\\[JobName]\\Hardware."), "Hardware", MessageBoxButtons.OK, MessageBoxIcon.Information);
 					return;
 				}
 
 				SaveCurrentCameraFromUi();
 				HardwareConfigStore.Save(_config);
-				MessageBox.Show("Hardware configuration saved.", "Hardware", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				MessageBox.Show(T("硬件配置已保存。", "Hardware configuration saved."), "Hardware", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			};
 
-			Button btnApply = CreateBottomButton("应用");
-			btnApply.BackColor = Color.FromArgb(0, 95, 220);
-			btnApply.Click += delegate { SaveCurrentCameraFromUi(); };
+			_btnBottomApply = CreateBottomButton(T("应用", "Apply"));
+			_btnBottomApply.BackColor = Color.FromArgb(0, 95, 220);
+			_btnBottomApply.Click += delegate { SaveCurrentCameraFromUi(); };
 
-			bottom.Controls.Add(btnApply);
+			bottom.Controls.Add(_btnBottomApply);
 			bottom.Controls.Add(CreateRightGap());
-			bottom.Controls.Add(btnSave);
+			bottom.Controls.Add(_btnBottomSave);
 			bottom.Controls.Add(CreateRightGap());
-			bottom.Controls.Add(btnRefresh);
+			bottom.Controls.Add(_btnBottomRefresh);
 
 			return bottom;
 		}
@@ -247,11 +258,11 @@ namespace Aron_V3
 			{
 				if (string.IsNullOrWhiteSpace(jobName))
 				{
-					_lblCurrentCamera.Text = "当前未选择 Job，请先在流程管理中新增或选择 Job。";
+					_lblCurrentCamera.Text = T("当前未选择 Job，请先在流程管理中新增或选择 Job。", "No Job is selected. Please create or select a Job in Process Management first.");
 				}
 				else
 				{
-					_lblCurrentCamera.Text = "当前 Job： " + jobName + "    |    尚未创建相机";
+					_lblCurrentCamera.Text = T("当前 Job： ", "Current Job: ") + jobName + T("    |    尚未创建相机", "    |    No camera created");
 				}
 			}
 
@@ -268,21 +279,21 @@ namespace Aron_V3
 				if (string.IsNullOrWhiteSpace(jobName))
 				{
 					label.Text = string.Concat(
-						"当前 Project\\Job 下没有可用 Job。",
+						T("当前 Project\\Job 下没有可用 Job。", "No available Job under Project\\Job."),
 						Environment.NewLine,
-						"硬件配置不会自动创建 Cam1，也不会自动创建 Job_001。",
+						T("硬件配置不会自动创建 Cam1，也不会自动创建 Job_001。", "Hardware configuration will not auto-create Cam1 or Job_001."),
 						Environment.NewLine,
-						"请先在流程管理中点击 + 新增 Job，再进入硬件配置添加相机。");
+						T("请先在流程管理中点击 + 新增 Job，再进入硬件配置添加相机。", "Please add a Job in Process Management first, then add cameras here."));
 				}
 				else
 				{
 					label.Text = string.Concat(
-						"当前 Job：",
+						T("当前 Job：", "Current Job: "),
 						jobName,
 						Environment.NewLine,
-						"尚未创建相机。",
+						T("尚未创建相机。", "No camera created."),
 						Environment.NewLine,
-						"点击左侧“+ 添加相机”后，配置会保存到：",
+						T("点击左侧“+ 添加相机”后，配置会保存到：", "After clicking \"+ Add\", the configuration will be saved to:"),
 						Environment.NewLine,
 						"Project\\Job\\",
 						jobName,
@@ -296,11 +307,11 @@ namespace Aron_V3
 			{
 				if (string.IsNullOrWhiteSpace(jobName))
 				{
-					_lblBottomStatus.Text = "当前未选择 Job，Hardware 不会生成默认 Cam1。";
+					_lblBottomStatus.Text = T("当前未选择 Job，Hardware 不会生成默认 Cam1。", "No Job is selected. Hardware will not create default Cam1.");
 				}
 				else
 				{
-					_lblBottomStatus.Text = "当前 Job：" + jobName + "    |    Hardware 路径：" + HardwareConfigStore.ConfigFolder;
+					_lblBottomStatus.Text = T("当前 Job：", "Current Job: ") + jobName + T("    |    Hardware 路径：", "    |    Hardware Path: ") + HardwareConfigStore.ConfigFolder;
 				}
 			}
 		}
@@ -323,7 +334,7 @@ namespace Aron_V3
 			Label foot = FindLabel(_leftPanel, "lblCameraCount");
 			if (foot != null)
 			{
-				foot.Text = "共 " + _config.Cameras.Count + " 台相机";
+				foot.Text = _isEnglish ? _config.Cameras.Count + " camera(s)" : "共 " + _config.Cameras.Count + " 台相机";
 			}
 		}
 
@@ -363,7 +374,7 @@ namespace Aron_V3
 			statusDot.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 			statusDot.Size = new Size(20, 20);
 
-			Label lblMode = SmallLabel("采集模式", 18, 50, 75);
+			Label lblMode = SmallLabel(T("采集模式", "Mode"), 18, 50, 75);
 			ComboBox cmbMode = SmallCombo(95, 47, 145);
 			cmbMode.Items.Add(CameraAcquisitionMode.VPro.ToString());
 			cmbMode.Items.Add(CameraAcquisitionMode.SDK.ToString());
@@ -371,8 +382,8 @@ namespace Aron_V3
 			cmbMode.Tag = camera;
 			cmbMode.SelectedIndexChanged += cmbMode_SelectedIndexChanged;
 
-			Label lblStatusName = SmallLabel("状态", 18, 82, 75);
-			Label lblStatusValue = SmallLabel(camera.Status == "Connected" ? "● 已连接" : "● 未连接", 95, 82, 145);
+			Label lblStatusName = SmallLabel(T("状态", "Status"), 18, 82, 75);
+			Label lblStatusValue = SmallLabel(camera.Status == "Connected" ? T("● 已连接", "● Connected") : T("● 未连接", "● Disconnected"), 95, 82, 145);
 			lblStatusValue.ForeColor = camera.Status == "Connected" ? _green : Color.Gray;
 
 			card.Controls.Add(icon);
@@ -385,7 +396,7 @@ namespace Aron_V3
 
 			if (camera.AcquisitionMode == CameraAcquisitionMode.SDK)
 			{
-				Label lblBrand = SmallLabel("SDK品牌", 18, 78, 75);
+				Label lblBrand = SmallLabel(T("SDK品牌", "SDK Brand"), 18, 78, 75);
 				ComboBox cmbBrand = SmallCombo(95, 75, 145);
 				cmbBrand.Items.Add(CameraSdkBrand.LMI.ToString());
 				cmbBrand.Items.Add(CameraSdkBrand.Keyence.ToString());
@@ -430,7 +441,7 @@ namespace Aron_V3
 			_currentCamera = camera;
 			RebuildCameraCards();
 
-			_lblCurrentCamera.Text = "当前选中： " + camera.CameraName + "    |    采集模式： " + camera.AcquisitionMode;
+			_lblCurrentCamera.Text = T("当前选中： ", "Selected: ") + camera.CameraName + T("    |    采集模式： ", "    |    Mode: ") + camera.AcquisitionMode;
 
 			if (camera.AcquisitionMode == CameraAcquisitionMode.VPro)
 			{
@@ -442,8 +453,8 @@ namespace Aron_V3
 			}
 
 			_lblBottomStatus.Text =
-				"当前相机：" + camera.CameraName +
-				"    |    图像源：" + camera.CameraName + ".Raw" +
+				T("当前相机：", "Current Camera: ") + camera.CameraName +
+				T("    |    图像源：", "    |    Image Source: ") + camera.CameraName + ".Raw" +
 				"    |    ImageSources：" + HardwareConfigStore.ImageSourceConfigPath;
 
 			if (loadTool && camera.AcquisitionMode == CameraAcquisitionMode.VPro)
@@ -470,9 +481,9 @@ namespace Aron_V3
 			toolBar.Dock = DockStyle.Fill;
 			toolBar.BackColor = _panel;
 
-			_btnLoadVpro = CreateActionButton("加载 CogAcq", 0, 5, 120);
-			_btnNewVpro = CreateActionButton("新建工具", 130, 5, 100);
-			_btnSaveVpro = CreateActionButton("保存工具", 240, 5, 100);
+			_btnLoadVpro = CreateActionButton(T("加载 CogAcq", "Load CogAcq"), 0, 5, 120);
+			_btnNewVpro = CreateActionButton(T("新建工具", "New Tool"), 130, 5, 100);
+			_btnSaveVpro = CreateActionButton(T("保存工具", "Save Tool"), 240, 5, 100);
 
 			_btnLoadVpro.Click += delegate { LoadVproEditorForCurrentCamera(true); };
 			_btnNewVpro.Click += delegate { CreateNewVproToolForCurrentCamera(); };
@@ -487,11 +498,11 @@ namespace Aron_V3
 
 			ShowVproPlaceholder(
 				string.Concat(
-					"已选择 VPro 相机。",
+					T("已选择 VPro 相机。", "VPro camera selected."),
 					Environment.NewLine,
-					"右侧仅显示 VisionPro 取像工具区域。",
+					T("右侧仅显示 VisionPro 取像工具区域。", "The right panel only shows the VisionPro acquisition tool area."),
 					Environment.NewLine,
-					"点击加载 CogAcq 后从本地选择 VPP，并导入当前相机目录后加载。"));
+					T("点击加载 CogAcq 后从本地选择 VPP，并导入当前相机目录后加载。", "Click Load CogAcq to select a local VPP, import it into the current camera folder, and load it.")));
 
 			root.Controls.Add(toolBar, 0, 0);
 			root.Controls.Add(_vproEditorHost, 0, 1);
@@ -518,17 +529,17 @@ namespace Aron_V3
 			toolBar.Dock = DockStyle.Fill;
 			toolBar.BackColor = _panel;
 
-			Button btnLoadSdk = CreateActionButton("加载取像参数", 0, 5, 125);
-			Button btnNewSdk = CreateActionButton("新建工具", 135, 5, 100);
-			Button btnSaveSdk = CreateActionButton("保存工具", 245, 5, 100);
+			_btnLoadSdk = CreateActionButton(T("加载取像参数", "Load Params"), 0, 5, 125);
+			_btnNewSdk = CreateActionButton(T("新建工具", "New Tool"), 135, 5, 100);
+			_btnSaveSdk = CreateActionButton(T("保存工具", "Save Tool"), 245, 5, 100);
 
-			btnLoadSdk.Click += delegate { LoadSdkToolForCurrentCamera(); };
-			btnNewSdk.Click += delegate { CreateNewSdkToolForCurrentCamera(); };
-			btnSaveSdk.Click += delegate { SaveSdkToolForCurrentCamera(); };
+			_btnLoadSdk.Click += delegate { LoadSdkToolForCurrentCamera(); };
+			_btnNewSdk.Click += delegate { CreateNewSdkToolForCurrentCamera(); };
+			_btnSaveSdk.Click += delegate { SaveSdkToolForCurrentCamera(); };
 
-			toolBar.Controls.Add(btnLoadSdk);
-			toolBar.Controls.Add(btnNewSdk);
-			toolBar.Controls.Add(btnSaveSdk);
+			toolBar.Controls.Add(_btnLoadSdk);
+			toolBar.Controls.Add(_btnNewSdk);
+			toolBar.Controls.Add(_btnSaveSdk);
 
 			_currentSdkPanel = SdkCameraPanelFactory.CreatePanel(camera.SdkBrand);
 			_currentSdkPanel.LoadCamera(camera);
@@ -744,7 +755,7 @@ namespace Aron_V3
 				? _currentCamera.CameraName + "_Acq"
 				: _currentCamera.VisionPro.ToolName;
 
-			using (ToolNameDialog dialog = new ToolNameDialog("Save VisionPro Tool", defaultName, ".vpp"))
+			using (ToolNameDialog dialog = new ToolNameDialog(T("保存 VisionPro 工具", "Save VisionPro Tool"), defaultName, ".vpp"))
 			{
 				if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -918,7 +929,7 @@ namespace Aron_V3
 				? _currentCamera.CameraName + "_" + _currentCamera.SdkBrand + "_Sdk"
 				: _currentCamera.Sdk.ToolName;
 
-			using (ToolNameDialog dialog = new ToolNameDialog("Save SDK Tool", defaultName, ".xml"))
+			using (ToolNameDialog dialog = new ToolNameDialog(T("保存 SDK 工具", "Save SDK Tool"), defaultName, ".xml"))
 			{
 				if (dialog.ShowDialog(this) != DialogResult.OK) return;
 				_currentCamera.Sdk.ToolName = dialog.ToolName;
@@ -1284,6 +1295,45 @@ namespace Aron_V3
 
 		public void ApplyLanguage(bool isEnglish)
 		{
+			_isEnglish = isEnglish;
+
+			if (_lblCameraTitle != null) _lblCameraTitle.Text = T("相机管理", "Camera Management");
+			if (_rightGroup != null) _rightGroup.Text = T("相机配置", "Camera Config");
+			if (_btnAddCamera != null) _btnAddCamera.Text = T("+ 添加相机", "+ Add");
+			if (_btnDeleteCamera != null) _btnDeleteCamera.Text = T("删除", "Delete");
+			if (_btnRefreshCamera != null) _btnRefreshCamera.Text = T("刷新", "Refresh");
+			if (_btnBottomRefresh != null) _btnBottomRefresh.Text = T("刷新设备", "Refresh");
+			if (_btnBottomSave != null) _btnBottomSave.Text = T("保存配置", "Save");
+			if (_btnBottomApply != null) _btnBottomApply.Text = T("应用", "Apply");
+			if (_btnLoadVpro != null) _btnLoadVpro.Text = T("加载 CogAcq", "Load CogAcq");
+			if (_btnNewVpro != null) _btnNewVpro.Text = T("新建工具", "New Tool");
+			if (_btnSaveVpro != null) _btnSaveVpro.Text = T("保存工具", "Save Tool");
+			if (_btnLoadSdk != null) _btnLoadSdk.Text = T("加载取像参数", "Load Params");
+			if (_btnNewSdk != null) _btnNewSdk.Text = T("新建工具", "New Tool");
+			if (_btnSaveSdk != null) _btnSaveSdk.Text = T("保存工具", "Save Tool");
+
+			if (_config != null)
+			{
+				RebuildCameraCards();
+			}
+
+			if (_currentCamera != null)
+			{
+				_lblCurrentCamera.Text = T("当前选中： ", "Selected: ") + _currentCamera.CameraName + T("    |    采集模式： ", "    |    Mode: ") + _currentCamera.AcquisitionMode;
+				_lblBottomStatus.Text =
+					T("当前相机：", "Current Camera: ") + _currentCamera.CameraName +
+					T("    |    图像源：", "    |    Image Source: ") + _currentCamera.CameraName + ".Raw" +
+					"    |    ImageSources：" + HardwareConfigStore.ImageSourceConfigPath;
+			}
+			else
+			{
+				ShowEmptyHardwarePlaceholder();
+			}
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 
@@ -2024,10 +2074,12 @@ namespace Aron_V3
 		private TextBox txtToolName;
 		private Button btnOk;
 		private Button btnCancel;
+		private readonly bool _isEnglish;
 		public string ToolName { get; private set; }
 
 		public ToolNameDialog(string title, string defaultName, string extensionText)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			ToolName = defaultName;
 			this.Text = title;
 			this.StartPosition = FormStartPosition.CenterParent;
@@ -2039,12 +2091,12 @@ namespace Aron_V3
 			this.Font = new Font("Microsoft YaHei UI", 9F);
 
 			Label lblTitle = CreateLabel(title, 30, 24, 260, 28, 13, true);
-			Label lblName = CreateLabel("工具名称", 40, 80, 90, 24, 9, false);
+			Label lblName = CreateLabel(T("工具名称", "Tool Name"), 40, 80, 90, 24, 9, false);
 			txtToolName = CreateTextBox(135, 78, 220);
 			txtToolName.Text = Path.GetFileNameWithoutExtension(defaultName);
 			Label lblExt = CreateLabel(extensionText, 365, 80, 50, 24, 9, false);
-			btnOk = CreateButton("OK", 220, 135, true);
-			btnCancel = CreateButton("Cancel", 320, 135, false);
+			btnOk = CreateButton(T("确定", "OK"), 220, 135, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 320, 135, false);
 			btnOk.Click += btnOk_Click;
 			btnCancel.Click += delegate { this.DialogResult = DialogResult.Cancel; this.Close(); };
 			this.Controls.Add(lblTitle);
@@ -2059,7 +2111,7 @@ namespace Aron_V3
 		{
 			if (string.IsNullOrWhiteSpace(txtToolName.Text))
 			{
-				MessageBox.Show("Tool name cannot be empty.", "Tool Name", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(T("工具名称不能为空。", "Tool name cannot be empty."), T("工具名称", "Tool Name"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 			ToolName = HardwareConfigStore.NormalizeFileName(txtToolName.Text.Trim(), "AcqTool");
@@ -2101,6 +2153,11 @@ namespace Aron_V3
 			btn.ForeColor = Color.White;
 			return btn;
 		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
 	}
 
 	public class AddCameraDialog : Form
@@ -2110,6 +2167,7 @@ namespace Aron_V3
 		private ComboBox cmbBrand;
 		private Button btnOk;
 		private Button btnCancel;
+		private readonly bool _isEnglish;
 
 		public string CameraName { get; private set; }
 		public CameraAcquisitionMode AcquisitionMode { get; private set; }
@@ -2117,6 +2175,7 @@ namespace Aron_V3
 
 		public AddCameraDialog(string defaultName)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			CameraName = defaultName;
 			AcquisitionMode = CameraAcquisitionMode.VPro;
 			SdkBrand = CameraSdkBrand.Hikvision;
@@ -2126,7 +2185,7 @@ namespace Aron_V3
 
 		private void InitializeUi(string defaultName)
 		{
-			this.Text = "Add Camera";
+			this.Text = T("新增相机", "Add Camera");
 			this.StartPosition = FormStartPosition.CenterParent;
 			this.FormBorderStyle = FormBorderStyle.FixedDialog;
 			this.MaximizeBox = false;
@@ -2135,11 +2194,11 @@ namespace Aron_V3
 			this.BackColor = Color.FromArgb(2, 10, 20);
 			this.Font = new Font("Microsoft YaHei UI", 9F);
 
-			Label title = CreateLabel("新增相机", 30, 22, 200, 28, 14, true);
+			Label title = CreateLabel(T("新增相机", "Add Camera"), 30, 22, 200, 28, 14, true);
 
-			Label lblName = CreateLabel("相机名称", 40, 75, 90, 24, 9, false);
-			Label lblMode = CreateLabel("采集模式", 40, 115, 90, 24, 9, false);
-			Label lblBrand = CreateLabel("SDK品牌", 40, 155, 90, 24, 9, false);
+			Label lblName = CreateLabel(T("相机名称", "Camera Name"), 40, 75, 90, 24, 9, false);
+			Label lblMode = CreateLabel(T("采集模式", "Mode"), 40, 115, 90, 24, 9, false);
+			Label lblBrand = CreateLabel(T("SDK品牌", "SDK Brand"), 40, 155, 90, 24, 9, false);
 
 			txtName = CreateTextBox(140, 72, 220);
 			txtName.Text = defaultName;
@@ -2161,8 +2220,8 @@ namespace Aron_V3
 			cmbBrand.SelectedItem = CameraSdkBrand.Hikvision.ToString();
 			cmbBrand.Enabled = false;
 
-			btnOk = CreateButton("OK", 170, 205, true);
-			btnCancel = CreateButton("Cancel", 280, 205, false);
+			btnOk = CreateButton(T("确定", "OK"), 170, 205, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 280, 205, false);
 
 			btnOk.Click += btnOk_Click;
 			btnCancel.Click += delegate { this.DialogResult = DialogResult.Cancel; this.Close(); };
@@ -2182,7 +2241,7 @@ namespace Aron_V3
 		{
 			if (string.IsNullOrWhiteSpace(txtName.Text))
 			{
-				MessageBox.Show("Camera name cannot be empty.");
+				MessageBox.Show(T("相机名称不能为空。", "Camera name cannot be empty."), T("新增相机", "Add Camera"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
 
@@ -2242,6 +2301,11 @@ namespace Aron_V3
 			btn.BackColor = primary ? Color.FromArgb(0, 95, 220) : Color.FromArgb(3, 14, 27);
 			btn.ForeColor = Color.White;
 			return btn;
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 }

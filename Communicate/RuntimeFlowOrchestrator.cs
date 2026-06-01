@@ -22,6 +22,8 @@ namespace Aron_V3
 		private readonly object _syncRoot = new object();
 		private readonly HashSet<string> _runningTaskKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		private readonly HashSet<string> _runningImageAcquireKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		private readonly Dictionary<string, string> _lastTriggerActualValuesByKey =
+			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 		private readonly RuntimeImageAcquireService _imageAcquireService;
 		private readonly RuntimeCommunicationOutputService _outputService;
@@ -256,7 +258,18 @@ namespace Aron_V3
 					return;
 				}
 
-				List<RuntimeTaskTarget> matchedTasks = FindMatchedTasks(flowConfig, protocolName, instanceName, valueProvider, communicationConfig);
+				Dictionary<string, string> eventTriggerActuals =
+					new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+				List<RuntimeTaskTarget> matchedTasks = FindMatchedTasks(
+					flowConfig,
+					protocolName,
+					instanceName,
+					valueProvider,
+					communicationConfig,
+					eventTriggerActuals);
+
+				CommitTriggerActualValues(eventTriggerActuals);
 
 				if (matchedTasks.Count <= 0)
 				{
@@ -264,17 +277,7 @@ namespace Aron_V3
 					return;
 				}
 
-				foreach (RuntimeTaskTarget target in matchedTasks)
-				{
-					RuntimeTaskTarget localTarget = target;
-
-					Task.Factory.StartNew(
-						delegate
-						{
-							RunOneTask(localTarget, protocolName, valueProvider, e);
-						},
-						TaskCreationOptions.LongRunning);
-				}
+				DispatchMatchedTasks(matchedTasks, protocolName, instanceName, valueProvider, communicationConfig, e);
 			}
 			catch (Exception ex)
 			{
@@ -282,12 +285,176 @@ namespace Aron_V3
 			}
 		}
 
+		private void DispatchMatchedTasks(
+			List<RuntimeTaskTarget> matchedTasks,
+			string protocolName,
+			string instanceName,
+			RuntimeCommunicationValueProvider valueProvider,
+			CommunicationConfig communicationConfig,
+			CommunicationDataReceivedEventArgs commEvent)
+		{
+			if (matchedTasks == null || matchedTasks.Count <= 0)
+			{
+				return;
+			}
+
+			List<RuntimeTaskTarget> readyOnlyTargets = matchedTasks
+				.Where(x => IsReadyOnlySignalTask(x, protocolName, instanceName, communicationConfig))
+				.OrderBy(x => x.Task == null ? 0 : x.Task.RunOrder)
+				.ToList();
+
+			List<RuntimeTaskTarget> remainingTargets = matchedTasks
+				.Where(x => !readyOnlyTargets.Contains(x))
+				.OrderBy(x => x.Task == null ? 0 : x.Task.RunOrder)
+				.ToList();
+
+			Task.Factory.StartNew(
+				delegate
+				{
+					foreach (RuntimeTaskTarget target in readyOnlyTargets)
+					{
+						RunOneTask(target, protocolName, valueProvider, commEvent);
+					}
+
+					foreach (RuntimeTaskTarget target in remainingTargets)
+					{
+						RuntimeTaskTarget localTarget = target;
+						Task.Factory.StartNew(
+							delegate
+							{
+								RunOneTask(localTarget, protocolName, valueProvider, commEvent);
+							},
+							TaskCreationOptions.LongRunning);
+					}
+				},
+				TaskCreationOptions.LongRunning);
+		}
+
+		private bool IsReadyOnlySignalTask(
+			RuntimeTaskTarget target,
+			string protocolName,
+			string instanceName,
+			CommunicationConfig communicationConfig)
+		{
+			if (target == null || target.Task == null || target.Task.StepFlow == null)
+			{
+				return false;
+			}
+
+			List<StepFlowItem> enabledItems = target.Task.StepFlow
+				.Where(x => x != null && x.Enabled)
+				.ToList();
+
+			if (enabledItems.Count <= 0)
+			{
+				return false;
+			}
+
+			foreach (StepFlowItem item in enabledItems)
+			{
+				if (item.IsStepBlock ||
+					!string.Equals(item.BlockType, "Signal", StringComparison.OrdinalIgnoreCase))
+				{
+					return false;
+				}
+			}
+
+			Dictionary<string, string> readyDoneValues =
+				GetChannelReadyDoneValueMap(protocolName, instanceName, communicationConfig);
+			bool hasReadyDoneOutput = false;
+
+			foreach (StepFlowItem item in enabledItems)
+			{
+				if (item.SignalOutputs == null)
+				{
+					continue;
+				}
+
+				foreach (SignalOutputBinding output in item.SignalOutputs)
+				{
+					if (output == null || !output.Enabled || string.IsNullOrWhiteSpace(output.OutputName))
+					{
+						continue;
+					}
+
+					if (IsReadyDoneSignalOutput(output, readyDoneValues))
+					{
+						hasReadyDoneOutput = true;
+						continue;
+					}
+
+					return false;
+				}
+			}
+
+			return hasReadyDoneOutput;
+		}
+
+		private Dictionary<string, string> GetChannelReadyDoneValueMap(
+			string protocolName,
+			string instanceName,
+			CommunicationConfig communicationConfig)
+		{
+			Dictionary<string, string> result =
+				new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (CommunicationChannelConfig channel in GetChannels(communicationConfig, protocolName, instanceName))
+			{
+				if (channel == null || string.IsNullOrWhiteSpace(channel.ChannelReadyOutputName))
+				{
+					continue;
+				}
+
+				string outputName = NormalizeConfiguredCommunicationValue(channel.ChannelReadyOutputName);
+				if (string.IsNullOrWhiteSpace(outputName))
+				{
+					continue;
+				}
+
+				result[outputName] = string.IsNullOrWhiteSpace(channel.ChannelReadyDoneValue)
+					? "1"
+					: channel.ChannelReadyDoneValue.Trim();
+			}
+
+			return result;
+		}
+
+		private bool IsReadyDoneSignalOutput(
+			SignalOutputBinding output,
+			Dictionary<string, string> readyDoneValues)
+		{
+			string outputName = output.OutputName.Trim();
+			string expectedValue;
+
+			if (readyDoneValues == null ||
+				!readyDoneValues.TryGetValue(outputName, out expectedValue))
+			{
+				if (outputName.IndexOf("Ready", StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					return false;
+				}
+
+				expectedValue = "1";
+			}
+
+			if (!output.ForceValue)
+			{
+				return false;
+			}
+
+			return TriggerConditionEvaluator.CompareValue(
+				output.AssignedValue,
+				expectedValue,
+				TriggerCompareType.Equal);
+		}
+
 		private List<RuntimeTaskTarget> FindMatchedTasks(
 			ProjectFlowConfig flowConfig,
 			string protocolName,
 			string instanceName,
 			RuntimeCommunicationValueProvider valueProvider,
-			CommunicationConfig communicationConfig)
+			CommunicationConfig communicationConfig,
+			Dictionary<string, string> eventTriggerActuals)
 		{
 			List<RuntimeTaskTarget> result = new List<RuntimeTaskTarget>();
 
@@ -329,11 +496,11 @@ namespace Aron_V3
 
 					try
 					{
-						canRun = CanRunTaskByChannel(task, protocolName, instanceName, valueProvider, communicationConfig);
+						canRun = CanRunTaskByChannel(task, protocolName, instanceName, valueProvider, communicationConfig, eventTriggerActuals);
 					}
 					catch
 					{
-						canRun = ManualCompareTaskCondition(task, protocolName, valueProvider);
+						canRun = ManualCompareTaskCondition(task, protocolName, instanceName, valueProvider, eventTriggerActuals);
 					}
 
 					if (!canRun)
@@ -523,13 +690,22 @@ namespace Aron_V3
 			RuntimeCommunicationValueProvider valueProvider,
 			CommunicationConfig communicationConfig)
 		{
+			if (flowConfig == null)
+			{
+				return;
+			}
+
 			List<CommunicationChannelConfig> channels = GetChannels(communicationConfig, protocolName, instanceName);
 			string communicationName = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
-			bool changed = false;
 
 			foreach (CommunicationChannelConfig channelConfig in channels)
 			{
 				if (channelConfig == null || !channelConfig.Enabled)
+				{
+					continue;
+				}
+
+				if (string.IsNullOrWhiteSpace(NormalizeConfiguredCommunicationValue(channelConfig.ProgramSwitchEnableName)))
 				{
 					continue;
 				}
@@ -549,28 +725,212 @@ namespace Aron_V3
 					valueProvider,
 					channelConfig.ProgramNoAddressName);
 
-				if (string.IsNullOrWhiteSpace(programNo))
+				string oldProgramNo = GetActiveProgramNo(flowConfig, protocolName, channelConfig.ChannelName);
+				string finalProgramNo = oldProgramNo;
+				string errorMessage;
+				bool changed = false;
+				bool success = false;
+
+				if (!string.IsNullOrWhiteSpace(programNo))
 				{
-					continue;
+					SendProgramSwitchBusyOutput(protocolName, instanceName, channelConfig);
+					success = TrySwitchActiveProgram(
+						flowConfig,
+						protocolName,
+						channelConfig.ChannelName,
+						programNo.Trim(),
+						oldProgramNo,
+						out finalProgramNo,
+						out changed,
+						out errorMessage);
+				}
+				else
+				{
+					errorMessage = "Program number input is empty.";
 				}
 
-				ChannelFlowConfig channel = FlowConfigStore.GetOrCreateChannel(
+				SendProgramSwitchReadyOutput(protocolName, instanceName, channelConfig, finalProgramNo);
+
+				if (success)
+				{
+					WriteLog(RuntimeLogCategory.Communication,
+						"Program switch completed. Communication=" + communicationName +
+						", Channel=" + channelConfig.ChannelName +
+						", ProgramNo=" + finalProgramNo +
+						", Changed=" + changed);
+				}
+				else
+				{
+					WriteLog(RuntimeLogCategory.Communication,
+						"Program switch failed. Communication=" + communicationName +
+						", Channel=" + channelConfig.ChannelName +
+						", RequestedProgramNo=" + (programNo ?? string.Empty) +
+						", ActiveProgramNo=" + finalProgramNo +
+						", Error=" + errorMessage,
+						true);
+				}
+			}
+		}
+
+		private string GetActiveProgramNo(ProjectFlowConfig flowConfig, string protocolName, string channelName)
+		{
+			ChannelFlowConfig channel = FlowConfigStore.GetChannel(flowConfig, protocolName, channelName);
+			if (channel == null || string.IsNullOrWhiteSpace(channel.ActiveProgramNo))
+			{
+				return "1";
+			}
+
+			return channel.ActiveProgramNo.Trim();
+		}
+
+		private bool TrySwitchActiveProgram(
+			ProjectFlowConfig flowConfig,
+			string protocolName,
+			string channelName,
+			string requestedProgramNo,
+			string oldProgramNo,
+			out string finalProgramNo,
+			out bool changed,
+			out string errorMessage)
+		{
+			finalProgramNo = string.IsNullOrWhiteSpace(oldProgramNo) ? "1" : oldProgramNo.Trim();
+			changed = false;
+			errorMessage = string.Empty;
+
+			if (flowConfig == null)
+			{
+				errorMessage = "Flow config is empty.";
+				return false;
+			}
+
+			if (string.IsNullOrWhiteSpace(requestedProgramNo))
+			{
+				errorMessage = "Program number input is empty.";
+				return false;
+			}
+
+			lock (_syncRoot)
+			{
+				ChannelFlowConfig channel = FlowConfigStore.GetChannel(
 					flowConfig,
 					protocolName,
-					channelConfig.ChannelName);
+					channelName);
 
-				if (!string.Equals(channel.ActiveProgramNo, programNo, StringComparison.OrdinalIgnoreCase))
+				if (channel == null)
 				{
-					channel.ActiveProgramNo = programNo;
+					errorMessage = "Channel flow config was not found.";
+					return false;
+				}
+
+				if (channel.Jobs == null ||
+					!channel.Jobs.Any(x =>
+						x != null &&
+						x.Enabled &&
+						string.Equals(
+							string.IsNullOrWhiteSpace(x.ProgramNo) ? "1" : x.ProgramNo.Trim(),
+							requestedProgramNo.Trim(),
+							StringComparison.OrdinalIgnoreCase)))
+				{
+					errorMessage = "Program number was not found in this channel.";
+					return false;
+				}
+
+				string currentProgramNo = string.IsNullOrWhiteSpace(channel.ActiveProgramNo)
+					? "1"
+					: channel.ActiveProgramNo.Trim();
+
+				if (string.Equals(currentProgramNo, requestedProgramNo.Trim(), StringComparison.OrdinalIgnoreCase))
+				{
+					finalProgramNo = currentProgramNo;
+					return true;
+				}
+
+				try
+				{
+					channel.ActiveProgramNo = requestedProgramNo.Trim();
+					FlowConfigStore.Save(flowConfig);
+					finalProgramNo = requestedProgramNo.Trim();
 					changed = true;
-					WriteLog(RuntimeLogCategory.Communication, "Program switched. Communication=" + communicationName + ", Channel=" + channel.ChannelName + ", ProgramNo=" + programNo);
+					return true;
+				}
+				catch (Exception ex)
+				{
+					channel.ActiveProgramNo = finalProgramNo;
+					errorMessage = ex.Message;
+					return false;
 				}
 			}
+		}
 
-			if (changed)
+		private void SendProgramSwitchBusyOutput(
+			string protocolName,
+			string instanceName,
+			CommunicationChannelConfig channelConfig)
+		{
+			SendProgramSwitchOutputValues(
+				protocolName,
+				instanceName,
+				channelConfig,
+				string.IsNullOrWhiteSpace(channelConfig.ChannelReadyBusyValue) ? "0" : channelConfig.ChannelReadyBusyValue,
+				string.Empty,
+				"Program switch busy");
+		}
+
+		private void SendProgramSwitchReadyOutput(
+			string protocolName,
+			string instanceName,
+			CommunicationChannelConfig channelConfig,
+			string programNo)
+		{
+			SendProgramSwitchOutputValues(
+				protocolName,
+				instanceName,
+				channelConfig,
+				string.IsNullOrWhiteSpace(channelConfig.ChannelReadyDoneValue) ? "1" : channelConfig.ChannelReadyDoneValue,
+				programNo,
+				"Program switch ready");
+		}
+
+		private void SendProgramSwitchOutputValues(
+			string protocolName,
+			string instanceName,
+			CommunicationChannelConfig channelConfig,
+			string readyValue,
+			string programNo,
+			string logPrefix)
+		{
+			if (channelConfig == null)
 			{
-				FlowConfigStore.Save(flowConfig);
+				return;
 			}
+
+			Dictionary<string, object> values = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+			string readyOutputName = NormalizeConfiguredCommunicationValue(channelConfig.ChannelReadyOutputName);
+			string programOutputName = NormalizeConfiguredCommunicationValue(channelConfig.ProgramNoOutputName);
+
+			if (!string.IsNullOrWhiteSpace(readyOutputName))
+			{
+				values[readyOutputName] = readyValue ?? string.Empty;
+			}
+
+			if (!string.IsNullOrWhiteSpace(programOutputName) && !string.IsNullOrWhiteSpace(programNo))
+			{
+				values[programOutputName] = programNo.Trim();
+			}
+
+			if (values.Count <= 0)
+			{
+				return;
+			}
+
+			bool sent = _outputService.SendConfiguredSignalOutput(protocolName, instanceName, values);
+			WriteLog(
+				RuntimeLogCategory.Communication,
+				logPrefix + " output " + (sent ? "sent" : "failed") +
+				". Communication=" + CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName) +
+				", Channel=" + channelConfig.ChannelName +
+				", Values=" + FormatObjectMap(values),
+				!sent);
 		}
 
 		private bool IsSwitchOn(string value)
@@ -637,12 +997,71 @@ namespace Aron_V3
 			return text;
 		}
 
+		private bool TryParseTriggerOption(string triggerOption, out string triggerName, out string expectedValue)
+		{
+			triggerName = NormalizeConfiguredCommunicationValue(triggerOption);
+			expectedValue = string.Empty;
+
+			if (string.IsNullOrWhiteSpace(triggerName))
+			{
+				return false;
+			}
+
+			int index = triggerName.LastIndexOf('=');
+			if (index <= 0)
+			{
+				return false;
+			}
+
+			expectedValue = triggerName.Substring(index + 1).Trim();
+			triggerName = triggerName.Substring(0, index).Trim();
+			return !string.IsNullOrWhiteSpace(triggerName);
+		}
+
+		private CommunicationCustomTriggerOption FindCustomTriggerOption(
+			CommunicationChannelConfig channel,
+			string triggerName,
+			string expectedValue)
+		{
+			if (channel == null ||
+				channel.CustomTriggers == null ||
+				string.IsNullOrWhiteSpace(triggerName))
+			{
+				return null;
+			}
+
+			CommunicationCustomTriggerOption nameOnlyMatch = null;
+			foreach (CommunicationCustomTriggerOption option in channel.CustomTriggers)
+			{
+				if (option == null ||
+					string.IsNullOrWhiteSpace(option.Name) ||
+					!string.Equals(triggerName.Trim(), option.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				if (nameOnlyMatch == null)
+				{
+					nameOnlyMatch = option;
+				}
+
+				if (string.IsNullOrWhiteSpace(expectedValue) ||
+					string.Equals((option.ExpectedValue ?? string.Empty).Trim(), expectedValue.Trim(), StringComparison.OrdinalIgnoreCase))
+				{
+					return option;
+				}
+			}
+
+			return nameOnlyMatch;
+		}
+
 		private bool CanRunTaskByChannel(
 			TaskConfig task,
 			string protocolName,
 			string instanceName,
 			RuntimeCommunicationValueProvider valueProvider,
-			CommunicationConfig communicationConfig)
+			CommunicationConfig communicationConfig,
+			Dictionary<string, string> eventTriggerActuals)
 		{
 			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, instanceName);
 			string channelName = binding == null
@@ -657,7 +1076,7 @@ namespace Aron_V3
 
 			if (channel == null)
 			{
-				return TriggerConditionEvaluator.CanRunTask(task, valueProvider);
+				return ManualCompareTaskCondition(task, protocolName, instanceName, valueProvider, eventTriggerActuals);
 			}
 
 			if (!channel.Enabled)
@@ -668,11 +1087,24 @@ namespace Aron_V3
 			string selectedTriggerName = binding == null
 				? (task == null ? string.Empty : task.TriggerName)
 				: binding.TriggerName;
-			string selectedTrigger = NormalizeConfiguredCommunicationValue(selectedTriggerName);
+			string selectedTrigger;
+			string parsedTriggerExpectedValue;
+			if (!TryParseTriggerOption(selectedTriggerName, out selectedTrigger, out parsedTriggerExpectedValue))
+			{
+				selectedTrigger = NormalizeConfiguredCommunicationValue(selectedTriggerName);
+				parsedTriggerExpectedValue = string.Empty;
+			}
 			string triggerGlobalVariableName = NormalizeConfiguredCommunicationValue(channel.TriggerGlobalVariableName);
 			string triggerSourceName = NormalizeConfiguredCommunicationValue(channel.TriggerName);
 			string triggerExpectedValue = channel.TriggerExpectedValue;
 			string customTriggerGlobalVariableName = NormalizeConfiguredCommunicationValue(channel.CustomTriggerGlobalVariableName);
+			string configuredTriggerValue = parsedTriggerExpectedValue;
+			if (string.IsNullOrWhiteSpace(configuredTriggerValue))
+			{
+				configuredTriggerValue = binding == null
+					? (task == null ? string.Empty : task.TriggerValue)
+					: binding.TriggerValue;
+			}
 
 			if (string.IsNullOrWhiteSpace(selectedTrigger))
 			{
@@ -681,17 +1113,31 @@ namespace Aron_V3
 
 			if (selectedTrigger.Equals("Trigger", StringComparison.OrdinalIgnoreCase) &&
 				string.IsNullOrWhiteSpace(triggerGlobalVariableName) &&
-				string.IsNullOrWhiteSpace(customTriggerGlobalVariableName))
+				string.IsNullOrWhiteSpace(customTriggerGlobalVariableName) &&
+				(channel.CustomTriggers == null || channel.CustomTriggers.Count <= 0))
 			{
 				return false;
 			}
 
-			if (!string.IsNullOrWhiteSpace(customTriggerGlobalVariableName) &&
+			CommunicationCustomTriggerOption customTriggerOption =
+				FindCustomTriggerOption(channel, selectedTrigger, configuredTriggerValue);
+
+			if (customTriggerOption != null)
+			{
+				triggerGlobalVariableName = string.Empty;
+				triggerSourceName = customTriggerOption.Name;
+				triggerExpectedValue = string.IsNullOrWhiteSpace(configuredTriggerValue)
+					? customTriggerOption.ExpectedValue
+					: configuredTriggerValue;
+			}
+			else if (!string.IsNullOrWhiteSpace(customTriggerGlobalVariableName) &&
 				string.Equals(selectedTrigger, customTriggerGlobalVariableName, StringComparison.OrdinalIgnoreCase))
 			{
 				triggerGlobalVariableName = customTriggerGlobalVariableName;
 				triggerSourceName = customTriggerGlobalVariableName;
-				triggerExpectedValue = channel.CustomTriggerExpectedValue;
+				triggerExpectedValue = string.IsNullOrWhiteSpace(configuredTriggerValue)
+					? channel.CustomTriggerExpectedValue
+					: configuredTriggerValue;
 			}
 			else if (!string.IsNullOrWhiteSpace(selectedTrigger) &&
 				!string.Equals(selectedTrigger, triggerGlobalVariableName, StringComparison.OrdinalIgnoreCase) &&
@@ -699,13 +1145,13 @@ namespace Aron_V3
 			{
 				triggerGlobalVariableName = string.Empty;
 				triggerSourceName = selectedTrigger;
-				string configuredTriggerValue = binding == null
-					? (task == null ? string.Empty : task.TriggerValue)
-					: binding.TriggerValue;
 				triggerExpectedValue = string.IsNullOrWhiteSpace(configuredTriggerValue) ? "1" : configuredTriggerValue;
 			}
 
 			string triggerActual = GetChannelRuntimeValue(protocolName, triggerSourceName, triggerGlobalVariableName, valueProvider);
+			string triggerKey = BuildTriggerActualKey(protocolName, instanceName, triggerSourceName, triggerGlobalVariableName);
+			TrackCurrentTriggerActual(eventTriggerActuals, triggerKey, triggerActual);
+
 			bool triggerOk = TriggerConditionEvaluator.CompareValue(
 				triggerActual,
 				triggerExpectedValue,
@@ -716,64 +1162,104 @@ namespace Aron_V3
 				return false;
 			}
 
-			string optionName = binding == null
-				? (task == null ? string.Empty : task.PositionOptionName)
-				: binding.PositionName;
-			if (string.IsNullOrWhiteSpace(optionName))
-			{
-				optionName = task == null ? string.Empty : task.PositionName;
-			}
+			TriggerRunMode runMode = binding == null
+				? (task == null ? TriggerRunMode.OnReceive : task.TriggerRunMode)
+				: binding.TriggerRunMode;
 
-			if (string.IsNullOrWhiteSpace(optionName) ||
-				optionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				optionName.Equals("None", StringComparison.OrdinalIgnoreCase))
-			{
-				return true;
-			}
-
-			string positionSource = optionName;
-			string positionGlobalVariableName = string.Empty;
-			string expectedPositionValue = binding == null
-				? (task == null ? string.Empty : task.PositionValue)
-				: binding.PositionValue;
-
-			if (!string.IsNullOrWhiteSpace(channel.PositionGlobalVariableName) &&
-				string.Equals(optionName, channel.PositionGlobalVariableName, StringComparison.OrdinalIgnoreCase))
-			{
-				positionSource = channel.PositionGlobalVariableName;
-				positionGlobalVariableName = channel.PositionGlobalVariableName;
-			}
-			else if (!string.IsNullOrWhiteSpace(channel.PositionSourceName) &&
-				string.Equals(optionName, channel.PositionSourceName, StringComparison.OrdinalIgnoreCase))
-			{
-				positionSource = channel.PositionSourceName;
-				positionGlobalVariableName = channel.PositionGlobalVariableName;
-			}
-			else
-			{
-				CommunicationPositionOption option = channel.PositionOptions == null
-					? null
-					: channel.PositionOptions.FirstOrDefault(x =>
-						x != null && string.Equals(x.Name, optionName, StringComparison.OrdinalIgnoreCase));
-
-				if (option != null && string.IsNullOrWhiteSpace(expectedPositionValue))
-				{
-					expectedPositionValue = option.ExpectedValue;
-				}
-			}
-
-			if (string.IsNullOrWhiteSpace(positionSource) ||
-				positionSource.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				string.IsNullOrWhiteSpace(expectedPositionValue))
+			if (!IsTriggerRunModeMatched(runMode, triggerKey, triggerActual))
 			{
 				return false;
 			}
 
-			string positionActual = GetChannelRuntimeValue(protocolName, positionSource, positionGlobalVariableName, valueProvider);
-			return TriggerConditionEvaluator.CompareValue(
-				positionActual,
-				expectedPositionValue,
-				TriggerCompareType.Equal);
+			return TriggerConditionEvaluator.AreExecutionConditionsMatched(
+				GetExecutionConditions(task, binding));
+		}
+
+		private string BuildTriggerActualKey(
+			string protocolName,
+			string instanceName,
+			string triggerSourceName,
+			string triggerGlobalVariableName)
+		{
+			string sourceName = NormalizeConfiguredCommunicationValue(triggerGlobalVariableName);
+			string sourceKind = "Global";
+
+			if (string.IsNullOrWhiteSpace(sourceName))
+			{
+				sourceName = NormalizeConfiguredCommunicationValue(triggerSourceName);
+				sourceKind = "Input";
+			}
+
+			if (string.IsNullOrWhiteSpace(sourceName))
+			{
+				return string.Empty;
+			}
+
+			return CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName) +
+				"|" + sourceKind +
+				"|" + sourceName;
+		}
+
+		private void TrackCurrentTriggerActual(
+			Dictionary<string, string> eventTriggerActuals,
+			string triggerKey,
+			string triggerActual)
+		{
+			if (eventTriggerActuals == null || string.IsNullOrWhiteSpace(triggerKey))
+			{
+				return;
+			}
+
+			eventTriggerActuals[triggerKey] = triggerActual == null ? string.Empty : triggerActual.Trim();
+		}
+
+		private bool IsTriggerRunModeMatched(
+			TriggerRunMode runMode,
+			string triggerKey,
+			string triggerActual)
+		{
+			if (runMode != TriggerRunMode.OnChanged)
+			{
+				return true;
+			}
+
+			if (string.IsNullOrWhiteSpace(triggerKey))
+			{
+				return true;
+			}
+
+			string currentValue = triggerActual == null ? string.Empty : triggerActual.Trim();
+			lock (_syncRoot)
+			{
+				string previousValue;
+				if (!_lastTriggerActualValuesByKey.TryGetValue(triggerKey, out previousValue))
+				{
+					return true;
+				}
+
+				return !string.Equals(previousValue, currentValue, StringComparison.OrdinalIgnoreCase);
+			}
+		}
+
+		private void CommitTriggerActualValues(Dictionary<string, string> eventTriggerActuals)
+		{
+			if (eventTriggerActuals == null || eventTriggerActuals.Count <= 0)
+			{
+				return;
+			}
+
+			lock (_syncRoot)
+			{
+				foreach (KeyValuePair<string, string> pair in eventTriggerActuals)
+				{
+					if (string.IsNullOrWhiteSpace(pair.Key))
+					{
+						continue;
+					}
+
+					_lastTriggerActualValuesByKey[pair.Key] = pair.Value == null ? string.Empty : pair.Value.Trim();
+				}
+			}
 		}
 
 		private string GetChannelRuntimeValue(
@@ -788,6 +1274,18 @@ namespace Aron_V3
 			}
 
 			return valueProvider.GetInputValue(protocolName, sourceName);
+		}
+
+		private List<TaskExecutionCondition> GetExecutionConditions(
+			TaskConfig task,
+			TaskCommunicationTriggerBinding binding)
+		{
+			if (binding != null && binding.ExecutionConditions != null && binding.ExecutionConditions.Count > 0)
+			{
+				return binding.ExecutionConditions;
+			}
+
+			return task == null ? null : task.ExecutionConditions;
 		}
 
 		private CommunicationChannelConfig FindChannelConfig(
@@ -855,36 +1353,42 @@ namespace Aron_V3
 		private bool ManualCompareTaskCondition(
 			TaskConfig task,
 			string protocolName,
-			RuntimeCommunicationValueProvider valueProvider)
+			string instanceName,
+			RuntimeCommunicationValueProvider valueProvider,
+			Dictionary<string, string> eventTriggerActuals)
 		{
-			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, string.Empty);
+			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, instanceName);
 			string triggerName = binding == null ? task.TriggerName : binding.TriggerName;
 			string triggerValue = binding == null ? task.TriggerValue : binding.TriggerValue;
+			string parsedTriggerName;
+			string parsedTriggerValue;
+			if (TryParseTriggerOption(triggerName, out parsedTriggerName, out parsedTriggerValue))
+			{
+				triggerName = parsedTriggerName;
+				triggerValue = parsedTriggerValue;
+			}
 			TriggerCompareType triggerCompare = binding == null ? task.TriggerCompare : binding.TriggerCompare;
-			string positionName = binding == null ? task.PositionName : binding.PositionName;
-			string positionValue = binding == null ? task.PositionValue : binding.PositionValue;
-			TriggerCompareType positionCompare = binding == null ? task.PositionCompare : binding.PositionCompare;
-
 			string triggerActual = valueProvider.GetInputValue(protocolName, triggerName);
+			string triggerKey = BuildTriggerActualKey(protocolName, instanceName, triggerName, string.Empty);
+			TrackCurrentTriggerActual(eventTriggerActuals, triggerKey, triggerActual);
 			bool triggerOk = TriggerConditionEvaluator.CompareValue(
 				triggerActual,
 				triggerValue,
 				triggerCompare);
 
-			if (string.IsNullOrWhiteSpace(positionName) ||
-				positionName.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
-				positionName.Equals("None", StringComparison.OrdinalIgnoreCase))
+			if (!triggerOk)
 			{
-				return triggerOk;
+				return false;
 			}
 
-			string positionActual = valueProvider.GetInputValue(protocolName, positionName);
-			bool positionOk = TriggerConditionEvaluator.CompareValue(
-				positionActual,
-				positionValue,
-				positionCompare);
+			TriggerRunMode runMode = binding == null ? task.TriggerRunMode : binding.TriggerRunMode;
+			if (!IsTriggerRunModeMatched(runMode, triggerKey, triggerActual))
+			{
+				return false;
+			}
 
-			return triggerOk && positionOk;
+			return TriggerConditionEvaluator.AreExecutionConditionsMatched(
+				GetExecutionConditions(task, binding));
 		}
 
 		private void RunOneTask(
@@ -1321,6 +1825,22 @@ namespace Aron_V3
 			{
 				handler(this, args);
 			}
+		}
+
+		private string FormatObjectMap(Dictionary<string, object> values)
+		{
+			if (values == null || values.Count <= 0)
+			{
+				return "{}";
+			}
+
+			List<string> parts = new List<string>();
+			foreach (KeyValuePair<string, object> pair in values)
+			{
+				parts.Add(pair.Key + "=" + Convert.ToString(pair.Value));
+			}
+
+			return "{" + string.Join(", ", parts.ToArray()) + "}";
 		}
 
 		private string FormatCommunicationLogValues(Dictionary<string, string> values)
@@ -2313,13 +2833,19 @@ namespace Aron_V3
 
 		public bool SendHeartbeatOutput(string protocolName, string outputName, string heartbeatText)
 		{
+			return SendHeartbeatOutput(protocolName, string.Empty, outputName, heartbeatText);
+		}
+
+		public bool SendHeartbeatOutput(string protocolName, string instanceName, string outputName, string heartbeatText)
+		{
 			if (string.IsNullOrWhiteSpace(outputName))
 			{
 				return false;
 			}
 
 			CommunicationConfig config = CommunicationConfigStore.LoadOrCreateDefault();
-			string instanceName = CommunicationRuntimeNaming.GetDefaultInstanceName(protocolName, config);
+			protocolName = CommunicationRuntimeNaming.NormalizeProtocolName(protocolName);
+			instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, config);
 			Dictionary<string, object> changedValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 			changedValues[outputName.Trim()] = heartbeatText ?? string.Empty;
 

@@ -17,6 +17,9 @@ namespace Aron_V3
 		private bool _tcpRuntimeEventBound = false;
 		private bool _validatingRangeCells = false;
 		private string _activeTcpRuntimeInstanceName = string.Empty;
+		private readonly object _latestInputValuesSyncRoot = new object();
+		private readonly Dictionary<string, Dictionary<string, string>> _latestInputValuesByCommunication =
+			new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
 
 		private CheckBox chkEnable;
 		private Button btnTcpConnect;
@@ -1222,15 +1225,46 @@ namespace Aron_V3
 				clone.TriggerGlobalVariableName = channel.TriggerGlobalVariableName;
 				clone.CustomTriggerGlobalVariableName = channel.CustomTriggerGlobalVariableName;
 				clone.CustomTriggerExpectedValue = channel.CustomTriggerExpectedValue;
+				clone.CustomTriggers = CloneCustomTriggerOptions(channel.CustomTriggers);
 				clone.PositionSourceName = channel.PositionSourceName;
 				clone.PositionGlobalVariableName = channel.PositionGlobalVariableName;
 				clone.ProgramNoAddressName = channel.ProgramNoAddressName;
 				clone.ProgramSwitchEnableName = channel.ProgramSwitchEnableName;
 				clone.ProgramSwitchDoneName = channel.ProgramSwitchDoneName;
 				clone.ProgramSwitchFailName = channel.ProgramSwitchFailName;
+				clone.ChannelReadyOutputName = channel.ChannelReadyOutputName;
+				clone.ChannelReadyBusyValue = channel.ChannelReadyBusyValue;
+				clone.ChannelReadyDoneValue = channel.ChannelReadyDoneValue;
+				clone.ProgramNoOutputName = channel.ProgramNoOutputName;
 				clone.PositionOptions = ClonePositionOptions(channel.PositionOptions);
 				clone.ProgramJobMap = CloneProgramJobMap(channel.ProgramJobMap);
 				result.Add(clone);
+			}
+
+			return result;
+		}
+
+		private List<CommunicationCustomTriggerOption> CloneCustomTriggerOptions(List<CommunicationCustomTriggerOption> source)
+		{
+			List<CommunicationCustomTriggerOption> result = new List<CommunicationCustomTriggerOption>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (CommunicationCustomTriggerOption option in source)
+			{
+				if (option == null)
+				{
+					continue;
+				}
+
+				result.Add(new CommunicationCustomTriggerOption
+				{
+					Name = option.Name,
+					ExpectedValue = option.ExpectedValue,
+					Remark = option.Remark
+				});
 			}
 
 			return result;
@@ -2279,7 +2313,15 @@ namespace Aron_V3
 
 		private void CommunicationRuntime_DataReceived(object sender, CommunicationDataReceivedEventArgs e)
 		{
-			if (e == null || e.CommunicationType != CommunicationType.TcpIp)
+			if (e == null)
+			{
+				return;
+			}
+
+			CacheLatestInputValues(e);
+			RefreshInputCurrentValuesForEventSafe(e);
+
+			if (e.CommunicationType != CommunicationType.TcpIp)
 			{
 				return;
 			}
@@ -2300,6 +2342,74 @@ namespace Aron_V3
 
 			AppendTcpReceiveText(text);
 			UpdateTcpStatusUiSafe();
+		}
+
+		private void CacheLatestInputValues(CommunicationDataReceivedEventArgs e)
+		{
+			if (e == null)
+			{
+				return;
+			}
+
+			Dictionary<string, string> values =
+				new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			if (e.Values != null)
+			{
+				foreach (KeyValuePair<string, string> pair in e.Values)
+				{
+					values[pair.Key] = pair.Value;
+				}
+			}
+
+			string key = GetCommunicationCacheKey(e.CommunicationType, e.InstanceName);
+			lock (_latestInputValuesSyncRoot)
+			{
+				_latestInputValuesByCommunication[key] = values;
+			}
+		}
+
+		private string GetCommunicationCacheKey(CommunicationType communicationType, string instanceName)
+		{
+			string protocolName = CommunicationRuntimeNaming.GetProtocolName(communicationType);
+			string normalizedInstanceName =
+				CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, _config);
+			return CommunicationRuntimeNaming.FormatCommunicationName(protocolName, normalizedInstanceName);
+		}
+
+		private string GetSelectedCommunicationCacheKey()
+		{
+			string protocolName = GetSelectedProtocolName();
+			string normalizedInstanceName =
+				CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, _selectedInstanceName, _config);
+			return CommunicationRuntimeNaming.FormatCommunicationName(protocolName, normalizedInstanceName);
+		}
+
+		private void RefreshInputCurrentValuesForEventSafe(CommunicationDataReceivedEventArgs e)
+		{
+			if (IsDisposed || !IsHandleCreated || e == null)
+			{
+				return;
+			}
+
+			string eventKey = GetCommunicationCacheKey(e.CommunicationType, e.InstanceName);
+
+			if (InvokeRequired)
+			{
+				BeginInvoke(new Action(delegate
+				{
+					if (string.Equals(eventKey, GetSelectedCommunicationCacheKey(), StringComparison.OrdinalIgnoreCase))
+					{
+						RefreshInputCurrentValues();
+					}
+				}));
+				return;
+			}
+
+			if (string.Equals(eventKey, GetSelectedCommunicationCacheKey(), StringComparison.OrdinalIgnoreCase))
+			{
+				RefreshInputCurrentValues();
+			}
 		}
 
 		private void CommunicationRuntime_ErrorOccurred(object sender, Exception e)
@@ -3550,7 +3660,49 @@ namespace Aron_V3
 			}
 
 			string globalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colInputGlobalVariable");
-			row.Cells["colInputCurrentValue"].Value = GlobalVariableStore.GetValueText(globalVariableName);
+			if (!string.IsNullOrWhiteSpace(globalVariableName))
+			{
+				row.Cells["colInputCurrentValue"].Value = GlobalVariableStore.GetValueText(globalVariableName);
+				return;
+			}
+
+			string inputName = GetInputNameFromRow(row);
+			string latestValue;
+			row.Cells["colInputCurrentValue"].Value =
+				TryGetLatestInputValue(inputName, out latestValue)
+					? latestValue
+					: string.Empty;
+		}
+
+		private string GetInputNameFromRow(DataGridViewRow row)
+		{
+			if (row == null || row.DataGridView == null || !row.DataGridView.Columns.Contains("colInputName"))
+			{
+				return string.Empty;
+			}
+
+			return Convert.ToString(row.Cells["colInputName"].Value);
+		}
+
+		private bool TryGetLatestInputValue(string inputName, out string value)
+		{
+			value = string.Empty;
+			if (string.IsNullOrWhiteSpace(inputName))
+			{
+				return false;
+			}
+
+			string key = GetSelectedCommunicationCacheKey();
+			lock (_latestInputValuesSyncRoot)
+			{
+				Dictionary<string, string> values;
+				if (!_latestInputValuesByCommunication.TryGetValue(key, out values) || values == null)
+				{
+					return false;
+				}
+
+				return values.TryGetValue(inputName, out value);
+			}
 		}
 
 		private void UpdateOutputCurrentValueCell(DataGridViewRow row)
@@ -4166,7 +4318,12 @@ namespace Aron_V3
 			SaveCurrentTypeVariablesFromGrid();
 
 			using (CommunicationChannelSettingsDialog dialog =
-				new CommunicationChannelSettingsDialog(GetCurrentTypeChannels(), _selectedType, _isEnglish))
+				new CommunicationChannelSettingsDialog(
+					GetCurrentTypeChannels(),
+					GetCurrentTypeInputs(),
+					GetCurrentTypeOutputs(),
+					_selectedType,
+					_isEnglish))
 			{
 				if (dialog.ShowDialog(this) != DialogResult.OK)
 				{
@@ -4200,8 +4357,7 @@ namespace Aron_V3
 
 				SetCurrentTypeHeartbeat(dialog.Heartbeat);
 				CommunicationConfigStore.Save(_config);
-				CommunicationConfigChangedHub.RaiseConfigChanged();
-				RestartRuntimeIfCurrentTypeRunning();
+				CommunicationRuntimeManager.Instance.ReloadHeartbeatConfig(_config);
 				LoadConfigToUI(_config);
 			}
 		}
@@ -4224,6 +4380,26 @@ namespace Aron_V3
 			}
 
 			return GetCurrentS7Config().Channels;
+		}
+
+		private List<CommInputVariable> GetCurrentTypeInputs()
+		{
+			if (_config == null)
+			{
+				_config = new CommunicationConfig();
+			}
+
+			if (_selectedType == CommunicationType.TcpIp)
+			{
+				return GetCurrentTcpConfig().InputVariables;
+			}
+
+			if (_selectedType == CommunicationType.Profinet)
+			{
+				return GetCurrentProfinetConfig().InputVariables;
+			}
+
+			return GetCurrentS7Config().InputVariables;
 		}
 
 		private List<CommOutputVariable> GetCurrentTypeOutputs()
@@ -4305,29 +4481,6 @@ namespace Aron_V3
 				CommunicationInstanceConfig instance = GetSelectedInstance();
 				if (instance != null) instance.Heartbeat = heartbeat;
 			}
-		}
-
-		private void RestartRuntimeIfCurrentTypeRunning()
-		{
-			if (_selectedType == CommunicationType.TcpIp)
-			{
-				ICommunicationRuntime selectedTcpRuntime = CommunicationRuntimeManager.Instance.GetRuntime(_selectedInstanceName);
-				if (selectedTcpRuntime == null || !selectedTcpRuntime.IsRunning)
-				{
-					return;
-				}
-
-				CommunicationRuntimeManager.Instance.StartInstance(GetSelectedInstance());
-				return;
-			}
-
-			ICommunicationRuntime runtime = CommunicationRuntimeManager.Instance.GetRuntime(_selectedType);
-			if (runtime == null || !runtime.IsRunning)
-			{
-				return;
-			}
-
-			CommunicationRuntimeManager.Instance.Start(_config);
 		}
 
 		private void SetCurrentTypeChannels(List<CommunicationChannelConfig> channels)
@@ -5057,6 +5210,8 @@ namespace Aron_V3
 	{
 		private readonly CommunicationType _communicationType;
 		private readonly bool _isEnglish;
+		private readonly List<CommInputVariable> _inputVariables;
+		private readonly List<CommOutputVariable> _outputVariables;
 		private readonly DataGridView _grid;
 		private readonly Button _btnAdd;
 		private readonly Button _btnDelete;
@@ -5067,6 +5222,8 @@ namespace Aron_V3
 
 		public CommunicationChannelSettingsDialog(
 			List<CommunicationChannelConfig> channels,
+			List<CommInputVariable> inputVariables,
+			List<CommOutputVariable> outputVariables,
 			CommunicationType communicationType,
 			bool isEnglish)
 		{
@@ -5076,11 +5233,13 @@ namespace Aron_V3
 
 			_communicationType = communicationType;
 			_isEnglish = isEnglish;
+			_inputVariables = CloneInputVariables(inputVariables);
+			_outputVariables = CloneOutputVariables(outputVariables);
 			Channels = CloneChannels(channels);
 
 			Text = _isEnglish ? "Channel Settings" : "通道设置";
 			StartPosition = FormStartPosition.CenterParent;
-			Size = new Size(1320, 620);
+			Size = new Size(1540, 620);
 			MinimizeBox = false;
 			MaximizeBox = false;
 			BackColor = Color.FromArgb(3, 14, 27);
@@ -5105,7 +5264,7 @@ namespace Aron_V3
 			_grid.DefaultCellStyle.ForeColor = Color.White;
 			_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
 			_grid.DefaultCellStyle.SelectionForeColor = Color.White;
-			_grid.CellContentClick += Grid_CellContentClick;
+			_grid.CellClick += Grid_CellContentClick;
 			SetDoubleBuffered(_grid);
 
 			ConfigureGrid();
@@ -5172,15 +5331,14 @@ namespace Aron_V3
 					_isEnglish ? "Trigger Global" : "触发源全局变量",
 					150));
 				_grid.Columns.Add(CreateTextColumn("colTriggerValue", _isEnglish ? "Trigger Value" : "触发期望值", 100, false));
-				_grid.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn(
+				DataGridViewTextBoxColumn customTriggerColumn = CreateTextColumn(
 					"colCustomTriggerGlobal",
 					_isEnglish ? "Custom Trigger" : "用户自定义触发源",
-					160));
-				_grid.Columns.Add(CreateTextColumn("colCustomTriggerValue", _isEnglish ? "Custom Value" : "自定义期望值", 110, false));
-				_grid.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn(
-					"colPositionGlobal",
-					_isEnglish ? "Position Global" : "位置号全局变量",
-					150));
+					220,
+					true);
+				customTriggerColumn.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+				customTriggerColumn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+				_grid.Columns.Add(customTriggerColumn);
 				_grid.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn(
 					"colProgramNo",
 					_isEnglish ? "Program Global" : "程序号全局变量",
@@ -5189,6 +5347,29 @@ namespace Aron_V3
 					"colProgramSwitch",
 					_isEnglish ? "Program Switch Global" : "程序号切换源",
 					170));
+				_grid.Columns.Add(CreateButtonColumn(
+					"colChannelReady",
+					_isEnglish ? "Channel Ready" : "通道准备信号",
+					190));
+				_grid.Columns.Add(CreateButtonColumn(
+					"colProgramOutput",
+					_isEnglish ? "Program Output" : "输出程序号",
+					150));
+				DataGridViewTextBoxColumn readyOutputColumn = CreateTextColumn("colChannelReadyOutput", "ChannelReadyOutput", 10, false);
+				readyOutputColumn.Visible = false;
+				_grid.Columns.Add(readyOutputColumn);
+				DataGridViewTextBoxColumn readyBusyColumn = CreateTextColumn("colChannelReadyBusy", "ChannelReadyBusy", 10, false);
+				readyBusyColumn.Visible = false;
+				_grid.Columns.Add(readyBusyColumn);
+				DataGridViewTextBoxColumn readyDoneColumn = CreateTextColumn("colChannelReadyDone", "ChannelReadyDone", 10, false);
+				readyDoneColumn.Visible = false;
+				_grid.Columns.Add(readyDoneColumn);
+				_grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+				_grid.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+				if (_grid.Columns.Contains("colCustomTriggerGlobal"))
+				{
+					_grid.Columns["colCustomTriggerGlobal"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+				}
 			}
 			finally
 			{
@@ -5203,6 +5384,17 @@ namespace Aron_V3
 			column.HeaderText = header;
 			column.Width = width;
 			column.ReadOnly = readOnly;
+			return column;
+		}
+
+		private DataGridViewButtonColumn CreateButtonColumn(string name, string header, int width)
+		{
+			DataGridViewButtonColumn column = new DataGridViewButtonColumn();
+			column.Name = name;
+			column.HeaderText = header;
+			column.Width = width;
+			column.FlatStyle = FlatStyle.Flat;
+			column.UseColumnTextForButtonValue = false;
 			return column;
 		}
 
@@ -5230,15 +5422,19 @@ namespace Aron_V3
 						channel.Enabled,
 						string.Empty,
 						channel.TriggerExpectedValue,
+						FormatCustomTriggers(GetCustomTriggersForChannel(channel)),
 						string.Empty,
-						channel.CustomTriggerExpectedValue,
 						string.Empty,
-						string.Empty);
+						FormatChannelReadySettings(channel),
+						FormatOutputSelection(channel.ProgramNoOutputName),
+						channel.ChannelReadyOutputName,
+						string.IsNullOrWhiteSpace(channel.ChannelReadyBusyValue) ? "0" : channel.ChannelReadyBusyValue,
+						string.IsNullOrWhiteSpace(channel.ChannelReadyDoneValue) ? "1" : channel.ChannelReadyDoneValue);
+					_grid.Rows[rowIndex].Tag = CloneCustomTriggers(GetCustomTriggersForChannel(channel));
 					GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colTriggerGlobal", channel.TriggerGlobalVariableName);
-					GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colCustomTriggerGlobal", channel.CustomTriggerGlobalVariableName);
-					GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colPositionGlobal", channel.PositionGlobalVariableName);
 					GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colProgramNo", channel.ProgramNoAddressName);
 					GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colProgramSwitch", channel.ProgramSwitchEnableName);
+					SetCellValue(_grid.Rows[rowIndex], "colProgramOutput", FormatOutputSelection(channel.ProgramNoOutputName));
 				}
 			}
 			finally
@@ -5255,16 +5451,112 @@ namespace Aron_V3
 			}
 
 			string columnName = _grid.Columns[e.ColumnIndex].Name;
+			if (columnName == "colCustomTriggerGlobal")
+			{
+				OpenCustomTriggerDialog(e.RowIndex);
+				return;
+			}
+
+			if (columnName == "colChannelReady")
+			{
+				OpenChannelReadyDialog(e.RowIndex);
+				return;
+			}
+
+			if (columnName == "colProgramOutput")
+			{
+				OpenOutputSelectDialog(e.RowIndex, columnName);
+				return;
+			}
+
 			if (columnName != "colTriggerGlobal" &&
-				columnName != "colPositionGlobal" &&
 				columnName != "colProgramNo" &&
-				columnName != "colProgramSwitch" &&
-				columnName != "colCustomTriggerGlobal")
+				columnName != "colProgramSwitch")
 			{
 				return;
 			}
 
 			GlobalVariableBindingUi.SelectForCell(this, _grid.Rows[e.RowIndex], columnName);
+		}
+
+		private void OpenCustomTriggerDialog(int rowIndex)
+		{
+			if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+			{
+				return;
+			}
+
+			List<CommunicationCustomTriggerOption> triggers = GetRowCustomTriggers(_grid.Rows[rowIndex]);
+			using (CommunicationCustomTriggerSettingsDialog dialog =
+				new CommunicationCustomTriggerSettingsDialog(triggers, _inputVariables, _isEnglish))
+			{
+				if (dialog.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+
+				_grid.Rows[rowIndex].Tag = CloneCustomTriggers(dialog.Triggers);
+				_grid.Rows[rowIndex].Cells["colCustomTriggerGlobal"].Value = FormatCustomTriggers(dialog.Triggers);
+			}
+		}
+
+		private void OpenChannelReadyDialog(int rowIndex)
+		{
+			if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+			{
+				return;
+			}
+
+			DataGridViewRow row = _grid.Rows[rowIndex];
+			string outputName = GetCellString(row, "colChannelReadyOutput");
+			string busyValue = GetCellString(row, "colChannelReadyBusy");
+			string doneValue = GetCellString(row, "colChannelReadyDone");
+
+			using (CommunicationChannelReadySettingsDialog dialog =
+				new CommunicationChannelReadySettingsDialog(outputName, busyValue, doneValue, _outputVariables, _isEnglish))
+			{
+				if (dialog.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+
+				SetCellValue(row, "colChannelReadyOutput", dialog.OutputName);
+				SetCellValue(row, "colChannelReadyBusy", dialog.BusyValue);
+				SetCellValue(row, "colChannelReadyDone", dialog.DoneValue);
+				SetCellValue(row, "colChannelReady", FormatChannelReadySettings(dialog.OutputName, dialog.BusyValue, dialog.DoneValue));
+			}
+		}
+
+		private void OpenOutputSelectDialog(int rowIndex, string columnName)
+		{
+			if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+			{
+				return;
+			}
+
+			DataGridViewRow row = _grid.Rows[rowIndex];
+			string current = columnName == "colProgramOutput"
+				? GetCellString(row, "colProgramOutput")
+				: GetCellString(row, columnName);
+			if (current.Equals(_isEnglish ? "Select..." : "选择...", StringComparison.OrdinalIgnoreCase))
+			{
+				current = string.Empty;
+			}
+
+			using (CommunicationOutputSelectDialog dialog =
+				new CommunicationOutputSelectDialog(
+					_isEnglish ? "Select Program Output" : "选择输出程序号",
+					current,
+					_outputVariables,
+					_isEnglish))
+			{
+				if (dialog.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+
+				SetCellValue(row, columnName, FormatOutputSelection(dialog.OutputName));
+			}
 		}
 
 		private void btnAdd_Click(object sender, EventArgs e)
@@ -5279,15 +5571,60 @@ namespace Aron_V3
 				true,
 				string.Empty,
 				"1",
+				FormatCustomTriggers(null),
 				string.Empty,
-				"1",
 				string.Empty,
-				string.Empty);
+				FormatChannelReadySettings(string.Empty, "0", "1"),
+				FormatOutputSelection(string.Empty),
+				string.Empty,
+				"0",
+				"1");
 			GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colTriggerGlobal", string.Empty);
-			GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colCustomTriggerGlobal", string.Empty);
-			GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colPositionGlobal", string.Empty);
+			_grid.Rows[rowIndex].Tag = new List<CommunicationCustomTriggerOption>();
 			GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colProgramNo", string.Empty);
 			GlobalVariableBindingUi.SetCellValue(_grid.Rows[rowIndex], "colProgramSwitch", string.Empty);
+		}
+
+		private string FormatChannelReadySettings(CommunicationChannelConfig channel)
+		{
+			if (channel == null)
+			{
+				return FormatChannelReadySettings(string.Empty, "0", "1");
+			}
+
+			return FormatChannelReadySettings(
+				channel.ChannelReadyOutputName,
+				string.IsNullOrWhiteSpace(channel.ChannelReadyBusyValue) ? "0" : channel.ChannelReadyBusyValue,
+				string.IsNullOrWhiteSpace(channel.ChannelReadyDoneValue) ? "1" : channel.ChannelReadyDoneValue);
+		}
+
+		private string FormatChannelReadySettings(string outputName, string busyValue, string doneValue)
+		{
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return _isEnglish ? "Select..." : "选择...";
+			}
+
+			return outputName.Trim() + "  " +
+				(_isEnglish ? "Busy=" : "忙=") + (busyValue ?? string.Empty) + "  " +
+				(_isEnglish ? "Ready=" : "就绪=") + (doneValue ?? string.Empty);
+		}
+
+		private string FormatOutputSelection(string outputName)
+		{
+			return string.IsNullOrWhiteSpace(outputName)
+				? (_isEnglish ? "Select..." : "选择...")
+				: outputName.Trim();
+		}
+
+		private void SetCellValue(DataGridViewRow row, string columnName, object value)
+		{
+			if (row == null || !_grid.Columns.Contains(columnName))
+			{
+				return;
+			}
+
+			row.Cells[columnName].Value = value;
 		}
 
 		private void btnDelete_Click(object sender, EventArgs e)
@@ -5340,15 +5677,29 @@ namespace Aron_V3
 					channel.TriggerExpectedValue = "1";
 				}
 				channel.TriggerGlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colTriggerGlobal");
-				channel.CustomTriggerGlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colCustomTriggerGlobal");
-				channel.CustomTriggerExpectedValue = GetCellString(row, "colCustomTriggerValue");
-				if (string.IsNullOrWhiteSpace(channel.CustomTriggerExpectedValue))
+				channel.CustomTriggers = GetRowCustomTriggers(row);
+				CommunicationCustomTriggerOption firstCustomTrigger = channel.CustomTriggers.FirstOrDefault();
+				if (firstCustomTrigger == null)
 				{
+					channel.CustomTriggerGlobalVariableName = string.Empty;
 					channel.CustomTriggerExpectedValue = "1";
 				}
-				channel.PositionGlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colPositionGlobal");
+				else
+				{
+					channel.CustomTriggerGlobalVariableName = firstCustomTrigger.Name;
+					channel.CustomTriggerExpectedValue = string.IsNullOrWhiteSpace(firstCustomTrigger.ExpectedValue)
+						? "1"
+						: firstCustomTrigger.ExpectedValue;
+				}
+				channel.PositionGlobalVariableName = string.Empty;
 				channel.ProgramNoAddressName = GlobalVariableBindingUi.GetCellValue(row, "colProgramNo");
 				channel.ProgramSwitchEnableName = GlobalVariableBindingUi.GetCellValue(row, "colProgramSwitch");
+				channel.ChannelReadyOutputName = GetCellString(row, "colChannelReadyOutput");
+				channel.ChannelReadyBusyValue = GetCellString(row, "colChannelReadyBusy");
+				channel.ChannelReadyDoneValue = GetCellString(row, "colChannelReadyDone");
+				channel.ProgramNoOutputName = ParseOutputSelection(GetCellString(row, "colProgramOutput"));
+				if (string.IsNullOrWhiteSpace(channel.ChannelReadyBusyValue)) channel.ChannelReadyBusyValue = "0";
+				if (string.IsNullOrWhiteSpace(channel.ChannelReadyDoneValue)) channel.ChannelReadyDoneValue = "1";
 				channel.PositionOptions = new List<CommunicationPositionOption>
 				{
 					new CommunicationPositionOption { Name = "Not Use", ExpectedValue = string.Empty }
@@ -5356,14 +5707,31 @@ namespace Aron_V3
 				channel.TriggerName = string.IsNullOrWhiteSpace(channel.TriggerGlobalVariableName)
 					? "Trigger"
 					: channel.TriggerGlobalVariableName;
-				channel.PositionSourceName = string.IsNullOrWhiteSpace(channel.PositionGlobalVariableName)
-					? "Not Use"
-					: channel.PositionGlobalVariableName;
+				channel.PositionSourceName = "Not Use";
 
 				channels.Add(channel);
 			}
 
 			return channels;
+		}
+
+		private string ParseOutputSelection(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return string.Empty;
+			}
+
+			text = text.Trim();
+			if (text.Equals("Select...", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("选择...", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("Not Use", StringComparison.OrdinalIgnoreCase) ||
+				text.Equals("None", StringComparison.OrdinalIgnoreCase))
+			{
+				return string.Empty;
+			}
+
+			return text;
 		}
 
 		private string GetCellString(DataGridViewRow row, string columnName)
@@ -5386,6 +5754,150 @@ namespace Aron_V3
 
 			object value = row.Cells[columnName].Value;
 			return value is bool && (bool)value;
+		}
+
+		private List<CommunicationCustomTriggerOption> GetRowCustomTriggers(DataGridViewRow row)
+		{
+			List<CommunicationCustomTriggerOption> triggers = row == null
+				? null
+				: row.Tag as List<CommunicationCustomTriggerOption>;
+			return CloneCustomTriggers(triggers);
+		}
+
+		private List<CommunicationCustomTriggerOption> GetCustomTriggersForChannel(CommunicationChannelConfig channel)
+		{
+			List<CommunicationCustomTriggerOption> triggers = channel == null
+				? null
+				: channel.CustomTriggers;
+			List<CommunicationCustomTriggerOption> result = CloneCustomTriggers(triggers);
+
+			if (result.Count <= 0 &&
+				channel != null &&
+				!string.IsNullOrWhiteSpace(channel.CustomTriggerGlobalVariableName))
+			{
+				result.Add(new CommunicationCustomTriggerOption
+				{
+					Name = channel.CustomTriggerGlobalVariableName.Trim(),
+					ExpectedValue = string.IsNullOrWhiteSpace(channel.CustomTriggerExpectedValue)
+						? "1"
+						: channel.CustomTriggerExpectedValue.Trim()
+				});
+			}
+
+			return result;
+		}
+
+		private string FormatCustomTriggers(List<CommunicationCustomTriggerOption> triggers)
+		{
+			List<CommunicationCustomTriggerOption> list = CloneCustomTriggers(triggers);
+			if (list.Count <= 0)
+			{
+				return _isEnglish ? "Select..." : "选择...";
+			}
+
+			List<string> parts = new List<string>();
+			foreach (CommunicationCustomTriggerOption trigger in list)
+			{
+				if (trigger == null || string.IsNullOrWhiteSpace(trigger.Name))
+				{
+					continue;
+				}
+
+				parts.Add(trigger.Name.Trim() + "=" + (trigger.ExpectedValue ?? string.Empty));
+			}
+
+			return parts.Count <= 0
+				? (_isEnglish ? "Select..." : "选择...")
+				: string.Join(Environment.NewLine, parts.ToArray());
+		}
+
+		private static List<CommunicationCustomTriggerOption> CloneCustomTriggers(List<CommunicationCustomTriggerOption> source)
+		{
+			List<CommunicationCustomTriggerOption> result = new List<CommunicationCustomTriggerOption>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (CommunicationCustomTriggerOption trigger in source)
+			{
+				if (trigger == null || string.IsNullOrWhiteSpace(trigger.Name))
+				{
+					continue;
+				}
+
+				result.Add(new CommunicationCustomTriggerOption
+				{
+					Name = trigger.Name.Trim(),
+					ExpectedValue = trigger.ExpectedValue == null ? string.Empty : trigger.ExpectedValue.Trim(),
+					Remark = trigger.Remark
+				});
+			}
+
+			return result;
+		}
+
+		private static List<CommInputVariable> CloneInputVariables(List<CommInputVariable> source)
+		{
+			List<CommInputVariable> result = new List<CommInputVariable>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (CommInputVariable item in source)
+			{
+				if (item == null || string.IsNullOrWhiteSpace(item.Name))
+				{
+					continue;
+				}
+
+				result.Add(new CommInputVariable
+				{
+					Name = item.Name,
+					UseAsTrigger = item.UseAsTrigger,
+					UseAsPosition = item.UseAsPosition,
+					EngineName = item.EngineName,
+					DataType = item.DataType,
+					ByteOffset = item.ByteOffset,
+					BitOffset = item.BitOffset,
+					Length = item.Length,
+					Remark = item.Remark,
+					GlobalVariableName = item.GlobalVariableName
+				});
+			}
+
+			return result;
+		}
+
+		private static List<CommOutputVariable> CloneOutputVariables(List<CommOutputVariable> source)
+		{
+			List<CommOutputVariable> result = new List<CommOutputVariable>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (CommOutputVariable item in source)
+			{
+				if (item == null || string.IsNullOrWhiteSpace(item.Name))
+				{
+					continue;
+				}
+
+				result.Add(new CommOutputVariable
+				{
+					Name = item.Name,
+					DataType = item.DataType,
+					ByteOffset = item.ByteOffset,
+					BitOffset = item.BitOffset,
+					Length = item.Length,
+					Remark = item.Remark,
+					GlobalVariableName = item.GlobalVariableName
+				});
+			}
+
+			return result;
 		}
 
 		private List<CommunicationPositionOption> ParsePositionOptions(string text)
@@ -5476,12 +5988,17 @@ namespace Aron_V3
 				clone.TriggerGlobalVariableName = channel.TriggerGlobalVariableName;
 				clone.CustomTriggerGlobalVariableName = channel.CustomTriggerGlobalVariableName;
 				clone.CustomTriggerExpectedValue = channel.CustomTriggerExpectedValue;
+				clone.CustomTriggers = CloneCustomTriggers(channel.CustomTriggers);
 				clone.PositionSourceName = channel.PositionSourceName;
 				clone.PositionGlobalVariableName = channel.PositionGlobalVariableName;
 				clone.ProgramNoAddressName = channel.ProgramNoAddressName;
 				clone.ProgramSwitchEnableName = channel.ProgramSwitchEnableName;
 				clone.ProgramSwitchDoneName = channel.ProgramSwitchDoneName;
 				clone.ProgramSwitchFailName = channel.ProgramSwitchFailName;
+				clone.ChannelReadyOutputName = channel.ChannelReadyOutputName;
+				clone.ChannelReadyBusyValue = channel.ChannelReadyBusyValue;
+				clone.ChannelReadyDoneValue = channel.ChannelReadyDoneValue;
+				clone.ProgramNoOutputName = channel.ProgramNoOutputName;
 				clone.PositionOptions = new List<CommunicationPositionOption>();
 
 				if (channel.PositionOptions != null)
@@ -5504,7 +6021,7 @@ namespace Aron_V3
 			return result;
 		}
 
-		private void SetDoubleBuffered(Control control)
+		private static void SetDoubleBuffered(Control control)
 		{
 			if (control == null)
 			{
@@ -5525,6 +6042,502 @@ namespace Aron_V3
 			}
 			catch
 			{
+			}
+		}
+
+		private class CommunicationOutputSelectDialog : Form
+		{
+			private readonly bool _isEnglish;
+			private readonly ComboBox _cmbOutput;
+			private readonly Button _btnOk;
+			private readonly Button _btnClear;
+			private readonly Button _btnCancel;
+
+			public string OutputName { get; private set; }
+
+			public CommunicationOutputSelectDialog(
+				string title,
+				string selectedOutput,
+				List<CommOutputVariable> outputs,
+				bool isEnglish)
+			{
+				_isEnglish = isEnglish;
+				OutputName = selectedOutput ?? string.Empty;
+
+				Text = title;
+				StartPosition = FormStartPosition.CenterParent;
+				Size = new Size(430, 220);
+				FormBorderStyle = FormBorderStyle.FixedDialog;
+				MinimizeBox = false;
+				MaximizeBox = false;
+				BackColor = Color.FromArgb(3, 14, 27);
+				ForeColor = Color.White;
+
+				Label label = CreateLabel(_isEnglish ? "Output Pin" : "输出引脚", 32, 42);
+				Controls.Add(label);
+
+				_cmbOutput = new ComboBox();
+				_cmbOutput.DropDownStyle = ComboBoxStyle.DropDownList;
+				_cmbOutput.Location = new Point(130, 38);
+				_cmbOutput.Size = new Size(250, 28);
+				Controls.Add(_cmbOutput);
+
+				LoadOutputs(outputs, selectedOutput);
+
+				_btnClear = CreateButton(_isEnglish ? "Clear" : "清空", 32, 125);
+				_btnOk = CreateButton(_isEnglish ? "OK" : "确定", 190, 125);
+				_btnCancel = CreateButton(_isEnglish ? "Cancel" : "取消", 300, 125);
+				_btnClear.Click += delegate
+				{
+					OutputName = string.Empty;
+					DialogResult = DialogResult.OK;
+					Close();
+				};
+				_btnOk.Click += btnOk_Click;
+				_btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+				Controls.Add(_btnClear);
+				Controls.Add(_btnOk);
+				Controls.Add(_btnCancel);
+
+				AcceptButton = _btnOk;
+				CancelButton = _btnCancel;
+			}
+
+			private void LoadOutputs(List<CommOutputVariable> outputs, string selectedOutput)
+			{
+				_cmbOutput.Items.Clear();
+				if (outputs != null)
+				{
+					foreach (CommOutputVariable output in outputs)
+					{
+						if (output == null || string.IsNullOrWhiteSpace(output.Name))
+						{
+							continue;
+						}
+
+						_cmbOutput.Items.Add(output.Name);
+					}
+				}
+
+				if (!string.IsNullOrWhiteSpace(selectedOutput) && _cmbOutput.Items.Contains(selectedOutput))
+				{
+					_cmbOutput.SelectedItem = selectedOutput;
+				}
+				else if (_cmbOutput.Items.Count > 0)
+				{
+					_cmbOutput.SelectedIndex = 0;
+				}
+			}
+
+			private Label CreateLabel(string text, int x, int y)
+			{
+				Label label = new Label();
+				label.Text = text;
+				label.ForeColor = Color.White;
+				label.AutoSize = true;
+				label.Location = new Point(x, y);
+				return label;
+			}
+
+			private Button CreateButton(string text, int x, int y)
+			{
+				Button button = new Button();
+				button.Text = text;
+				button.Location = new Point(x, y);
+				button.Size = new Size(90, 34);
+				button.FlatStyle = FlatStyle.Flat;
+				button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+				button.ForeColor = Color.White;
+				button.BackColor = Color.FromArgb(2, 10, 20);
+				return button;
+			}
+
+			private void btnOk_Click(object sender, EventArgs e)
+			{
+				OutputName = _cmbOutput.SelectedItem == null ? string.Empty : _cmbOutput.SelectedItem.ToString();
+				DialogResult = DialogResult.OK;
+				Close();
+			}
+		}
+
+		private class CommunicationChannelReadySettingsDialog : Form
+		{
+			private readonly bool _isEnglish;
+			private readonly ComboBox _cmbOutput;
+			private readonly TextBox _txtBusyValue;
+			private readonly TextBox _txtDoneValue;
+			private readonly Button _btnOk;
+			private readonly Button _btnClear;
+			private readonly Button _btnCancel;
+
+			public string OutputName { get; private set; }
+			public string BusyValue { get; private set; }
+			public string DoneValue { get; private set; }
+
+			public CommunicationChannelReadySettingsDialog(
+				string outputName,
+				string busyValue,
+				string doneValue,
+				List<CommOutputVariable> outputs,
+				bool isEnglish)
+			{
+				_isEnglish = isEnglish;
+				OutputName = outputName ?? string.Empty;
+				BusyValue = string.IsNullOrWhiteSpace(busyValue) ? "0" : busyValue;
+				DoneValue = string.IsNullOrWhiteSpace(doneValue) ? "1" : doneValue;
+
+				Text = _isEnglish ? "Channel Ready Signal" : "通道准备信号";
+				StartPosition = FormStartPosition.CenterParent;
+				Size = new Size(520, 300);
+				FormBorderStyle = FormBorderStyle.FixedDialog;
+				MinimizeBox = false;
+				MaximizeBox = false;
+				BackColor = Color.FromArgb(3, 14, 27);
+				ForeColor = Color.White;
+
+				Controls.Add(CreateLabel(_isEnglish ? "Output Pin" : "输出引脚", 34, 42));
+				_cmbOutput = new ComboBox();
+				_cmbOutput.DropDownStyle = ComboBoxStyle.DropDownList;
+				_cmbOutput.Location = new Point(190, 38);
+				_cmbOutput.Size = new Size(270, 28);
+				Controls.Add(_cmbOutput);
+
+				Controls.Add(CreateLabel(_isEnglish ? "Switching Value" : "切换时输出值", 34, 92));
+				_txtBusyValue = new TextBox();
+				_txtBusyValue.Location = new Point(190, 88);
+				_txtBusyValue.Size = new Size(270, 28);
+				_txtBusyValue.Text = BusyValue;
+				Controls.Add(_txtBusyValue);
+
+				Controls.Add(CreateLabel(_isEnglish ? "Ready Value" : "切换完成输出值", 34, 142));
+				_txtDoneValue = new TextBox();
+				_txtDoneValue.Location = new Point(190, 138);
+				_txtDoneValue.Size = new Size(270, 28);
+				_txtDoneValue.Text = DoneValue;
+				Controls.Add(_txtDoneValue);
+
+				LoadOutputs(outputs, outputName);
+
+				_btnClear = CreateButton(_isEnglish ? "Clear" : "清空", 34, 210);
+				_btnOk = CreateButton(_isEnglish ? "OK" : "确定", 270, 210);
+				_btnCancel = CreateButton(_isEnglish ? "Cancel" : "取消", 380, 210);
+				_btnClear.Click += delegate
+				{
+					OutputName = string.Empty;
+					BusyValue = "0";
+					DoneValue = "1";
+					DialogResult = DialogResult.OK;
+					Close();
+				};
+				_btnOk.Click += btnOk_Click;
+				_btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+				Controls.Add(_btnClear);
+				Controls.Add(_btnOk);
+				Controls.Add(_btnCancel);
+
+				AcceptButton = _btnOk;
+				CancelButton = _btnCancel;
+			}
+
+			private void LoadOutputs(List<CommOutputVariable> outputs, string selectedOutput)
+			{
+				_cmbOutput.Items.Clear();
+				if (outputs != null)
+				{
+					foreach (CommOutputVariable output in outputs)
+					{
+						if (output == null || string.IsNullOrWhiteSpace(output.Name))
+						{
+							continue;
+						}
+
+						_cmbOutput.Items.Add(output.Name);
+					}
+				}
+
+				if (!string.IsNullOrWhiteSpace(selectedOutput) && _cmbOutput.Items.Contains(selectedOutput))
+				{
+					_cmbOutput.SelectedItem = selectedOutput;
+				}
+				else if (_cmbOutput.Items.Count > 0)
+				{
+					_cmbOutput.SelectedIndex = 0;
+				}
+			}
+
+			private Label CreateLabel(string text, int x, int y)
+			{
+				Label label = new Label();
+				label.Text = text;
+				label.ForeColor = Color.White;
+				label.AutoSize = true;
+				label.Location = new Point(x, y);
+				return label;
+			}
+
+			private Button CreateButton(string text, int x, int y)
+			{
+				Button button = new Button();
+				button.Text = text;
+				button.Location = new Point(x, y);
+				button.Size = new Size(90, 34);
+				button.FlatStyle = FlatStyle.Flat;
+				button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+				button.ForeColor = Color.White;
+				button.BackColor = Color.FromArgb(2, 10, 20);
+				return button;
+			}
+
+			private void btnOk_Click(object sender, EventArgs e)
+			{
+				OutputName = _cmbOutput.SelectedItem == null ? string.Empty : _cmbOutput.SelectedItem.ToString();
+				BusyValue = _txtBusyValue.Text == null ? string.Empty : _txtBusyValue.Text.Trim();
+				DoneValue = _txtDoneValue.Text == null ? string.Empty : _txtDoneValue.Text.Trim();
+
+				if (!string.IsNullOrWhiteSpace(OutputName) &&
+					(string.IsNullOrWhiteSpace(BusyValue) || string.IsNullOrWhiteSpace(DoneValue)))
+				{
+					ThemedDialog.ShowWarning(
+						this,
+						Text,
+						_isEnglish ? "Please input switching and ready values." : "请输入切换时输出值和切换完成输出值。",
+						_isEnglish);
+					return;
+				}
+
+				if (string.IsNullOrWhiteSpace(BusyValue)) BusyValue = "0";
+				if (string.IsNullOrWhiteSpace(DoneValue)) DoneValue = "1";
+				DialogResult = DialogResult.OK;
+				Close();
+			}
+		}
+
+		private class CommunicationCustomTriggerSettingsDialog : Form
+		{
+			private readonly bool _isEnglish;
+			private readonly List<CommInputVariable> _inputVariables;
+			private readonly DataGridView _grid;
+			private readonly Button _btnAdd;
+			private readonly Button _btnDelete;
+			private readonly Button _btnOk;
+			private readonly Button _btnCancel;
+
+			public List<CommunicationCustomTriggerOption> Triggers { get; private set; }
+
+			public CommunicationCustomTriggerSettingsDialog(
+				List<CommunicationCustomTriggerOption> triggers,
+				List<CommInputVariable> inputVariables,
+				bool isEnglish)
+			{
+				SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+				DoubleBuffered = true;
+
+				_isEnglish = isEnglish;
+				_inputVariables = CloneInputVariables(inputVariables);
+				Triggers = CloneCustomTriggers(triggers);
+
+				Text = _isEnglish ? "Custom Trigger Sources" : "用户自定义触发源";
+				StartPosition = FormStartPosition.CenterParent;
+				Size = new Size(620, 430);
+				MinimizeBox = false;
+				MaximizeBox = false;
+				BackColor = Color.FromArgb(3, 14, 27);
+				ForeColor = Color.White;
+
+				_grid = new BufferedDataGridView();
+				_grid.Dock = DockStyle.Top;
+				_grid.Height = 300;
+				_grid.AllowUserToAddRows = false;
+				_grid.AllowUserToDeleteRows = false;
+				_grid.RowHeadersVisible = false;
+				_grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+				_grid.MultiSelect = false;
+				_grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+				_grid.BackgroundColor = Color.FromArgb(2, 10, 20);
+				_grid.GridColor = Color.FromArgb(45, 70, 95);
+				_grid.BorderStyle = BorderStyle.None;
+				_grid.EnableHeadersVisualStyles = false;
+				_grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
+				_grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+				_grid.DefaultCellStyle.BackColor = Color.FromArgb(2, 10, 20);
+				_grid.DefaultCellStyle.ForeColor = Color.White;
+				_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
+				_grid.DefaultCellStyle.SelectionForeColor = Color.White;
+				SetDoubleBuffered(_grid);
+
+				ConfigureGrid();
+				LoadTriggers();
+				Controls.Add(_grid);
+
+				Panel buttonPanel = new Panel();
+				buttonPanel.Dock = DockStyle.Bottom;
+				buttonPanel.Height = 78;
+				buttonPanel.BackColor = Color.FromArgb(3, 14, 27);
+				SetDoubleBuffered(buttonPanel);
+				Controls.Add(buttonPanel);
+
+				_btnAdd = CreateButton("+", 24, 22, 58);
+				_btnDelete = CreateButton("-", 96, 22, 58);
+				_btnOk = CreateButton(_isEnglish ? "OK" : "确定", 350, 22, 92);
+				_btnCancel = CreateButton(_isEnglish ? "Cancel" : "取消", 460, 22, 92);
+
+				_btnAdd.Click += delegate { AddTriggerRow(null); };
+				_btnDelete.Click += btnDelete_Click;
+				_btnOk.Click += btnOk_Click;
+				_btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+
+				buttonPanel.Controls.Add(_btnAdd);
+				buttonPanel.Controls.Add(_btnDelete);
+				buttonPanel.Controls.Add(_btnOk);
+				buttonPanel.Controls.Add(_btnCancel);
+			}
+
+			private Button CreateButton(string text, int x, int y, int width)
+			{
+				Button button = new Button();
+				button.Text = text;
+				button.Location = new Point(x, y);
+				button.Size = new Size(width, 34);
+				button.FlatStyle = FlatStyle.Flat;
+				button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+				button.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 35, 60);
+				button.FlatAppearance.MouseDownBackColor = Color.FromArgb(5, 25, 45);
+				button.ForeColor = Color.White;
+				button.BackColor = Color.FromArgb(2, 10, 20);
+				return button;
+			}
+
+			private void ConfigureGrid()
+			{
+				_grid.Columns.Clear();
+
+				DataGridViewComboBoxColumn inputColumn = new DataGridViewComboBoxColumn();
+				inputColumn.Name = "colInput";
+				inputColumn.HeaderText = _isEnglish ? "Input Object" : "输入对象";
+				inputColumn.FlatStyle = FlatStyle.Flat;
+				inputColumn.DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton;
+				inputColumn.FillWeight = 160;
+
+				foreach (CommInputVariable item in _inputVariables)
+				{
+					if (item != null &&
+						!string.IsNullOrWhiteSpace(item.Name) &&
+						!inputColumn.Items.Contains(item.Name.Trim()))
+					{
+						inputColumn.Items.Add(item.Name.Trim());
+					}
+				}
+
+				_grid.Columns.Add(inputColumn);
+
+				DataGridViewTextBoxColumn valueColumn = new DataGridViewTextBoxColumn();
+				valueColumn.Name = "colExpected";
+				valueColumn.HeaderText = _isEnglish ? "Expected Value" : "期望值";
+				valueColumn.FillWeight = 90;
+				_grid.Columns.Add(valueColumn);
+			}
+
+			private void LoadTriggers()
+			{
+				_grid.Rows.Clear();
+
+				foreach (CommunicationCustomTriggerOption trigger in Triggers)
+				{
+					AddTriggerRow(trigger);
+				}
+			}
+
+			private void AddTriggerRow(CommunicationCustomTriggerOption trigger)
+			{
+				string inputName = trigger == null ? GetDefaultInputName() : trigger.Name;
+				string expectedValue = trigger == null
+					? "1"
+					: (trigger.ExpectedValue ?? string.Empty);
+
+				int rowIndex = _grid.Rows.Add(inputName, expectedValue);
+				if (!string.IsNullOrWhiteSpace(inputName))
+				{
+					DataGridViewComboBoxCell cell = _grid.Rows[rowIndex].Cells["colInput"] as DataGridViewComboBoxCell;
+					if (cell != null && !cell.Items.Contains(inputName))
+					{
+						cell.Items.Add(inputName);
+					}
+				}
+			}
+
+			private string GetDefaultInputName()
+			{
+				CommInputVariable input = _inputVariables.FirstOrDefault(x =>
+					x != null && !string.IsNullOrWhiteSpace(x.Name));
+				return input == null ? string.Empty : input.Name.Trim();
+			}
+
+			private void btnDelete_Click(object sender, EventArgs e)
+			{
+				if (_grid.SelectedRows.Count <= 0)
+				{
+					return;
+				}
+
+				foreach (DataGridViewRow row in _grid.SelectedRows)
+				{
+					if (!row.IsNewRow)
+					{
+						_grid.Rows.Remove(row);
+					}
+				}
+			}
+
+			private void btnOk_Click(object sender, EventArgs e)
+			{
+				_grid.EndEdit();
+				Triggers = ReadTriggers();
+				DialogResult = DialogResult.OK;
+				Close();
+			}
+
+			private List<CommunicationCustomTriggerOption> ReadTriggers()
+			{
+				List<CommunicationCustomTriggerOption> result = new List<CommunicationCustomTriggerOption>();
+
+				foreach (DataGridViewRow row in _grid.Rows)
+				{
+					if (row.IsNewRow)
+					{
+						continue;
+					}
+
+					string name = GetCellString(row, "colInput");
+					if (string.IsNullOrWhiteSpace(name))
+					{
+						continue;
+					}
+
+					string expectedValue = GetCellString(row, "colExpected");
+					if (string.IsNullOrWhiteSpace(expectedValue))
+					{
+						expectedValue = "1";
+					}
+
+					result.Add(new CommunicationCustomTriggerOption
+					{
+						Name = name.Trim(),
+						ExpectedValue = expectedValue.Trim()
+					});
+				}
+
+				return result;
+			}
+
+			private string GetCellString(DataGridViewRow row, string columnName)
+			{
+				if (row == null || !_grid.Columns.Contains(columnName))
+				{
+					return string.Empty;
+				}
+
+				object value = row.Cells[columnName].Value;
+				return value == null ? string.Empty : value.ToString().Trim();
 			}
 		}
 

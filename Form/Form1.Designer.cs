@@ -8,8 +8,7 @@
 
 		private System.Windows.Forms.Panel titlePanel;
 		private System.Windows.Forms.Panel panelBrand;
-		private System.Windows.Forms.Label lblLogo;
-		private System.Windows.Forms.Label lblTitle;
+		private System.Windows.Forms.PictureBox picBrandLogo;
 		private System.Windows.Forms.FlowLayoutPanel navFlowPanel;
 		private System.Windows.Forms.Panel panelNavLogin;
 		private System.Windows.Forms.Panel panelNavHardware;
@@ -107,8 +106,7 @@
 			this.lblRightDivider = new System.Windows.Forms.Label();
 			this.lblRunStatus = new System.Windows.Forms.Label();
 			this.panelBrand = new System.Windows.Forms.Panel();
-			this.lblLogo = new System.Windows.Forms.Label();
-			this.lblTitle = new System.Windows.Forms.Label();
+			this.picBrandLogo = new System.Windows.Forms.PictureBox();
 			this.pageHost = new System.Windows.Forms.Panel();
 			this.mainLayout = new System.Windows.Forms.TableLayoutPanel();
 			this.tableLayoutPanelCameras = new System.Windows.Forms.TableLayoutPanel();
@@ -139,6 +137,7 @@
 			this.panelNavSystem.SuspendLayout();
 			this.panelRightStatus.SuspendLayout();
 			this.panelBrand.SuspendLayout();
+			((System.ComponentModel.ISupportInitialize)(this.picBrandLogo)).BeginInit();
 			this.pageHost.SuspendLayout();
 			this.mainLayout.SuspendLayout();
 			this.resultPanel.SuspendLayout();
@@ -533,37 +532,23 @@
 			// panelBrand
 			// 
 			this.panelBrand.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(3)))), ((int)(((byte)(10)))), ((int)(((byte)(20)))));
-			this.panelBrand.Controls.Add(this.lblLogo);
-			this.panelBrand.Controls.Add(this.lblTitle);
+			this.panelBrand.Controls.Add(this.picBrandLogo);
 			this.panelBrand.Dock = System.Windows.Forms.DockStyle.Left;
 			this.panelBrand.Location = new System.Drawing.Point(0, 0);
 			this.panelBrand.Name = "panelBrand";
 			this.panelBrand.Size = new System.Drawing.Size(230, 92);
 			this.panelBrand.TabIndex = 2;
 			// 
-			// lblLogo
+			// picBrandLogo
 			// 
-			this.lblLogo.Font = new System.Drawing.Font("Segoe UI", 34F, System.Drawing.FontStyle.Bold);
-			this.lblLogo.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(45)))), ((int)(((byte)(120)))), ((int)(((byte)(255)))));
-			this.lblLogo.Location = new System.Drawing.Point(18, 4);
-			this.lblLogo.Name = "lblLogo";
-			this.lblLogo.Size = new System.Drawing.Size(60, 78);
-			this.lblLogo.TabIndex = 0;
-			this.lblLogo.Text = "B";
-			this.lblLogo.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-			this.lblLogo.Click += new System.EventHandler(this.btnMinimize_Click);
-			// 
-			// lblTitle
-			// 
-			this.lblTitle.Font = new System.Drawing.Font("Microsoft YaHei UI", 13.5F, System.Drawing.FontStyle.Bold);
-			this.lblTitle.ForeColor = System.Drawing.Color.White;
-			this.lblTitle.Location = new System.Drawing.Point(78, 8);
-			this.lblTitle.Name = "lblTitle";
-			this.lblTitle.Size = new System.Drawing.Size(145, 72);
-			this.lblTitle.TabIndex = 1;
-			this.lblTitle.Text = "Betterway\r\nVision-Base";
-			this.lblTitle.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-			this.lblTitle.Click += new System.EventHandler(this.btnMinimize_Click);
+			this.picBrandLogo.BackColor = System.Drawing.Color.Transparent;
+			this.picBrandLogo.Image = global::Aron_V3.AppBrandAssets.LoadImage(global::Aron_V3.AppBrandAssets.BrandLogoFileName);
+			this.picBrandLogo.Location = new System.Drawing.Point(0, 7);
+			this.picBrandLogo.Name = "picBrandLogo";
+			this.picBrandLogo.Size = new System.Drawing.Size(230, 84);
+			this.picBrandLogo.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
+			this.picBrandLogo.TabIndex = 2;
+			this.picBrandLogo.TabStop = false;
 			// 
 			// pageHost
 			// 
@@ -711,7 +696,7 @@
 			this.lstLog.Font = new System.Drawing.Font("Consolas", 9F);
 			this.lstLog.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(200)))), ((int)(((byte)(215)))), ((int)(((byte)(225)))));
 			this.lstLog.FormattingEnabled = true;
-			this.lstLog.ItemHeight = 22;
+			this.lstLog.ItemHeight = 14;
 			this.lstLog.Location = new System.Drawing.Point(12, 36);
 			this.lstLog.Name = "lstLog";
 			this.lstLog.Size = new System.Drawing.Size(1688, 126);
@@ -732,7 +717,7 @@
             "ERROR"});
 			this.cmbLogLevel.Location = new System.Drawing.Point(3826, 8);
 			this.cmbLogLevel.Name = "cmbLogLevel";
-			this.cmbLogLevel.Size = new System.Drawing.Size(120, 32);
+			this.cmbLogLevel.Size = new System.Drawing.Size(120, 25);
 			this.cmbLogLevel.TabIndex = 1;
 			// 
 			// btnClearLog
@@ -857,6 +842,7 @@
 			this.panelNavSystem.ResumeLayout(false);
 			this.panelRightStatus.ResumeLayout(false);
 			this.panelBrand.ResumeLayout(false);
+			((System.ComponentModel.ISupportInitialize)(this.picBrandLogo)).EndInit();
 			this.pageHost.ResumeLayout(false);
 			this.mainLayout.ResumeLayout(false);
 			this.resultPanel.ResumeLayout(false);

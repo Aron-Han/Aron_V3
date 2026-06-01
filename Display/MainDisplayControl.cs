@@ -368,7 +368,6 @@ namespace Aron_V3
 		private readonly Label _failLabel;
 		private readonly Label _rateLabel;
 		private readonly Label _jobLabel;
-		private readonly Label _posLabel;
 		private readonly Label _engineLabel;
 		private readonly Label _resetButton;
 
@@ -438,7 +437,6 @@ namespace Aron_V3
 			_failLabel = CreateInfoLabel();
 			_rateLabel = CreateInfoLabel();
 			_jobLabel = CreateInfoLabel();
-			_posLabel = CreateInfoLabel();
 			_engineLabel = CreateInfoLabel();
 
 			_resetButton = new Label();
@@ -459,9 +457,8 @@ namespace Aron_V3
 			info.Controls.Add(_rateLabel, 3, 0);
 			info.Controls.Add(_resetButton, 4, 0);
 			info.Controls.Add(_jobLabel, 0, 1);
-			info.Controls.Add(_posLabel, 1, 1);
-			info.Controls.Add(_engineLabel, 2, 1);
-			info.SetColumnSpan(_engineLabel, 2);
+			info.Controls.Add(_engineLabel, 1, 1);
+			info.SetColumnSpan(_engineLabel, 3);
 
 			UpdateLabels(string.Empty, string.Empty, string.Empty);
 			UpdateResultFrameNeutral();
@@ -600,10 +597,9 @@ namespace Aron_V3
 			_failLabel.Text = "Fail: " + _failCount.ToString();
 			_rateLabel.Text = "PassRate: " + rate.ToString("0.00") + "%";
 			_jobLabel.Text = "JobID: " + (jobID ?? string.Empty);
-			_posLabel.Text = "PosID: " + (posID ?? string.Empty);
 			_engineLabel.Text = "Channel: " + (engineID ?? string.Empty);
-			_passLabel.ForeColor = _ok;
-			_failLabel.ForeColor = _failCount > 0 ? _ng : _muted;
+			_passLabel.ForeColor = _text;
+			_failLabel.ForeColor = _text;
 		}
 
 		private void UpdateResultFrame(bool ok)

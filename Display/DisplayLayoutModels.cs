@@ -37,6 +37,8 @@ namespace Aron_V3
 
 	public static class DisplayLayoutStore
 	{
+		public static event EventHandler DisplayLayoutSaved;
+
 		public static string ConfigFilePath
 		{
 			get
@@ -112,6 +114,18 @@ namespace Aron_V3
 			{
 				serializer.Serialize(fs, config);
 			}
+
+			EventHandler handler = DisplayLayoutSaved;
+			if (handler != null)
+			{
+				handler(null, EventArgs.Empty);
+			}
+
+			DiagnosticLogStore.Append(
+				DiagnosticLogLevel.Info,
+				"Config",
+				"Display layout config saved.",
+				new Dictionary<string, string> { { "path", ConfigFilePath } });
 		}
 
 		public static List<string> GetDisplaySlotNames()

@@ -42,6 +42,7 @@ namespace Aron_V3
 
 		private readonly string _taskName;
 		private readonly List<string> _imageSourceNames;
+		private readonly bool _isEnglish;
 
 		private DataGridView dgvImages;
 		private CheckBox chkEnableCommOutput;
@@ -56,9 +57,10 @@ namespace Aron_V3
 
 		public TaskTestDialog(string taskName, IEnumerable<string> imageSourceNames)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			Options = new TaskTestOptions();
 
-			_taskName = string.IsNullOrWhiteSpace(taskName) ? "Task Test" : taskName.Trim();
+			_taskName = string.IsNullOrWhiteSpace(taskName) ? T("Task 测试", "Task Test") : taskName.Trim();
 			_imageSourceNames = NormalizeImageSources(imageSourceNames);
 
 			Text = _taskName;
@@ -76,7 +78,7 @@ namespace Aron_V3
 
 		// 兼容旧调用：如果还有位置调用 new TaskTestDialog(imageSources)，也不会报错。
 		public TaskTestDialog(IEnumerable<string> imageSourceNames)
-			: this("Task Test", imageSourceNames)
+			: this(LanguagePreferenceStore.LoadIsEnglish() ? "Task Test" : "Task 测试", imageSourceNames)
 		{
 		}
 
@@ -159,13 +161,13 @@ namespace Aron_V3
 
 			DataGridViewTextBoxColumn colSource = new DataGridViewTextBoxColumn();
 			colSource.Name = "ImageSourceName";
-			colSource.HeaderText = "图像源";
+			colSource.HeaderText = T("图像源", "Image Source");
 			colSource.ReadOnly = true;
 			colSource.FillWeight = 30;
 
 			DataGridViewTextBoxColumn colPath = new DataGridViewTextBoxColumn();
 			colPath.Name = "LocalImagePath";
-			colPath.HeaderText = "本地测试图片";
+			colPath.HeaderText = T("本地测试图片", "Local Test Image");
 			colPath.ReadOnly = true;
 			colPath.FillWeight = 70;
 
@@ -177,7 +179,9 @@ namespace Aron_V3
 			lblNoImageTip.TextAlign = ContentAlignment.MiddleCenter;
 			lblNoImageTip.ForeColor = _muted;
 			lblNoImageTip.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
-			lblNoImageTip.Text = "当前 Task 未配置图像源。\r\n点击 OK 后将直接离线执行，不需要选择本地图片。";
+			lblNoImageTip.Text = T(
+				"当前 Task 未配置图像源。\r\n点击 OK 后将直接离线执行，不需要选择本地图片。",
+				"Current Task has no image source.\r\nClick OK to run offline directly without selecting local images.");
 			lblNoImageTip.Visible = false;
 
 			imagePanel.Controls.Add(dgvImages);
@@ -187,11 +191,11 @@ namespace Aron_V3
 			actionPanel.Dock = DockStyle.Fill;
 			actionPanel.BackColor = _back;
 
-			btnBrowse = CreateButton("选择图片", 0, 6, 110, 32);
-			btnClear = CreateButton("清除图片", 120, 6, 110, 32);
+			btnBrowse = CreateButton(T("选择图片", "Browse"), 0, 6, 110, 32);
+			btnClear = CreateButton(T("清除图片", "Clear"), 120, 6, 110, 32);
 
 			chkEnableCommOutput = new CheckBox();
-			chkEnableCommOutput.Text = "允许通讯输出";
+			chkEnableCommOutput.Text = T("允许通讯输出", "Enable Comm Output");
 			chkEnableCommOutput.Left = 260;
 			chkEnableCommOutput.Top = 9;
 			chkEnableCommOutput.Width = 160;
@@ -201,7 +205,9 @@ namespace Aron_V3
 			chkEnableCommOutput.Checked = true;
 
 			Label commTip = new Label();
-			commTip.Text = "勾选后，Task 测试会按已勾选的 Step 通讯输出发送。";
+			commTip.Text = T(
+				"勾选后，Task 测试会按已勾选的 Step 通讯输出发送。",
+				"When checked, Task test sends enabled Step communication outputs.");
 			commTip.Left = 420;
 			commTip.Top = 10;
 			commTip.Width = 300;
@@ -222,8 +228,8 @@ namespace Aron_V3
 			bottom.Dock = DockStyle.Fill;
 			bottom.BackColor = _back;
 
-			btnOk = CreateButton("OK", 420, 10, 120, 34);
-			btnCancel = CreateButton("Cancel", 560, 10, 120, 34);
+			btnOk = CreateButton(T("确定", "OK"), 420, 10, 120, 34);
+			btnCancel = CreateButton(T("取消", "Cancel"), 560, 10, 120, 34);
 
 			btnOk.BackColor = Color.FromArgb(0, 95, 210);
 			btnOk.Click += delegate { ConfirmOptions(); };
@@ -257,8 +263,8 @@ namespace Aron_V3
 			bool hasImageSource = _imageSourceNames != null && _imageSourceNames.Count > 0;
 
 			lblTitle.Text = hasImageSource
-				? "Task: " + _taskName + "    请选择本地测试图像，并设置是否允许通讯输出"
-				: "Task: " + _taskName + "    当前 Task 没有图像源，只设置是否允许通讯输出";
+				? "Task: " + _taskName + T("    请选择本地测试图像，并设置是否允许通讯输出", "    Select local test images and communication output option")
+				: "Task: " + _taskName + T("    当前 Task 没有图像源，只设置是否允许通讯输出", "    No image source, only set communication output option");
 
 			dgvImages.Visible = hasImageSource;
 			lblNoImageTip.Visible = !hasImageSource;
@@ -277,13 +283,13 @@ namespace Aron_V3
 		{
 			if (dgvImages.CurrentRow == null)
 			{
-				MessageBox.Show("Please select one image source row first.", _taskName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+				MessageBox.Show(T("请先选择一行图像源。", "Please select one image source row first."), _taskName, MessageBoxButtons.OK, MessageBoxIcon.Information);
 				return;
 			}
 
 			using (OpenFileDialog dialog = new OpenFileDialog())
 			{
-				dialog.Title = "Select test image";
+				dialog.Title = T("选择测试图片", "Select test image");
 				dialog.Filter = "Image Files (*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff)|*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff|All Files (*.*)|*.*";
 				dialog.Multiselect = false;
 
@@ -335,14 +341,14 @@ namespace Aron_V3
 
 				if (!string.IsNullOrWhiteSpace(imagePath) && !File.Exists(imagePath))
 				{
-					MessageBox.Show("Image file does not exist:\r\n" + imagePath, _taskName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+					MessageBox.Show(T("图片文件不存在：\r\n", "Image file does not exist:\r\n") + imagePath, _taskName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 					return;
 				}
 
 				if (string.IsNullOrWhiteSpace(imagePath))
 				{
 					MessageBox.Show(
-						"离线测试需要为图像源选择本地图片：\r\n" + sourceName,
+						T("离线测试需要为图像源选择本地图片：\r\n", "Offline test requires a local image for image source:\r\n") + sourceName,
 						_taskName,
 						MessageBoxButtons.OK,
 						MessageBoxIcon.Information);
@@ -374,6 +380,11 @@ namespace Aron_V3
 			btn.ForeColor = _text;
 			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
 			return btn;
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 }

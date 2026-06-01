@@ -13,14 +13,17 @@ namespace Aron_V3
 		private readonly Button _btnClear;
 		private readonly Button _btnCancel;
 		private readonly string _initialVariableName;
+		private readonly bool _isEnglish;
 
 		public string SelectedVariableName { get; private set; }
 
 		public GlobalVariableSelectForm(string selectedVariableName)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			_initialVariableName = selectedVariableName ?? string.Empty;
 			SelectedVariableName = _initialVariableName;
-			Text = "选择全局变量";
+
+			Text = T("选择全局变量", "Select Global Variable");
 			StartPosition = FormStartPosition.CenterParent;
 			Size = new Size(820, 480);
 			MinimumSize = new Size(660, 360);
@@ -43,7 +46,7 @@ namespace Aron_V3
 			Panel searchPanel = new Panel { Dock = DockStyle.Fill, BackColor = BackColor };
 			Label lblSearch = new Label
 			{
-				Text = "关键词",
+				Text = T("关键字", "Keyword"),
 				AutoSize = true,
 				ForeColor = Color.White,
 				Location = new Point(0, 10)
@@ -82,11 +85,11 @@ namespace Aron_V3
 			_grid.DefaultCellStyle.ForeColor = Color.White;
 			_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
 			_grid.DefaultCellStyle.SelectionForeColor = Color.White;
-			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Name", HeaderText = "名称", FillWeight = 130 });
-			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "DataType", HeaderText = "类型", FillWeight = 80 });
-			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "CurrentValue", HeaderText = "当前值", FillWeight = 120 });
-			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Mark", HeaderText = "备注", FillWeight = 150 });
-			_grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "RememberValue", HeaderText = "记忆", FillWeight = 55 });
+			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Name", HeaderText = T("名称", "Name"), FillWeight = 130 });
+			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "DataType", HeaderText = T("类型", "Type"), FillWeight = 80 });
+			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "CurrentValue", HeaderText = T("当前值", "Current Value"), FillWeight = 120 });
+			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Mark", HeaderText = T("备注", "Remark"), FillWeight = 150 });
+			_grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "RememberValue", HeaderText = T("记忆", "Remember"), FillWeight = 55 });
 			_grid.CellDoubleClick += delegate(object sender, DataGridViewCellEventArgs e)
 			{
 				if (e.RowIndex >= 0)
@@ -102,9 +105,9 @@ namespace Aron_V3
 				Padding = new Padding(0, 10, 0, 0),
 				BackColor = BackColor
 			};
-			_btnOk = CreateButton("确定", true);
-			_btnClear = CreateButton("清除关联", false);
-			_btnCancel = CreateButton("取消", false);
+			_btnOk = CreateButton(T("确定", "OK"), true);
+			_btnClear = CreateButton(T("清除关联", "Clear"), false);
+			_btnCancel = CreateButton(T("取消", "Cancel"), false);
 			_btnOk.Click += delegate { AcceptSelection(); };
 			_btnClear.Click += delegate
 			{
@@ -173,6 +176,11 @@ namespace Aron_V3
 			Close();
 		}
 
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
+
 		private class BufferedDataGridView : DataGridView
 		{
 			public BufferedDataGridView()
@@ -185,7 +193,10 @@ namespace Aron_V3
 
 	public static class GlobalVariableBindingUi
 	{
-		public const string SelectText = "选择...";
+		public static string SelectText
+		{
+			get { return LanguagePreferenceStore.LoadIsEnglish() ? "Select..." : "选择..."; }
+		}
 
 		public static DataGridViewButtonColumn CreateButtonColumn(string name, string header, int width)
 		{
@@ -226,7 +237,7 @@ namespace Aron_V3
 			}
 
 			string value = Convert.ToString(row.Cells[columnName].Value).Trim();
-			return string.Equals(value, SelectText, StringComparison.OrdinalIgnoreCase) ? string.Empty : value;
+			return IsSelectPlaceholder(value) ? string.Empty : value;
 		}
 
 		public static bool SelectForCell(IWin32Window owner, DataGridViewRow row, string columnName)
@@ -241,6 +252,12 @@ namespace Aron_V3
 				SetCellValue(row, columnName, form.SelectedVariableName);
 				return true;
 			}
+		}
+
+		private static bool IsSelectPlaceholder(string value)
+		{
+			return string.Equals(value, "选择...", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(value, "Select...", StringComparison.OrdinalIgnoreCase);
 		}
 	}
 }

@@ -24,6 +24,12 @@ These rules apply when Codex modifies code in the Aron_V3 project.
 - Dialog text should explain the consequence of the action in plain language, especially when deleting or overwriting configuration.
 - Before replacing a family of existing dialogs, make or confirm a UI preview when the visual direction is uncertain.
 
+## Localization
+
+- Persist the selected UI language through `LanguagePreferenceStore`; startup screens and all new forms/controls must read or apply the persisted language before showing.
+- Any user-facing text introduced in UI, dialogs, buttons, grid headers, placeholder pages, startup status, or log-facing UI must provide both Chinese and English variants or route through an existing localization helper.
+- New reusable pages or dialogs should implement `ILocalizable` or accept/apply `isEnglish`, and parent pages must apply the current language immediately when creating them, not only after the user manually toggles language.
+
 ## Conflict Handling
 
 - If a requested change conflicts with these rules, tell the user clearly before changing code.

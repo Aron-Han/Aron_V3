@@ -15,7 +15,8 @@ namespace Aron_V3
 	{
 		Step = 0,
 		Hardware = 1,
-		Signal = 2
+		Signal = 2,
+		Database = 3
 	}
 
 	public partial class TaskSchedulerControl : UserControl, ILocalizable
@@ -25,9 +26,8 @@ namespace Aron_V3
 		private bool _isEnglish = false;
 		private TableLayoutPanel panelStepListBottom;
 		private FlowLayoutPanel panelFunctionBlockTabs;
-		private Button btnFunctionBlockStep;
-		private Button btnFunctionBlockHardware;
-		private Button btnFunctionBlockSignal;
+		private ComboBox cmbFunctionBlockMode;
+		private bool _updatingFunctionBlockModeCombo = false;
 		private Button btnOpenStepFolder;
 		private ToolTip stepActionToolTip;
 		private FunctionBlockLibraryMode _functionBlockLibraryMode = FunctionBlockLibraryMode.Step;
@@ -38,6 +38,7 @@ namespace Aron_V3
 		private const string FLOW_BLOCK_STEP = "Step";
 		private const string FLOW_BLOCK_HARDWARE = "Hardware";
 		private const string FLOW_BLOCK_SIGNAL = "Signal";
+		private const string FLOW_BLOCK_DATABASE = "Database";
 		private const string DISPLAY_OUTPUT_NOT_USE = "Not Use";
 		private const string VPP_DISPLAY_OUTPUT_IMAGE = "CogIPoneImage";
 		private const string HDEV_DISPLAY_OUTPUT_IMAGE = "ResultImage";
@@ -70,6 +71,8 @@ namespace Aron_V3
 			FlowConfigStore.FlowConfigSaved += FlowConfigStore_FlowConfigSaved;
 			CommunicationConfigChangedHub.ConfigChanged -= CommunicationConfigChangedHub_ConfigChanged;
 			CommunicationConfigChangedHub.ConfigChanged += CommunicationConfigChangedHub_ConfigChanged;
+			DisplayLayoutStore.DisplayLayoutSaved -= DisplayLayoutStore_DisplayLayoutSaved;
+			DisplayLayoutStore.DisplayLayoutSaved += DisplayLayoutStore_DisplayLayoutSaved;
 
 
 
@@ -80,6 +83,7 @@ namespace Aron_V3
 		{
 			FlowConfigStore.FlowConfigSaved -= FlowConfigStore_FlowConfigSaved;
 			CommunicationConfigChangedHub.ConfigChanged -= CommunicationConfigChangedHub_ConfigChanged;
+			DisplayLayoutStore.DisplayLayoutSaved -= DisplayLayoutStore_DisplayLayoutSaved;
 			base.OnHandleDestroyed(e);
 		}
 
@@ -166,13 +170,28 @@ namespace Aron_V3
 				panelFunctionBlockTabs.WrapContents = false;
 				panelFunctionBlockTabs.BackColor = panelStepList.BackColor;
 
-				btnFunctionBlockStep = CreateFunctionBlockModeButton("Step", FunctionBlockLibraryMode.Step);
-				btnFunctionBlockHardware = CreateFunctionBlockModeButton("Hardware", FunctionBlockLibraryMode.Hardware);
-				btnFunctionBlockSignal = CreateFunctionBlockModeButton("Signal", FunctionBlockLibraryMode.Signal);
+				cmbFunctionBlockMode = new ComboBox();
+				cmbFunctionBlockMode.Name = "cmbFunctionBlockMode";
+				cmbFunctionBlockMode.DropDownStyle = ComboBoxStyle.DropDownList;
+				cmbFunctionBlockMode.FlatStyle = FlatStyle.Flat;
+				cmbFunctionBlockMode.Width = GetFunctionBlockModeComboWidth();
+				cmbFunctionBlockMode.Height = 34;
+				cmbFunctionBlockMode.Margin = new Padding(0);
+				cmbFunctionBlockMode.BackColor = Color.FromArgb(8, 21, 39);
+				cmbFunctionBlockMode.ForeColor = Color.White;
+				cmbFunctionBlockMode.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+				cmbFunctionBlockMode.DrawMode = DrawMode.OwnerDrawFixed;
+				cmbFunctionBlockMode.ItemHeight = 28;
+				cmbFunctionBlockMode.DropDownWidth = GetFunctionBlockModeComboWidth();
+				cmbFunctionBlockMode.DropDownHeight = 140;
+				cmbFunctionBlockMode.IntegralHeight = false;
+				cmbFunctionBlockMode.DrawItem += FunctionBlockModeCombo_DrawItem;
+				cmbFunctionBlockMode.SelectedIndexChanged += FunctionBlockModeCombo_SelectedIndexChanged;
 
-				panelFunctionBlockTabs.Controls.Add(btnFunctionBlockStep);
-				panelFunctionBlockTabs.Controls.Add(btnFunctionBlockHardware);
-				panelFunctionBlockTabs.Controls.Add(btnFunctionBlockSignal);
+				panelFunctionBlockTabs.Controls.Add(cmbFunctionBlockMode);
+				panelStepListHeader.Resize += panelStepListHeader_Resize;
+				AdjustFunctionBlockModeComboWidth();
+				PopulateFunctionBlockModeCombo();
 			}
 
 			if (panelFunctionBlockTabs.Parent != panelStepListHeader)
@@ -187,34 +206,142 @@ namespace Aron_V3
 			}
 		}
 
-		private Button CreateFunctionBlockModeButton(string text, FunctionBlockLibraryMode mode)
+		private void panelStepListHeader_Resize(object sender, EventArgs e)
 		{
-			Button button = new Button();
-			button.Text = text;
-			button.Tag = mode;
-			button.Width = 78;
-			button.Height = 34;
-			button.Margin = new Padding(0, 0, 6, 0);
-			button.FlatStyle = FlatStyle.Flat;
-			button.FlatAppearance.BorderColor = Color.FromArgb(0, 145, 205);
-			button.FlatAppearance.MouseDownBackColor = Color.FromArgb(20, 70, 135);
-			button.FlatAppearance.MouseOverBackColor = Color.FromArgb(15, 45, 78);
-			button.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
-			button.ForeColor = Color.White;
-			button.UseVisualStyleBackColor = false;
-			button.Click += FunctionBlockModeButton_Click;
-			return button;
+			AdjustFunctionBlockModeComboWidth();
 		}
 
-		private void FunctionBlockModeButton_Click(object sender, EventArgs e)
+		private int GetFunctionBlockModeComboWidth()
 		{
-			Button button = sender as Button;
-			if (button == null || !(button.Tag is FunctionBlockLibraryMode))
+			int width = panelStepListHeader == null ? 252 : panelStepListHeader.ClientSize.Width;
+			return Math.Max(120, width);
+		}
+
+		private void AdjustFunctionBlockModeComboWidth()
+		{
+			if (cmbFunctionBlockMode == null)
 			{
 				return;
 			}
 
-			SetFunctionBlockLibraryMode((FunctionBlockLibraryMode)button.Tag, true);
+			int width = GetFunctionBlockModeComboWidth();
+			cmbFunctionBlockMode.Width = width;
+			cmbFunctionBlockMode.DropDownWidth = width;
+		}
+
+		private void PopulateFunctionBlockModeCombo()
+		{
+			if (cmbFunctionBlockMode == null)
+			{
+				return;
+			}
+
+			_updatingFunctionBlockModeCombo = true;
+			try
+			{
+				FunctionBlockLibraryMode selectedMode = _functionBlockLibraryMode;
+				cmbFunctionBlockMode.Items.Clear();
+				cmbFunctionBlockMode.Items.Add(new FunctionBlockModeOption(FunctionBlockLibraryMode.Step, GetFunctionBlockModeText(FunctionBlockLibraryMode.Step)));
+				cmbFunctionBlockMode.Items.Add(new FunctionBlockModeOption(FunctionBlockLibraryMode.Hardware, GetFunctionBlockModeText(FunctionBlockLibraryMode.Hardware)));
+				cmbFunctionBlockMode.Items.Add(new FunctionBlockModeOption(FunctionBlockLibraryMode.Signal, GetFunctionBlockModeText(FunctionBlockLibraryMode.Signal)));
+				cmbFunctionBlockMode.Items.Add(new FunctionBlockModeOption(FunctionBlockLibraryMode.Database, GetFunctionBlockModeText(FunctionBlockLibraryMode.Database)));
+				SelectFunctionBlockModeCombo(selectedMode);
+			}
+			finally
+			{
+				_updatingFunctionBlockModeCombo = false;
+			}
+		}
+
+		private string GetFunctionBlockModeText(FunctionBlockLibraryMode mode)
+		{
+			if (mode == FunctionBlockLibraryMode.Hardware)
+			{
+				return "Hardware";
+			}
+
+			if (mode == FunctionBlockLibraryMode.Signal)
+			{
+				return "Signal";
+			}
+
+			if (mode == FunctionBlockLibraryMode.Database)
+			{
+				return "Database";
+			}
+
+			return "Step";
+		}
+
+		private void SelectFunctionBlockModeCombo(FunctionBlockLibraryMode mode)
+		{
+			if (cmbFunctionBlockMode == null)
+			{
+				return;
+			}
+
+			for (int i = 0; i < cmbFunctionBlockMode.Items.Count; i++)
+			{
+				FunctionBlockModeOption option = cmbFunctionBlockMode.Items[i] as FunctionBlockModeOption;
+				if (option != null && option.Mode == mode)
+				{
+					cmbFunctionBlockMode.SelectedIndex = i;
+					return;
+				}
+			}
+		}
+
+		private void FunctionBlockModeCombo_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (_updatingFunctionBlockModeCombo)
+			{
+				return;
+			}
+
+			FunctionBlockModeOption option = cmbFunctionBlockMode == null
+				? null
+				: cmbFunctionBlockMode.SelectedItem as FunctionBlockModeOption;
+			if (option == null)
+			{
+				return;
+			}
+
+			SetFunctionBlockLibraryMode(option.Mode, true);
+		}
+
+		private void FunctionBlockModeCombo_DrawItem(object sender, DrawItemEventArgs e)
+		{
+			if (e.Index < 0 || cmbFunctionBlockMode == null)
+			{
+				return;
+			}
+
+			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+			Color backColor = selected ? Color.FromArgb(0, 120, 200) : Color.FromArgb(8, 21, 39);
+			Color foreColor = selected ? Color.White : Color.FromArgb(220, 235, 245);
+
+			using (SolidBrush brush = new SolidBrush(backColor))
+			{
+				e.Graphics.FillRectangle(brush, e.Bounds);
+			}
+
+			string text = Convert.ToString(cmbFunctionBlockMode.Items[e.Index]);
+			Rectangle textBounds = new Rectangle(e.Bounds.Left + 10, e.Bounds.Top, e.Bounds.Width - 20, e.Bounds.Height);
+			TextRenderer.DrawText(
+				e.Graphics,
+				text,
+				cmbFunctionBlockMode.Font,
+				textBounds,
+				foreColor,
+				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+			using (Pen pen = new Pen(Color.FromArgb(0, 145, 205)))
+			{
+				Rectangle border = e.Bounds;
+				border.Width -= 1;
+				border.Height -= 1;
+				e.Graphics.DrawRectangle(pen, border);
+			}
 		}
 
 		private void SetFunctionBlockLibraryMode(FunctionBlockLibraryMode mode, bool refresh)
@@ -231,22 +358,16 @@ namespace Aron_V3
 
 		private void ApplyFunctionBlockLibraryModeVisual()
 		{
-			StyleFunctionBlockModeButton(btnFunctionBlockStep, _functionBlockLibraryMode == FunctionBlockLibraryMode.Step);
-			StyleFunctionBlockModeButton(btnFunctionBlockHardware, _functionBlockLibraryMode == FunctionBlockLibraryMode.Hardware);
-			StyleFunctionBlockModeButton(btnFunctionBlockSignal, _functionBlockLibraryMode == FunctionBlockLibraryMode.Signal);
-			ApplyFunctionBlockToolbarState();
-		}
-
-		private void StyleFunctionBlockModeButton(Button button, bool selected)
-		{
-			if (button == null)
+			_updatingFunctionBlockModeCombo = true;
+			try
 			{
-				return;
+				SelectFunctionBlockModeCombo(_functionBlockLibraryMode);
 			}
-
-			button.BackColor = selected ? Color.FromArgb(23, 82, 145) : Color.FromArgb(8, 21, 39);
-			button.FlatAppearance.BorderColor = selected ? Color.FromArgb(0, 190, 255) : Color.FromArgb(0, 100, 145);
-			button.ForeColor = selected ? Color.White : Color.FromArgb(190, 210, 225);
+			finally
+			{
+				_updatingFunctionBlockModeCombo = false;
+			}
+			ApplyFunctionBlockToolbarState();
 		}
 
 		private void ApplyFunctionBlockToolbarState()
@@ -254,6 +375,7 @@ namespace Aron_V3
 			bool isStep = _functionBlockLibraryMode == FunctionBlockLibraryMode.Step;
 			bool isHardware = _functionBlockLibraryMode == FunctionBlockLibraryMode.Hardware;
 			bool isSignal = _functionBlockLibraryMode == FunctionBlockLibraryMode.Signal;
+			bool isDatabase = _functionBlockLibraryMode == FunctionBlockLibraryMode.Database;
 
 			if (btnAddStepItem != null)
 			{
@@ -280,14 +402,14 @@ namespace Aron_V3
 			{
 				btnRefreshStepItem.Visible = true;
 				btnRefreshStepItem.Enabled = true;
-				stepActionToolTip.SetToolTip(btnRefreshStepItem, isSignal ? "刷新通讯模块" : "刷新列表");
+				stepActionToolTip.SetToolTip(btnRefreshStepItem, isSignal ? "刷新通讯模块" : (isDatabase ? "刷新 Database Step" : "刷新列表"));
 			}
 
 			if (btnOpenStepFolder != null)
 			{
 				btnOpenStepFolder.Visible = !isSignal;
 				btnOpenStepFolder.Enabled = !isSignal;
-				stepActionToolTip.SetToolTip(btnOpenStepFolder, isHardware ? "打开 Hardware 文件夹" : "打开当前 Task 文件夹");
+				stepActionToolTip.SetToolTip(btnOpenStepFolder, isDatabase ? "打开 Database 文件夹" : (isHardware ? "打开 Hardware 文件夹" : "打开当前 Task 文件夹"));
 			}
 
 			if (btnAddStep != null)
@@ -295,7 +417,7 @@ namespace Aron_V3
 				btnAddStep.Text = "添加选中";
 				string tip = isHardware
 					? "添加选中的取像文件到右侧流程"
-					: (isSignal ? "添加选中的通讯模块到右侧流程" : "添加选中的 Step 到右侧流程");
+					: (isSignal ? "添加选中的通讯模块到右侧流程" : (isDatabase ? "添加 Database Step 到右侧流程" : "添加选中的 Step 到右侧流程"));
 				stepActionToolTip.SetToolTip(btnAddStep, tip);
 			}
 		}
@@ -441,6 +563,29 @@ namespace Aron_V3
 			}
 
 			FlowConfigStore_FlowConfigSaved(sender, e);
+		}
+
+		private void DisplayLayoutStore_DisplayLayoutSaved(object sender, EventArgs e)
+		{
+			if (IsDisposed)
+			{
+				return;
+			}
+
+			if (InvokeRequired)
+			{
+				try
+				{
+					BeginInvoke(new EventHandler(DisplayLayoutStore_DisplayLayoutSaved), sender, e);
+				}
+				catch
+				{
+				}
+
+				return;
+			}
+
+			RefreshDisplaySlotBindingsFromLayout();
 		}
 
 		private void BindStepListDrawEvents()
@@ -812,6 +957,12 @@ namespace Aron_V3
 				return;
 			}
 
+			if (_functionBlockLibraryMode == FunctionBlockLibraryMode.Database)
+			{
+				RefreshDatabaseLibrary();
+				return;
+			}
+
 			RefreshStepLibraryItemsByTask(jobName, taskName);
 		}
 
@@ -830,6 +981,36 @@ namespace Aron_V3
 					step.StepName,
 					GetStepDisplayText(step),
 					IsStepProjectFileMissing(jobName, taskName, step)));
+			}
+
+			if (listSteps.Items.Count > 0)
+			{
+				listSteps.SelectedIndex = 0;
+			}
+		}
+
+		private void RefreshDatabaseLibrary()
+		{
+			listSteps.Items.Clear();
+
+			try
+			{
+				DatabaseConfig config = DatabaseConfigStore.LoadOrCreateDefault();
+				string tableName = config == null ? string.Empty : config.TableName;
+				FunctionBlockListItem item = new FunctionBlockListItem(
+					FLOW_BLOCK_DATABASE,
+					FLOW_BLOCK_DATABASE,
+					string.IsNullOrWhiteSpace(tableName) ? FLOW_BLOCK_DATABASE : FLOW_BLOCK_DATABASE + " - " + tableName,
+					false);
+				listSteps.Items.Add(item);
+			}
+			catch
+			{
+				listSteps.Items.Add(new FunctionBlockListItem(
+					FLOW_BLOCK_DATABASE,
+					FLOW_BLOCK_DATABASE,
+					FLOW_BLOCK_DATABASE,
+					false));
 			}
 
 			if (listSteps.Items.Count > 0)
@@ -2056,6 +2237,12 @@ namespace Aron_V3
 				return;
 			}
 
+			if (_functionBlockLibraryMode == FunctionBlockLibraryMode.Database)
+			{
+				OpenDatabaseFolder();
+				return;
+			}
+
 			OpenCurrentTaskFolder();
 		}
 
@@ -2117,6 +2304,26 @@ namespace Aron_V3
 			catch (Exception ex)
 			{
 				MessageBox.Show("Failed to open hardware folder.\r\n\r\n" + ex.Message, "Open Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			}
+		}
+
+		private void OpenDatabaseFolder()
+		{
+			try
+			{
+				DatabaseConfig config = DatabaseConfigStore.LoadOrCreateDefault();
+				string folder = DatabaseLocalRecordStore.GetStorageFolder(config);
+				Directory.CreateDirectory(folder);
+
+				ProcessStartInfo startInfo = new ProcessStartInfo();
+				startInfo.FileName = "explorer.exe";
+				startInfo.Arguments = "\"" + folder + "\"";
+				startInfo.UseShellExecute = true;
+				Process.Start(startInfo);
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show("Failed to open database folder.\r\n\r\n" + ex.Message, "Open Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			}
 		}
 
@@ -2378,6 +2585,12 @@ namespace Aron_V3
 				return;
 			}
 
+			if (_functionBlockLibraryMode == FunctionBlockLibraryMode.Database)
+			{
+				AddSelectedDatabaseBlockToFlow();
+				return;
+			}
+
 			string jobName = GetSelectedJobName();
 			string taskName = GetSelectedTaskName();
 			string stepName = GetSelectedStepName();
@@ -2438,6 +2651,33 @@ namespace Aron_V3
 				item.DisplayResultKey = GetDefaultDisplayResultKey(step);
 				item.DisplayMode = "Fit";
 			}
+
+			AppendFlowItemToGrid(task, item);
+			SelectFlowGridRowByFlowItemId(item.FlowItemId);
+		}
+
+		private void AddSelectedDatabaseBlockToFlow()
+		{
+			string jobName = GetSelectedJobName();
+			string taskName = GetSelectedTaskName();
+
+			if (string.IsNullOrEmpty(jobName) || string.IsNullOrEmpty(taskName))
+			{
+				MessageBox.Show("Please select Program and Task first.", "Add Database", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
+
+			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+			TaskConfig task = GetTaskConfig(config, jobName, taskName);
+			if (task == null)
+			{
+				return;
+			}
+
+			StepFlowItem item = CreateNonStepFlowItem(FLOW_BLOCK_DATABASE, FLOW_BLOCK_DATABASE);
+			item.RunOrder = GetNextDefaultRunOrderFromGrid(task);
+			item.Remark = "Database";
+			EnsureDatabaseInputBindings(item);
 
 			AppendFlowItemToGrid(task, item);
 			SelectFlowGridRowByFlowItemId(item.FlowItemId);
@@ -2537,6 +2777,7 @@ namespace Aron_V3
 			item.CommunicationOutputProtocol = source.CommunicationOutputProtocol ?? string.Empty;
 			item.CommunicationOutputInstanceName = source.CommunicationOutputInstanceName ?? string.Empty;
 			item.SignalOutputs = CloneSignalOutputBindings(source.SignalOutputs);
+			item.DatabaseInputs = CloneDatabaseInputBindings(source.DatabaseInputs);
 			return item;
 		}
 
@@ -2565,6 +2806,95 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private List<DatabaseInputBinding> CloneDatabaseInputBindings(List<DatabaseInputBinding> source)
+		{
+			List<DatabaseInputBinding> result = new List<DatabaseInputBinding>();
+			if (source == null)
+			{
+				return result;
+			}
+
+			foreach (DatabaseInputBinding binding in source)
+			{
+				if (binding == null)
+				{
+					continue;
+				}
+
+				result.Add(new DatabaseInputBinding
+				{
+					InputName = binding.InputName ?? string.Empty,
+					GlobalVariableName = binding.GlobalVariableName ?? string.Empty,
+					AssignedValue = binding.AssignedValue ?? string.Empty,
+					ForceValue = binding.ForceValue,
+					Enabled = binding.Enabled
+				});
+			}
+
+			return result;
+		}
+
+		private void EnsureDatabaseInputBindings(StepFlowItem item)
+		{
+			if (item == null)
+			{
+				return;
+			}
+
+			List<DatabaseInputBinding> existing = item.DatabaseInputs ?? new List<DatabaseInputBinding>();
+			Dictionary<string, DatabaseInputBinding> existingMap =
+				new Dictionary<string, DatabaseInputBinding>(StringComparer.OrdinalIgnoreCase);
+			foreach (DatabaseInputBinding binding in existing)
+			{
+				if (binding == null || string.IsNullOrWhiteSpace(binding.InputName))
+				{
+					continue;
+				}
+
+				existingMap[binding.InputName.Trim()] = binding;
+			}
+
+			HashSet<string> globalNames = new HashSet<string>(
+				GlobalVariableStore.GetVariableNames(),
+				StringComparer.OrdinalIgnoreCase);
+
+			List<DatabaseInputBinding> normalized = new List<DatabaseInputBinding>();
+			try
+			{
+				DatabaseConfig databaseConfig = DatabaseConfigStore.LoadOrCreateDefault();
+				foreach (DatabaseFieldConfig field in databaseConfig.Fields.Where(x => x != null && x.Enabled))
+				{
+					DatabaseInputBinding binding;
+					if (existingMap.TryGetValue(field.InputName, out binding) && binding != null)
+					{
+						normalized.Add(new DatabaseInputBinding
+						{
+							InputName = field.InputName,
+							GlobalVariableName = binding.GlobalVariableName ?? string.Empty,
+							AssignedValue = binding.AssignedValue ?? string.Empty,
+							ForceValue = binding.ForceValue,
+							Enabled = binding.Enabled
+						});
+						continue;
+					}
+
+					normalized.Add(new DatabaseInputBinding
+					{
+						InputName = field.InputName,
+						GlobalVariableName = globalNames.Contains(field.InputName) ? field.InputName : string.Empty,
+						AssignedValue = field.DefaultValue ?? string.Empty,
+						ForceValue = false,
+						Enabled = true
+					});
+				}
+			}
+			catch
+			{
+			}
+
+			item.DatabaseInputs = normalized;
 		}
 
 		private int GetNextDefaultRunOrder(TaskConfig task)
@@ -3679,6 +4009,11 @@ namespace Aron_V3
 		}
 		private void RefreshDisplaySlotComboColumn()
 		{
+			RefreshDisplaySlotComboColumn(null);
+		}
+
+		private void RefreshDisplaySlotComboColumn(List<string> slotNames)
+		{
 			if (dgvSteps == null || !dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
 			{
 				return;
@@ -3693,9 +4028,82 @@ namespace Aron_V3
 
 			col.Items.Clear();
 
-			foreach (string slotName in DisplayLayoutStore.GetDisplaySlotNames())
+			if (slotNames == null)
+			{
+				slotNames = DisplayLayoutStore.GetDisplaySlotNames();
+			}
+
+			foreach (string slotName in slotNames)
 			{
 				col.Items.Add(slotName);
+			}
+		}
+
+		private void RefreshDisplaySlotBindingsFromLayout()
+		{
+			if (dgvSteps == null || dgvSteps.IsDisposed || !dgvSteps.Columns.Contains(COL_DISPLAY_SLOT))
+			{
+				return;
+			}
+
+			bool oldLoading = _loading;
+			List<string> slotNames = DisplayLayoutStore.GetDisplaySlotNames();
+			HashSet<string> validSlotNames = new HashSet<string>(slotNames, StringComparer.OrdinalIgnoreCase);
+			if (!validSlotNames.Contains("Not Show"))
+			{
+				validSlotNames.Add("Not Show");
+			}
+
+			_loading = true;
+			BeginUpdateControl(dgvSteps);
+			dgvSteps.SuspendLayout();
+
+			try
+			{
+				RefreshDisplaySlotComboColumn(slotNames);
+
+				foreach (DataGridViewRow row in dgvSteps.Rows)
+				{
+					if (row == null || row.IsNewRow)
+					{
+						continue;
+					}
+
+					DataGridViewCell cell = row.Cells[COL_DISPLAY_SLOT];
+					string currentSlot = cell == null || cell.Value == null ? string.Empty : cell.Value.ToString();
+
+					if (string.IsNullOrWhiteSpace(currentSlot) || !validSlotNames.Contains(currentSlot))
+					{
+						if (cell != null)
+						{
+							cell.Value = "Not Show";
+						}
+
+						StepFlowItem item = row.Tag as StepFlowItem;
+						if (item != null)
+						{
+							item.DisplaySlotName = "Not Show";
+						}
+					}
+				}
+
+				TaskConfig task = GetTaskConfig(GetSelectedJobName(), GetSelectedTaskName());
+				if (task != null)
+				{
+					foreach (DataGridViewRow row in dgvSteps.Rows)
+					{
+						if (row != null && !row.IsNewRow)
+						{
+							ApplyStepFlowRowVisual(row, task);
+						}
+					}
+				}
+			}
+			finally
+			{
+				dgvSteps.ResumeLayout();
+				EndUpdateControl(dgvSteps);
+				_loading = oldLoading;
 			}
 		}
 
@@ -3958,6 +4366,13 @@ namespace Aron_V3
 					return;
 				}
 
+				if (flowItem != null &&
+					string.Equals(flowItem.BlockType, FLOW_BLOCK_DATABASE, StringComparison.OrdinalIgnoreCase))
+				{
+					ShowDatabaseInputSettingsForRow(row, flowItem);
+					return;
+				}
+
 				TaskConfig task = GetTaskConfig(GetSelectedJobName(), GetSelectedTaskName());
 				if (IsImageSourceSelectableRow(row, task))
 				{
@@ -4002,6 +4417,31 @@ namespace Aron_V3
 				flowItem.CommunicationOutputProtocol = flowItem.SignalProtocol;
 				flowItem.CommunicationOutputInstanceName = flowItem.SignalInstanceName;
 				flowItem.SignalOutputs = dialog.GetBindings();
+				row.Tag = flowItem;
+			}
+		}
+
+		private void ShowDatabaseInputSettingsForRow(DataGridViewRow row, StepFlowItem flowItem)
+		{
+			if (row == null || flowItem == null)
+			{
+				return;
+			}
+
+			DatabaseConfig databaseConfig = DatabaseConfigStore.LoadOrCreateDefault();
+			DatabaseConfigStore.Normalize(databaseConfig);
+
+			using (DatabaseInputSettingsDialog dialog = new DatabaseInputSettingsDialog(
+				databaseConfig,
+				flowItem.DatabaseInputs,
+				_isEnglish))
+			{
+				if (dialog.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+
+				flowItem.DatabaseInputs = dialog.GetBindings();
 				row.Tag = flowItem;
 			}
 		}
@@ -5093,6 +5533,23 @@ namespace Aron_V3
 			}
 		}
 
+		private class FunctionBlockModeOption
+		{
+			public FunctionBlockLibraryMode Mode { get; private set; }
+			public string Text { get; private set; }
+
+			public FunctionBlockModeOption(FunctionBlockLibraryMode mode, string text)
+			{
+				Mode = mode;
+				Text = text ?? string.Empty;
+			}
+
+			public override string ToString()
+			{
+				return Text;
+			}
+		}
+
 		private class JobContext
 		{
 			public string ProtocolName { get; private set; }
@@ -5153,9 +5610,7 @@ namespace Aron_V3
 				btnDeleteSelected.Text = "▦  Delete";
 				HideMoveButtons();
 				btnSave.Text = "▣  Save";
-				if (btnFunctionBlockStep != null) btnFunctionBlockStep.Text = "Step";
-				if (btnFunctionBlockHardware != null) btnFunctionBlockHardware.Text = "Hardware";
-				if (btnFunctionBlockSignal != null) btnFunctionBlockSignal.Text = "Signal";
+				PopulateFunctionBlockModeCombo();
 			}
 			else
 			{
@@ -5173,9 +5628,7 @@ namespace Aron_V3
 				btnDeleteSelected.Text = "▦  删除选中";
 				HideMoveButtons();
 				btnSave.Text = "▣  保存";
-				if (btnFunctionBlockStep != null) btnFunctionBlockStep.Text = "Step";
-				if (btnFunctionBlockHardware != null) btnFunctionBlockHardware.Text = "Hardware";
-				if (btnFunctionBlockSignal != null) btnFunctionBlockSignal.Text = "Signal";
+				PopulateFunctionBlockModeCombo();
 			}
 			ApplyFunctionBlockLibraryModeVisual();
 			if (dgvSteps.Columns.Contains(COL_DISPLAY_OUTPUT))
@@ -5640,10 +6093,382 @@ namespace Aron_V3
 		}
 	}
 
+	public class DatabaseInputSettingsDialog : Form
+	{
+		private readonly DatabaseConfig _databaseConfig;
+		private readonly List<DatabaseInputBinding> _existingBindings;
+		private readonly bool _isEnglish;
+		private DataGridView dgvInputs;
+		private Button btnOK;
+		private Button btnCancel;
+
+		public DatabaseInputSettingsDialog(
+			DatabaseConfig databaseConfig,
+			List<DatabaseInputBinding> existingBindings,
+			bool isEnglish)
+		{
+			_databaseConfig = databaseConfig ?? DatabaseConfigStore.LoadOrCreateDefault();
+			DatabaseConfigStore.Normalize(_databaseConfig);
+			_existingBindings = existingBindings ?? new List<DatabaseInputBinding>();
+			_isEnglish = isEnglish;
+			InitializeUi();
+			LoadRows();
+		}
+
+		public List<DatabaseInputBinding> GetBindings()
+		{
+			List<DatabaseInputBinding> result = new List<DatabaseInputBinding>();
+			if (dgvInputs == null)
+			{
+				return result;
+			}
+
+			CommitInputGridEdits();
+			foreach (DataGridViewRow row in dgvInputs.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				string inputName = GetCellString(row, "colInputName");
+				if (string.IsNullOrWhiteSpace(inputName))
+				{
+					continue;
+				}
+
+				result.Add(new DatabaseInputBinding
+				{
+					InputName = inputName,
+					GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colGlobalVariable"),
+					AssignedValue = GetCellString(row, "colAssignedValue"),
+					ForceValue = GetCellBool(row, "colForce"),
+					Enabled = GetCellBool(row, "colEnabled")
+				});
+			}
+
+			return result;
+		}
+
+		private void InitializeUi()
+		{
+			Text = T("Database 输入设置", "Database Input Settings");
+			StartPosition = FormStartPosition.CenterParent;
+			Size = new Size(860, 540);
+			MinimumSize = new Size(780, 500);
+			BackColor = Color.FromArgb(2, 10, 20);
+			ForeColor = Color.White;
+			FormBorderStyle = FormBorderStyle.FixedDialog;
+			MaximizeBox = false;
+			MinimizeBox = false;
+			ShowInTaskbar = false;
+			Font = new Font("Microsoft YaHei UI", 9F);
+			DoubleBuffered = true;
+
+			Label lblTitle = new Label();
+			lblTitle.Text = T("数据库表: ", "Table: ") + (_databaseConfig.TableName ?? string.Empty);
+			lblTitle.Location = new Point(24, 18);
+			lblTitle.Size = new Size(780, 28);
+			lblTitle.ForeColor = Color.White;
+			lblTitle.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
+
+			dgvInputs = new BufferedDataGridView();
+			dgvInputs.Location = new Point(24, 58);
+			dgvInputs.Size = new Size(810, 370);
+			dgvInputs.AllowUserToAddRows = false;
+			dgvInputs.AllowUserToDeleteRows = false;
+			dgvInputs.RowHeadersVisible = false;
+			dgvInputs.MultiSelect = false;
+			dgvInputs.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+			dgvInputs.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+			dgvInputs.BackgroundColor = Color.FromArgb(2, 10, 20);
+			dgvInputs.GridColor = Color.FromArgb(45, 70, 95);
+			dgvInputs.BorderStyle = BorderStyle.FixedSingle;
+			dgvInputs.EnableHeadersVisualStyles = false;
+			dgvInputs.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
+			dgvInputs.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+			dgvInputs.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			dgvInputs.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			dgvInputs.DefaultCellStyle.BackColor = Color.FromArgb(2, 10, 20);
+			dgvInputs.DefaultCellStyle.ForeColor = Color.White;
+			dgvInputs.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
+			dgvInputs.DefaultCellStyle.SelectionForeColor = Color.White;
+			dgvInputs.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+			dgvInputs.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
+			dgvInputs.CurrentCellDirtyStateChanged += dgvInputs_CurrentCellDirtyStateChanged;
+			dgvInputs.CellValueChanged += dgvInputs_CellValueChanged;
+			dgvInputs.CellContentClick += dgvInputs_CellContentClick;
+
+			dgvInputs.Columns.Add(CreateCheckColumn("colEnabled", T("写入", "Write"), 65));
+			dgvInputs.Columns.Add(CreateTextColumn("colInputName", T("输入名称", "Input"), true, 140));
+			dgvInputs.Columns.Add(CreateTextColumn("colDataFormat", T("数据格式", "Format"), true, 90));
+			dgvInputs.Columns.Add(GlobalVariableBindingUi.CreateButtonColumn("colGlobalVariable", T("全局变量", "Global Variable"), 170));
+			dgvInputs.Columns.Add(CreateCheckColumn("colForce", T("强制", "Force"), 65));
+			dgvInputs.Columns.Add(CreateTextColumn("colAssignedValue", T("手动赋值", "Manual Value"), false, 150));
+			dgvInputs.Columns.Add(CreateTextColumn("colRemark", T("备注", "Remark"), true, 160));
+			SetDoubleBuffered(dgvInputs);
+
+			Label lblHint = new Label();
+			lblHint.Text = T("未勾选强制时，运行时读取绑定全局变量；未绑定时尝试读取同名运行数据。", "Without Force, runtime reads the bound global variable; if empty it tries runtime data with the same name.");
+			lblHint.Location = new Point(24, 438);
+			lblHint.Size = new Size(620, 24);
+			lblHint.ForeColor = Color.FromArgb(170, 205, 225);
+
+			btnOK = CreateButton(T("确定", "OK"), 592, 462, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 724, 462, false);
+			btnOK.DialogResult = DialogResult.OK;
+			btnCancel.DialogResult = DialogResult.Cancel;
+			btnOK.Click += btnOK_Click;
+			AcceptButton = btnOK;
+			CancelButton = btnCancel;
+
+			Controls.Add(lblTitle);
+			Controls.Add(dgvInputs);
+			Controls.Add(lblHint);
+			Controls.Add(btnOK);
+			Controls.Add(btnCancel);
+		}
+
+		private DataGridViewTextBoxColumn CreateTextColumn(string name, string header, bool readOnly, int fillWeight)
+		{
+			DataGridViewTextBoxColumn column = new DataGridViewTextBoxColumn();
+			column.Name = name;
+			column.HeaderText = header;
+			column.ReadOnly = readOnly;
+			column.FillWeight = fillWeight;
+			return column;
+		}
+
+		private DataGridViewCheckBoxColumn CreateCheckColumn(string name, string header, int fillWeight)
+		{
+			DataGridViewCheckBoxColumn column = new DataGridViewCheckBoxColumn();
+			column.Name = name;
+			column.HeaderText = header;
+			column.FillWeight = fillWeight;
+			return column;
+		}
+
+		private Button CreateButton(string text, int x, int y, bool primary)
+		{
+			Button btn = new Button();
+			btn.Text = text;
+			btn.Location = new Point(x, y);
+			btn.Size = new Size(110, 34);
+			btn.FlatStyle = FlatStyle.Flat;
+			btn.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+			btn.BackColor = primary ? Color.FromArgb(0, 95, 220) : Color.FromArgb(3, 14, 27);
+			btn.ForeColor = Color.White;
+			btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			btn.UseVisualStyleBackColor = false;
+			return btn;
+		}
+
+		private void LoadRows()
+		{
+			Dictionary<string, DatabaseInputBinding> bindingMap =
+				new Dictionary<string, DatabaseInputBinding>(StringComparer.OrdinalIgnoreCase);
+			foreach (DatabaseInputBinding binding in _existingBindings)
+			{
+				if (binding == null || string.IsNullOrWhiteSpace(binding.InputName))
+				{
+					continue;
+				}
+
+				bindingMap[binding.InputName.Trim()] = binding;
+			}
+
+			HashSet<string> globalNames = new HashSet<string>(
+				GlobalVariableStore.GetVariableNames(),
+				StringComparer.OrdinalIgnoreCase);
+
+			foreach (DatabaseFieldConfig field in _databaseConfig.Fields.Where(x => x != null && x.Enabled))
+			{
+				DatabaseInputBinding binding;
+				bindingMap.TryGetValue(field.InputName, out binding);
+
+				int rowIndex = dgvInputs.Rows.Add();
+				DataGridViewRow row = dgvInputs.Rows[rowIndex];
+				row.Cells["colEnabled"].Value = binding == null ? true : binding.Enabled;
+				row.Cells["colInputName"].Value = field.InputName;
+				row.Cells["colDataFormat"].Value = GetDatabaseFormatName(field.DataFormat);
+				GlobalVariableBindingUi.SetCellValue(
+					row,
+					"colGlobalVariable",
+					binding == null
+						? (globalNames.Contains(field.InputName) ? field.InputName : string.Empty)
+						: binding.GlobalVariableName);
+				row.Cells["colForce"].Value = binding != null && binding.ForceValue;
+				row.Cells["colAssignedValue"].Value = binding == null ? (field.DefaultValue ?? string.Empty) : binding.AssignedValue;
+				row.Cells["colRemark"].Value = field.Remark ?? string.Empty;
+				row.Tag = field;
+				ApplyAssignedValueCellState(row);
+			}
+		}
+
+		private void btnOK_Click(object sender, EventArgs e)
+		{
+			CommitInputGridEdits();
+		}
+
+		private void CommitInputGridEdits()
+		{
+			if (dgvInputs == null)
+			{
+				return;
+			}
+
+			try
+			{
+				if (dgvInputs.IsCurrentCellDirty)
+				{
+					dgvInputs.CommitEdit(DataGridViewDataErrorContexts.Commit);
+				}
+
+				dgvInputs.EndEdit();
+			}
+			catch
+			{
+			}
+		}
+
+		private string GetDatabaseFormatName(DatabaseFieldDataFormat format)
+		{
+			if (format == DatabaseFieldDataFormat.String || format == DatabaseFieldDataFormat.Text)
+			{
+				return "String";
+			}
+
+			return format.ToString();
+		}
+
+		private void dgvInputs_CurrentCellDirtyStateChanged(object sender, EventArgs e)
+		{
+			if (dgvInputs != null && dgvInputs.IsCurrentCellDirty)
+			{
+				dgvInputs.CommitEdit(DataGridViewDataErrorContexts.Commit);
+			}
+		}
+
+		private void dgvInputs_CellValueChanged(object sender, DataGridViewCellEventArgs e)
+		{
+			if (e.RowIndex < 0 || e.ColumnIndex < 0 || dgvInputs == null)
+			{
+				return;
+			}
+
+			string columnName = dgvInputs.Columns[e.ColumnIndex].Name;
+			if (string.Equals(columnName, "colForce", StringComparison.OrdinalIgnoreCase))
+			{
+				ApplyAssignedValueCellState(dgvInputs.Rows[e.RowIndex]);
+			}
+		}
+
+		private void dgvInputs_CellContentClick(object sender, DataGridViewCellEventArgs e)
+		{
+			if (e.RowIndex < 0 || e.ColumnIndex < 0 || dgvInputs == null)
+			{
+				return;
+			}
+
+			if (string.Equals(dgvInputs.Columns[e.ColumnIndex].Name, "colGlobalVariable", StringComparison.OrdinalIgnoreCase))
+			{
+				GlobalVariableBindingUi.SelectForCell(this, dgvInputs.Rows[e.RowIndex], "colGlobalVariable");
+			}
+		}
+
+		private void ApplyAssignedValueCellState(DataGridViewRow row)
+		{
+			if (row == null || row.DataGridView == null || !row.DataGridView.Columns.Contains("colAssignedValue"))
+			{
+				return;
+			}
+
+			bool forceValue = GetCellBool(row, "colForce");
+			DataGridViewCell cell = row.Cells["colAssignedValue"];
+			cell.ReadOnly = !forceValue;
+			cell.Style.BackColor = forceValue ? Color.FromArgb(2, 10, 20) : Color.FromArgb(18, 28, 40);
+			cell.Style.ForeColor = forceValue ? Color.White : Color.FromArgb(120, 140, 155);
+			cell.Style.SelectionBackColor = forceValue ? Color.FromArgb(0, 120, 200) : Color.FromArgb(45, 60, 75);
+			cell.Style.SelectionForeColor = Color.White;
+		}
+
+		private void SetDoubleBuffered(Control control)
+		{
+			if (control == null)
+			{
+				return;
+			}
+
+			try
+			{
+				System.Reflection.PropertyInfo property = typeof(Control).GetProperty(
+					"DoubleBuffered",
+					System.Reflection.BindingFlags.Instance |
+					System.Reflection.BindingFlags.NonPublic);
+
+				if (property != null)
+				{
+					property.SetValue(control, true, null);
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private string GetCellString(DataGridViewRow row, string columnName)
+		{
+			if (row == null ||
+				row.DataGridView == null ||
+				string.IsNullOrWhiteSpace(columnName) ||
+				!row.DataGridView.Columns.Contains(columnName))
+			{
+				return string.Empty;
+			}
+
+			object value = row.Cells[columnName].Value;
+			return value == null ? string.Empty : value.ToString().Trim();
+		}
+
+		private bool GetCellBool(DataGridViewRow row, string columnName)
+		{
+			if (row == null ||
+				row.DataGridView == null ||
+				string.IsNullOrWhiteSpace(columnName) ||
+				!row.DataGridView.Columns.Contains(columnName))
+			{
+				return false;
+			}
+
+			object value = row.Cells[columnName].Value;
+			if (value == null)
+			{
+				return false;
+			}
+
+			bool parsed;
+			return bool.TryParse(value.ToString(), out parsed) && parsed;
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
+
+		private class BufferedDataGridView : DataGridView
+		{
+			public BufferedDataGridView()
+			{
+				DoubleBuffered = true;
+			}
+		}
+	}
+
 	public class NewStepAssetDialog : Form
 	{
 		private readonly Func<StepType, string> _defaultNameProvider;
 		private readonly Func<StepType, string, string> _validator;
+		private readonly bool _isEnglish;
 		private ComboBox cmbType;
 		private TextBox txtName;
 		private Label lblHint;
@@ -5669,6 +6494,7 @@ namespace Aron_V3
 			Func<StepType, string> defaultNameProvider,
 			Func<StepType, string, string> validator)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			_defaultNameProvider = defaultNameProvider;
 			_validator = validator;
 			InitializeUi(title);
@@ -5676,7 +6502,7 @@ namespace Aron_V3
 
 		private void InitializeUi(string title)
 		{
-			Text = title;
+			Text = _isEnglish ? "New Step" : title;
 			StartPosition = FormStartPosition.CenterParent;
 			Size = new Size(460, 260);
 			MinimumSize = new Size(460, 260);
@@ -5690,13 +6516,13 @@ namespace Aron_V3
 			Font = new Font("Microsoft YaHei UI", 9F);
 
 			Label lblTitle = new Label();
-			lblTitle.Text = "新建 Step";
+			lblTitle.Text = T("新建 Step", "New Step");
 			lblTitle.Location = new Point(24, 18);
 			lblTitle.Size = new Size(390, 26);
 			lblTitle.ForeColor = Color.White;
 			lblTitle.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
 
-			Label lblType = CreateLabel("类型", 24, 58);
+			Label lblType = CreateLabel(T("类型", "Type"), 24, 58);
 			cmbType = new ComboBox();
 			cmbType.DropDownStyle = ComboBoxStyle.DropDownList;
 			cmbType.Location = new Point(112, 54);
@@ -5710,7 +6536,7 @@ namespace Aron_V3
 			cmbType.SelectedIndex = 0;
 			cmbType.SelectedIndexChanged += cmbType_SelectedIndexChanged;
 
-			Label lblName = CreateLabel("名称", 24, 100);
+			Label lblName = CreateLabel(T("名称", "Name"), 24, 100);
 			txtName = new TextBox();
 			txtName.Location = new Point(112, 96);
 			txtName.Size = new Size(300, 26);
@@ -5727,8 +6553,8 @@ namespace Aron_V3
 			lblHint.Font = new Font("Microsoft YaHei UI", 8.5F);
 			lblHint.TextAlign = ContentAlignment.TopLeft;
 
-			btnOK = CreateButton("确认", 174, 182, true);
-			btnCancel = CreateButton("取消", 302, 182, false);
+			btnOK = CreateButton(T("确认", "OK"), 174, 182, true);
+			btnCancel = CreateButton(T("取消", "Cancel"), 302, 182, false);
 			btnOK.DialogResult = DialogResult.OK;
 			btnCancel.DialogResult = DialogResult.Cancel;
 			btnOK.EnabledChanged += btnOK_EnabledChanged;
@@ -5841,7 +6667,7 @@ namespace Aron_V3
 				error.IndexOf("exists", StringComparison.OrdinalIgnoreCase) >= 0);
 
 			btnOK.Enabled = !hasError;
-			lblHint.Text = hasError ? error : "名称可用。";
+			lblHint.Text = hasError ? error : T("名称可用。", "Name is available.");
 			lblHint.ForeColor = duplicate
 				? Color.FromArgb(255, 145, 185)
 				: (hasError ? Color.FromArgb(255, 205, 115) : Color.FromArgb(120, 210, 170));
@@ -5870,6 +6696,11 @@ namespace Aron_V3
 				return Text;
 			}
 		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
 	}
 
 	public class TextInputDialog : Form
@@ -5877,6 +6708,7 @@ namespace Aron_V3
 		private TextBox txtInput;
 		private Button btnOK;
 		private Button btnCancel;
+		private readonly bool _isEnglish;
 
 		public string InputText
 		{
@@ -5885,6 +6717,7 @@ namespace Aron_V3
 
 		public TextInputDialog(string title, string prompt, string defaultText)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			InitializeUi(title, prompt, defaultText);
 		}
 
@@ -5918,8 +6751,8 @@ namespace Aron_V3
 			txtInput.BorderStyle = BorderStyle.FixedSingle;
 			txtInput.Font = new Font("Microsoft YaHei UI", 10F);
 
-			btnOK = CreateButton("OK", 154, 104);
-			btnCancel = CreateButton("Cancel", 284, 104);
+			btnOK = CreateButton(T("确定", "OK"), 154, 104);
+			btnCancel = CreateButton(T("取消", "Cancel"), 284, 104);
 			btnOK.DialogResult = DialogResult.OK;
 			btnCancel.DialogResult = DialogResult.Cancel;
 
@@ -5959,6 +6792,11 @@ namespace Aron_V3
 			txtInput.Focus();
 			txtInput.SelectAll();
 		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
 	}
 
 	public class MultiCheckSelectForm : Form
@@ -5967,11 +6805,13 @@ namespace Aron_V3
 		private Button btnClear;
 		private Button btnOK;
 		private Button btnCancel;
+		private readonly bool _isEnglish;
 
 		public List<string> SelectedItems { get; private set; }
 
 		public MultiCheckSelectForm(string title, string prompt, List<string> items, List<string> selected, List<string> disabledItems)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			SelectedItems = new List<string>();
 			InitializeUi(title, prompt);
 			LoadItems(items, selected, disabledItems);
@@ -6009,9 +6849,9 @@ namespace Aron_V3
 			panel.Height = 70;
 			panel.BackColor = BackColor;
 
-			btnClear = CreateButton("Clear", 32, 18, 130);
-			btnOK = CreateButton("OK", 420, 18, 130);
-			btnCancel = CreateButton("Cancel", 575, 18, 130);
+			btnClear = CreateButton(T("清空", "Clear"), 32, 18, 130);
+			btnOK = CreateButton(T("确定", "OK"), 420, 18, 130);
+			btnCancel = CreateButton(T("取消", "Cancel"), 575, 18, 130);
 
 			btnClear.Click += btnClear_Click;
 			btnOK.Click += btnOK_Click;
@@ -6092,6 +6932,11 @@ namespace Aron_V3
 			DialogResult = DialogResult.Cancel;
 			Close();
 		}
+
+		protected string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
+		}
 	}
 
 	public class ScriptInputSourceSelectForm : Form
@@ -6101,11 +6946,13 @@ namespace Aron_V3
 		private Button btnCancel;
 		private Button btnClear;
 		private List<SelectableStepSourceItem> _items;
+		private readonly bool _isEnglish;
 
 		public List<string> SelectedItems { get; private set; }
 
 		public ScriptInputSourceSelectForm(string title, string prompt, List<SelectableStepSourceItem> items, List<string> selected)
 		{
+			_isEnglish = LanguagePreferenceStore.LoadIsEnglish();
 			SelectedItems = new List<string>();
 			_items = items ?? new List<SelectableStepSourceItem>();
 			InitializeUi(title, prompt);
@@ -6147,9 +6994,9 @@ namespace Aron_V3
 			panel.Height = 70;
 			panel.BackColor = BackColor;
 
-			btnClear = CreateButton("Clear", 32, 18, 130);
-			btnOK = CreateButton("OK", 420, 18, 130);
-			btnCancel = CreateButton("Cancel", 575, 18, 130);
+			btnClear = CreateButton(T("清空", "Clear"), 32, 18, 130);
+			btnOK = CreateButton(T("确定", "OK"), 420, 18, 130);
+			btnCancel = CreateButton(T("取消", "Cancel"), 575, 18, 130);
 
 			btnClear.Click += btnClear_Click;
 			btnOK.Click += btnOK_Click;
@@ -6224,7 +7071,7 @@ namespace Aron_V3
 			string text = Convert.ToString(list.Items[e.Index]);
 			if (!enabled)
 			{
-				text += "    (not previous)";
+				text += T("    (不是前序)", "    (not previous)");
 			}
 
 			TextRenderer.DrawText(e.Graphics, text, e.Font, e.Bounds, fore, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
@@ -6264,6 +7111,11 @@ namespace Aron_V3
 		{
 			DialogResult = DialogResult.Cancel;
 			Close();
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 }

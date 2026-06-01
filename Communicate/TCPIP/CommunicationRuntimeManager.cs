@@ -149,6 +149,12 @@ namespace Aron_V3
 				return;
 			}
 
+			if (!instance.Enabled || instance.TcpIp == null || !instance.TcpIp.Enabled)
+			{
+				StopInstance(instance.InstanceName);
+				return;
+			}
+
 			ICommunicationRuntime runtime = GetOrCreateTcpInstanceRuntime(instance.InstanceName);
 			CommunicationConfig config = BuildTcpRuntimeConfig(instance);
 			runtime.Start(config);
@@ -246,13 +252,14 @@ namespace Aron_V3
 				config = new CommunicationConfig();
 			}
 
+			bool hasConfiguredTcpInstances = HasConfiguredTcpInstances(config);
 			bool startedTcpInstances = StartConfiguredTcpInstances(config);
 			ICommunicationRuntime tcp = null;
 			_runtimes.TryGetValue(CommunicationType.TcpIp, out tcp);
 
 			if (tcp != null)
 			{
-				if (startedTcpInstances)
+				if (hasConfiguredTcpInstances)
 				{
 					tcp.Stop();
 				}
@@ -272,6 +279,21 @@ namespace Aron_V3
 			// if (s7 != null) s7.Start(config);
 		}
 
+		public void ReloadHeartbeatConfig(CommunicationConfig config)
+		{
+			if (_disposed)
+			{
+				throw new ObjectDisposedException("CommunicationRuntimeManager");
+			}
+
+			if (config == null)
+			{
+				config = CommunicationConfigStore.LoadOrCreateDefault();
+			}
+
+			_heartbeatRuntime.Start(config);
+		}
+
 		private bool StartConfiguredTcpInstances(CommunicationConfig config)
 		{
 			if (config == null || config.Instances == null || config.Instances.Count <= 0)
@@ -284,6 +306,7 @@ namespace Aron_V3
 			{
 				if (instance == null ||
 					instance.CommunicationType != CommunicationType.TcpIp ||
+					!instance.Enabled ||
 					instance.TcpIp == null ||
 					!instance.TcpIp.Enabled)
 				{
@@ -295,6 +318,24 @@ namespace Aron_V3
 			}
 
 			return started;
+		}
+
+		private static bool HasConfiguredTcpInstances(CommunicationConfig config)
+		{
+			if (config == null || config.Instances == null)
+			{
+				return false;
+			}
+
+			foreach (CommunicationInstanceConfig instance in config.Instances)
+			{
+				if (instance != null && instance.CommunicationType == CommunicationType.TcpIp)
+				{
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		public void Restart()
@@ -415,107 +456,81 @@ namespace Aron_V3
 	{
 		private readonly object _syncRoot = new object();
 		private readonly RuntimeCommunicationOutputService _outputService = new RuntimeCommunicationOutputService();
-		private Timer _timer;
-		private CommunicationHeartbeatConfig _heartbeat;
-		private string _protocolName = string.Empty;
-		private string _instanceName = string.Empty;
+		private readonly Dictionary<string, HeartbeatRuntimeEntry> _entries =
+			new Dictionary<string, HeartbeatRuntimeEntry>(StringComparer.OrdinalIgnoreCase);
 		private bool _disposed;
-		private int _sending;
 
 		public void Start(CommunicationConfig config)
 		{
-			Stop();
-
-			if (_disposed || config == null || config.TcpIp == null || config.TcpIp.Heartbeat == null)
-			{
-				return;
-			}
-
-			if (!config.TcpIp.Enabled || !config.TcpIp.Heartbeat.Enabled)
-			{
-				return;
-			}
-
-			if (string.IsNullOrWhiteSpace(config.TcpIp.Heartbeat.OutputName))
-			{
-				return;
-			}
-
-			CommunicationHeartbeatConfig heartbeat = CloneHeartbeat(config.TcpIp.Heartbeat);
-			int interval = Math.Max(heartbeat.IntervalMs, 50);
+			List<HeartbeatRuntimeEntry> entries = BuildHeartbeatEntries(config);
 
 			lock (_syncRoot)
 			{
-				_protocolName = "TCP/IP";
-				_instanceName = CommunicationRuntimeNaming.GetDefaultInstanceName("TCP/IP", config);
-				_heartbeat = heartbeat;
-				_timer = new Timer(TimerCallback, null, interval, interval);
+				DisposeEntriesLocked();
+
+				if (_disposed)
+				{
+					return;
+				}
+
+				foreach (HeartbeatRuntimeEntry entry in entries)
+				{
+					if (entry == null || entry.Heartbeat == null)
+					{
+						continue;
+					}
+
+					int interval = Math.Max(entry.Heartbeat.IntervalMs, 50);
+					entry.Active = true;
+					entry.Timer = new Timer(TimerCallback, entry, interval, interval);
+					_entries[entry.Key] = entry;
+				}
 			}
 		}
 
 		public void Stop()
 		{
-			Timer oldTimer;
-
 			lock (_syncRoot)
 			{
-				oldTimer = _timer;
-				_timer = null;
-				_heartbeat = null;
-				_protocolName = string.Empty;
-				_instanceName = string.Empty;
-			}
-
-			if (oldTimer != null)
-			{
-				try
-				{
-					oldTimer.Dispose();
-				}
-				catch
-				{
-				}
+				DisposeEntriesLocked();
 			}
 		}
 
 		private void TimerCallback(object state)
 		{
-			if (Interlocked.Exchange(ref _sending, 1) == 1)
+			HeartbeatRuntimeEntry entry = state as HeartbeatRuntimeEntry;
+			if (entry == null || !entry.Active || entry.Heartbeat == null)
+			{
+				return;
+			}
+
+			if (Interlocked.Exchange(ref entry.Sending, 1) == 1)
 			{
 				return;
 			}
 
 			try
 			{
-				CommunicationHeartbeatConfig heartbeat;
-				string protocolName;
-				string instanceName;
+				CommunicationHeartbeatConfig heartbeat = entry.Heartbeat;
+				string protocolName = entry.ProtocolName;
+				string instanceName = entry.InstanceName;
 
-				lock (_syncRoot)
-				{
-					if (_timer == null || _heartbeat == null)
-					{
-						return;
-					}
-
-					heartbeat = CloneHeartbeat(_heartbeat);
-					protocolName = _protocolName;
-					instanceName = _instanceName;
-				}
-
-				if (!heartbeat.Enabled || string.IsNullOrWhiteSpace(heartbeat.OutputName))
+				if (!entry.Active ||
+					!heartbeat.Enabled ||
+					string.IsNullOrWhiteSpace(heartbeat.OutputName))
 				{
 					return;
 				}
 
 				if (protocolName.Equals("TCP/IP", StringComparison.OrdinalIgnoreCase) &&
-					!CommunicationRuntimeManager.Instance.IsConnected(CommunicationType.TcpIp))
+					!CommunicationRuntimeManager.Instance.IsConnected(instanceName))
 				{
 					return;
 				}
 
 				bool sent = _outputService.SendHeartbeatOutput(
 					protocolName,
+					instanceName,
 					heartbeat.OutputName,
 					heartbeat.HeartbeatText);
 
@@ -532,8 +547,135 @@ namespace Aron_V3
 			}
 			finally
 			{
-				Interlocked.Exchange(ref _sending, 0);
+				Interlocked.Exchange(ref entry.Sending, 0);
 			}
+		}
+
+		private void DisposeEntriesLocked()
+		{
+			foreach (HeartbeatRuntimeEntry entry in _entries.Values)
+			{
+				if (entry == null)
+				{
+					continue;
+				}
+
+				entry.Active = false;
+				if (entry.Timer == null)
+				{
+					continue;
+				}
+
+				try
+				{
+					entry.Timer.Dispose();
+				}
+				catch
+				{
+				}
+
+				entry.Timer = null;
+			}
+
+			_entries.Clear();
+		}
+
+		private static List<HeartbeatRuntimeEntry> BuildHeartbeatEntries(CommunicationConfig config)
+		{
+			List<HeartbeatRuntimeEntry> entries = new List<HeartbeatRuntimeEntry>();
+			if (config == null)
+			{
+				return entries;
+			}
+
+			HashSet<string> usedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			bool hasTcpInstances = false;
+
+			if (config.Instances != null)
+			{
+				foreach (CommunicationInstanceConfig instance in config.Instances)
+				{
+					if (instance == null || instance.CommunicationType != CommunicationType.TcpIp)
+					{
+						continue;
+					}
+
+					hasTcpInstances = true;
+
+					TcpIpConfig tcpIp = instance.TcpIp;
+					if (!instance.Enabled || tcpIp == null || !tcpIp.Enabled)
+					{
+						continue;
+					}
+
+					CommunicationHeartbeatConfig heartbeat = tcpIp.Heartbeat;
+					if (!IsHeartbeatEnabled(heartbeat))
+					{
+						continue;
+					}
+
+					string instanceName = string.IsNullOrWhiteSpace(instance.InstanceName)
+						? CommunicationRuntimeNaming.GetDefaultInstanceName("TCP/IP", config)
+						: instance.InstanceName.Trim();
+
+					AddHeartbeatEntry(entries, usedKeys, "TCP/IP", instanceName, heartbeat);
+				}
+			}
+
+			if (!hasTcpInstances &&
+				entries.Count == 0 &&
+				config.TcpIp != null &&
+				config.TcpIp.Enabled &&
+				IsHeartbeatEnabled(config.TcpIp.Heartbeat))
+			{
+				AddHeartbeatEntry(
+					entries,
+					usedKeys,
+					"TCP/IP",
+					CommunicationRuntimeNaming.GetDefaultInstanceName("TCP/IP", config),
+					config.TcpIp.Heartbeat);
+			}
+
+			return entries;
+		}
+
+		private static void AddHeartbeatEntry(
+			List<HeartbeatRuntimeEntry> entries,
+			HashSet<string> usedKeys,
+			string protocolName,
+			string instanceName,
+			CommunicationHeartbeatConfig heartbeat)
+		{
+			if (entries == null ||
+				usedKeys == null ||
+				string.IsNullOrWhiteSpace(protocolName) ||
+				string.IsNullOrWhiteSpace(instanceName) ||
+				!IsHeartbeatEnabled(heartbeat))
+			{
+				return;
+			}
+
+			string key = CommunicationRuntimeNaming.FormatCommunicationName(protocolName, instanceName);
+			if (usedKeys.Contains(key))
+			{
+				return;
+			}
+
+			usedKeys.Add(key);
+
+			HeartbeatRuntimeEntry entry = new HeartbeatRuntimeEntry();
+			entry.Key = key;
+			entry.ProtocolName = CommunicationRuntimeNaming.NormalizeProtocolName(protocolName);
+			entry.InstanceName = instanceName.Trim();
+			entry.Heartbeat = CloneHeartbeat(heartbeat);
+			entries.Add(entry);
+		}
+
+		private static bool IsHeartbeatEnabled(CommunicationHeartbeatConfig heartbeat)
+		{
+			return heartbeat != null &&
+				   heartbeat.Enabled &&
+				   !string.IsNullOrWhiteSpace(heartbeat.OutputName);
 		}
 
 		private static CommunicationHeartbeatConfig CloneHeartbeat(CommunicationHeartbeatConfig source)
@@ -549,6 +691,17 @@ namespace Aron_V3
 			target.HeartbeatText = source.HeartbeatText;
 			target.IntervalMs = source.IntervalMs;
 			return target;
+		}
+
+		private sealed class HeartbeatRuntimeEntry
+		{
+			public string Key;
+			public string ProtocolName;
+			public string InstanceName;
+			public CommunicationHeartbeatConfig Heartbeat;
+			public Timer Timer;
+			public volatile bool Active;
+			public int Sending;
 		}
 
 		public void Dispose()
