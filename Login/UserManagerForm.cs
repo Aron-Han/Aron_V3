@@ -187,7 +187,7 @@ namespace Aron_V3
 			dgvUsers.Columns.Add(CreateCheckColumn("CanRun", T("运行", "Run"), 70));
 			dgvUsers.Columns.Add(CreateCheckColumn("CanHardwareConfig", T("硬件", "Hardware"), 90));
 			dgvUsers.Columns.Add(CreateCheckColumn("CanAlgorithmConfig", T("算法", "Algorithm"), 90));
-			dgvUsers.Columns.Add(CreateCheckColumn("CanFlowConfig", T("流程", "Flow"), 80));
+			dgvUsers.Columns.Add(CreateCheckColumn("CanFlowConfig", T("流程", "Process"), 80));
 			dgvUsers.Columns.Add(CreateCheckColumn("CanCommunicationConfig", T("通讯", "Comm"), 80));
 			dgvUsers.Columns.Add(CreateCheckColumn("CanDatabaseConfig", T("数据库", "Database"), 90));
 			dgvUsers.Columns.Add(CreateCheckColumn("CanSystemConfig", T("系统", "System"), 80));

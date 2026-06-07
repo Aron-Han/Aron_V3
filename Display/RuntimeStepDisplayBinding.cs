@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -29,18 +31,42 @@ namespace Aron_V3
 
 			VisionImage selectedImage = TryGetOutputVisionImage(stepRunResult, step.DisplayOutputKey);
 			object rawImage = selectedImage == null ? null : selectedImage.RawImage;
+			Bitmap bitmap = TryGetPreparedDisplayBitmap(selectedImage);
 
-			if (rawImage == null && step.StepType != StepType.Halcon)
+			if (bitmap == null && rawImage == null && step.StepType != StepType.Halcon)
 			{
 				rawImage = TryGetFirstInputImage(step, context);
 				selectedImage = null;
 			}
 
-			Bitmap bitmap = ImageConvertHelper.TryConvertToBitmap(rawImage);
+			if (bitmap == null)
+			{
+				bitmap = ImageConvertHelper.TryConvertToBitmap(rawImage);
+			}
 
 			if (bitmap == null)
 			{
+				LogDisplayPublishFailure(
+					"Display image conversion failed",
+					jobName,
+					taskName,
+					step,
+					stepRunResult,
+					selectedImage,
+					rawImage);
 				return;
+			}
+
+			if (step.StepType == StepType.Halcon && IsNearlyBlackBitmap(bitmap))
+			{
+				LogDisplayPublishFailure(
+					"Hdev display bitmap appears blank or black",
+					jobName,
+					taskName,
+					step,
+					stepRunResult,
+					selectedImage,
+					rawImage);
 			}
 
 			try
@@ -64,6 +90,60 @@ namespace Aron_V3
 			finally
 			{
 				bitmap.Dispose();
+			}
+		}
+
+		private static bool IsNearlyBlackBitmap(Bitmap bitmap)
+		{
+			if (bitmap == null || bitmap.Width <= 0 || bitmap.Height <= 0)
+			{
+				return false;
+			}
+
+			try
+			{
+				int samples = 0;
+				int brightSamples = 0;
+				int stepX = Math.Max(1, bitmap.Width / 24);
+				int stepY = Math.Max(1, bitmap.Height / 24);
+
+				for (int y = 0; y < bitmap.Height; y += stepY)
+				{
+					for (int x = 0; x < bitmap.Width; x += stepX)
+					{
+						Color color = bitmap.GetPixel(x, y);
+						int brightness = Math.Max(color.R, Math.Max(color.G, color.B));
+						if (brightness > 12)
+						{
+							brightSamples++;
+						}
+
+						samples++;
+					}
+				}
+
+				return samples > 0 && brightSamples <= Math.Max(1, samples / 100);
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		private static Bitmap TryGetPreparedDisplayBitmap(VisionImage image)
+		{
+			if (image == null || image.DisplayBitmap == null)
+			{
+				return null;
+			}
+
+			try
+			{
+				return new Bitmap(image.DisplayBitmap);
+			}
+			catch
+			{
+				return null;
 			}
 		}
 
@@ -95,6 +175,47 @@ namespace Aron_V3
 			}
 
 			return null;
+		}
+
+		private static void LogDisplayPublishFailure(
+			string reason,
+			string jobName,
+			string taskName,
+			StepConfig step,
+			StepResult result,
+			VisionImage selectedImage,
+			object rawImage)
+		{
+			try
+			{
+				string availableImages = string.Empty;
+				if (result != null && result.OutputImages != null && result.OutputImages.Count > 0)
+				{
+					availableImages = string.Join(",", result.OutputImages.Keys.ToArray());
+				}
+
+				RuntimeLogStore.Append(
+					DateTime.Now,
+					RuntimeLogCategory.Step,
+					reason +
+					". Job=" + (jobName ?? string.Empty) +
+					", Task=" + (taskName ?? string.Empty) +
+					", Step=" + (step == null ? string.Empty : step.StepName) +
+					", Slot=" + (step == null ? string.Empty : step.DisplaySlotName) +
+					", OutputKey=" + (step == null ? string.Empty : step.DisplayOutputKey) +
+					", AvailableImages=" + availableImages +
+					", VisionImageType=" + (selectedImage == null ? "null" : (selectedImage.ImageType ?? string.Empty)) +
+					", RawType=" + GetDebugTypeName(rawImage),
+					true);
+			}
+			catch
+			{
+			}
+		}
+
+		private static string GetDebugTypeName(object value)
+		{
+			return value == null ? "null" : (value.GetType().FullName ?? value.GetType().Name);
 		}
 
 		private static object TryGetOutputImage(object runResult, string outputKey)
@@ -324,6 +445,12 @@ namespace Aron_V3
 				return new Bitmap(bmp);
 			}
 
+			Bitmap visionProBitmap = VisionProImageBitmapConverter.TryConvertToBitmap(image);
+			if (visionProBitmap != null)
+			{
+				return visionProBitmap;
+			}
+
 			try
 			{
 				MethodInfo toBitmapMethod = image.GetType().GetMethod("ToBitmap", Type.EmptyTypes);
@@ -389,7 +516,42 @@ namespace Aron_V3
 					}
 				}
 
-				MethodInfo pointerMethod = FindImagePointerMethod(imageObject.GetType());
+				Bitmap colorBitmap = TryConvertHalconColorImageToBitmap(imageObject);
+				if (colorBitmap != null)
+				{
+					return colorBitmap;
+				}
+
+				Bitmap grayBitmap = TryConvertHalconGrayImageToBitmap(imageObject);
+				if (grayBitmap != null)
+				{
+					return grayBitmap;
+				}
+
+				return TryConvertHalconImageViaTempFile(imageObject);
+			}
+			catch
+			{
+				return null;
+			}
+			finally
+			{
+				if (disposeImageObject)
+				{
+					IDisposable disposable = imageObject as IDisposable;
+					if (disposable != null)
+					{
+						disposable.Dispose();
+					}
+				}
+			}
+		}
+
+		private static Bitmap TryConvertHalconGrayImageToBitmap(object imageObject)
+		{
+			try
+			{
+				MethodInfo pointerMethod = FindImagePointerMethod(imageObject.GetType(), "GetImagePointer1", 3, typeof(IntPtr));
 				if (pointerMethod == null)
 				{
 					return null;
@@ -417,38 +579,33 @@ namespace Aron_V3
 					return null;
 				}
 
-				Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
-				BitmapData data = bitmap.LockBits(
-					new Rectangle(0, 0, width, height),
-					ImageLockMode.WriteOnly,
-					PixelFormat.Format24bppRgb);
+				return CreateRgbBitmapFromGray(gray, width, height);
+			}
+			catch
+			{
+				return null;
+			}
+		}
 
-				try
-				{
-					int stride = data.Stride;
-					byte[] rgb = new byte[stride * height];
-					for (int y = 0; y < height; y++)
-					{
-						int srcOffset = y * width;
-						int dstOffset = y * stride;
-						for (int x = 0; x < width; x++)
-						{
-							byte v = gray[srcOffset + x];
-							int p = dstOffset + x * 3;
-							rgb[p] = v;
-							rgb[p + 1] = v;
-							rgb[p + 2] = v;
-						}
-					}
+		private static Bitmap TryConvertHalconImageViaTempFile(object imageObject)
+		{
+			string tempFile = null;
 
-					Marshal.Copy(rgb, 0, data.Scan0, rgb.Length);
-				}
-				finally
+			try
+			{
+				MethodInfo writeImageMethod = FindWriteImageMethod(imageObject == null ? null : imageObject.GetType());
+				if (writeImageMethod == null)
 				{
-					bitmap.UnlockBits(data);
+					return null;
 				}
 
-				return bitmap;
+				tempFile = Path.Combine(Path.GetTempPath(), "Aron_V3_Halcon_" + Guid.NewGuid().ToString("N") + ".bmp");
+				writeImageMethod.Invoke(imageObject, CreateWriteImageArguments(writeImageMethod, tempFile));
+
+				using (Bitmap fileBitmap = new Bitmap(tempFile))
+				{
+					return new Bitmap(fileBitmap);
+				}
 			}
 			catch
 			{
@@ -456,15 +613,145 @@ namespace Aron_V3
 			}
 			finally
 			{
-				if (disposeImageObject)
+				if (!string.IsNullOrWhiteSpace(tempFile))
 				{
-					IDisposable disposable = imageObject as IDisposable;
-					if (disposable != null)
+					try
 					{
-						disposable.Dispose();
+						if (File.Exists(tempFile))
+						{
+							File.Delete(tempFile);
+						}
+					}
+					catch
+					{
 					}
 				}
 			}
+		}
+
+		private static Bitmap TryConvertHalconColorImageToBitmap(object imageObject)
+		{
+			try
+			{
+				MethodInfo pointerMethod = FindImagePointer3Method(imageObject.GetType());
+				if (pointerMethod == null)
+				{
+					return null;
+				}
+
+				IntPtr[] pointers;
+				string halconType;
+				int width;
+				int height;
+				if (!TryInvokeGetImagePointer3(pointerMethod, imageObject, out pointers, out halconType, out width, out height))
+				{
+					return null;
+				}
+
+				if (width <= 0 || height <= 0 ||
+					pointers[0] == IntPtr.Zero ||
+					pointers[1] == IntPtr.Zero ||
+					pointers[2] == IntPtr.Zero)
+				{
+					return null;
+				}
+
+				byte[] red = CopyHalconGrayToByteBuffer(pointers[0], width, height, halconType);
+				byte[] green = CopyHalconGrayToByteBuffer(pointers[1], width, height, halconType);
+				byte[] blue = CopyHalconGrayToByteBuffer(pointers[2], width, height, halconType);
+				if (red == null || green == null || blue == null)
+				{
+					return null;
+				}
+
+				return CreateRgbBitmapFromChannels(red, green, blue, width, height);
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static bool TryInvokeGetImagePointer3(
+			MethodInfo pointerMethod,
+			object imageObject,
+			out IntPtr[] pointers,
+			out string halconType,
+			out int width,
+			out int height)
+		{
+			pointers = null;
+			halconType = string.Empty;
+			width = 0;
+			height = 0;
+
+			ParameterInfo[] parameters = pointerMethod.GetParameters();
+			if (parameters.Length == 6)
+			{
+				object[] args = new object[] { null, null, null, null, null, null };
+				pointerMethod.Invoke(imageObject, args);
+				pointers = new IntPtr[]
+				{
+					ToIntPtr(args[0]),
+					ToIntPtr(args[1]),
+					ToIntPtr(args[2])
+				};
+				halconType = Convert.ToString(args[3]);
+				width = Convert.ToInt32(args[4]);
+				height = Convert.ToInt32(args[5]);
+				return true;
+			}
+
+			if (parameters.Length == 3)
+			{
+				object[] args = new object[] { null, null, null };
+				object pointerValue = pointerMethod.Invoke(imageObject, args);
+				pointers = ExtractHalconChannelPointers(pointerValue);
+				halconType = Convert.ToString(args[0]);
+				width = Convert.ToInt32(args[1]);
+				height = Convert.ToInt32(args[2]);
+				return pointers != null && pointers.Length >= 3;
+			}
+
+			return false;
+		}
+
+		private static IntPtr[] ExtractHalconChannelPointers(object pointerValue)
+		{
+			IntPtr[] direct = pointerValue as IntPtr[];
+			if (direct != null)
+			{
+				return direct;
+			}
+
+			Array array = pointerValue as Array;
+			if (array != null && array.Length >= 3)
+			{
+				IntPtr[] pointers = new IntPtr[3];
+				for (int i = 0; i < 3; i++)
+				{
+					pointers[i] = ToIntPtr(array.GetValue(i));
+				}
+
+				return pointers;
+			}
+
+			return null;
+		}
+
+		private static IntPtr ToIntPtr(object value)
+		{
+			if (value == null)
+			{
+				return IntPtr.Zero;
+			}
+
+			if (value is IntPtr)
+			{
+				return (IntPtr)value;
+			}
+
+			return new IntPtr(Convert.ToInt64(value));
 		}
 
 		private static bool ResolveInspectionResult(StepConfig step, StepResult result)
@@ -607,6 +894,78 @@ namespace Aron_V3
 			return null;
 		}
 
+		private static Bitmap CreateRgbBitmapFromGray(byte[] gray, int width, int height)
+		{
+			Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+			BitmapData data = bitmap.LockBits(
+				new Rectangle(0, 0, width, height),
+				ImageLockMode.WriteOnly,
+				PixelFormat.Format24bppRgb);
+
+			try
+			{
+				int stride = data.Stride;
+				byte[] rgb = new byte[stride * height];
+				for (int y = 0; y < height; y++)
+				{
+					int srcOffset = y * width;
+					int dstOffset = y * stride;
+					for (int x = 0; x < width; x++)
+					{
+						byte v = gray[srcOffset + x];
+						int p = dstOffset + x * 3;
+						rgb[p] = v;
+						rgb[p + 1] = v;
+						rgb[p + 2] = v;
+					}
+				}
+
+				Marshal.Copy(rgb, 0, data.Scan0, rgb.Length);
+			}
+			finally
+			{
+				bitmap.UnlockBits(data);
+			}
+
+			return bitmap;
+		}
+
+		private static Bitmap CreateRgbBitmapFromChannels(byte[] red, byte[] green, byte[] blue, int width, int height)
+		{
+			Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+			BitmapData data = bitmap.LockBits(
+				new Rectangle(0, 0, width, height),
+				ImageLockMode.WriteOnly,
+				PixelFormat.Format24bppRgb);
+
+			try
+			{
+				int stride = data.Stride;
+				byte[] rgb = new byte[stride * height];
+				for (int y = 0; y < height; y++)
+				{
+					int srcOffset = y * width;
+					int dstOffset = y * stride;
+					for (int x = 0; x < width; x++)
+					{
+						int src = srcOffset + x;
+						int dst = dstOffset + x * 3;
+						rgb[dst] = blue[src];
+						rgb[dst + 1] = green[src];
+						rgb[dst + 2] = red[src];
+					}
+				}
+
+				Marshal.Copy(rgb, 0, data.Scan0, rgb.Length);
+			}
+			finally
+			{
+				bitmap.UnlockBits(data);
+			}
+
+			return bitmap;
+		}
+
 		private static byte[] NormalizeToByte(double[] values)
 		{
 			if (values == null || values.Length == 0)
@@ -665,7 +1024,7 @@ namespace Aron_V3
 			return null;
 		}
 
-		private static MethodInfo FindImagePointerMethod(Type type)
+		private static MethodInfo FindImagePointerMethod(Type type, string methodName, int parameterCount, Type returnType)
 		{
 			if (type == null)
 			{
@@ -674,15 +1033,160 @@ namespace Aron_V3
 
 			foreach (MethodInfo method in type.GetMethods())
 			{
-				if (string.Equals(method.Name, "GetImagePointer1", StringComparison.OrdinalIgnoreCase) &&
-					method.GetParameters().Length == 3 &&
-					method.ReturnType == typeof(IntPtr))
+				if (string.Equals(method.Name, methodName, StringComparison.OrdinalIgnoreCase) &&
+					(parameterCount < 0 || method.GetParameters().Length == parameterCount) &&
+					(returnType == null || method.ReturnType == returnType))
 				{
 					return method;
 				}
 			}
 
 			return null;
+		}
+
+		private static MethodInfo FindImagePointer3Method(Type type)
+		{
+			if (type == null)
+			{
+				return null;
+			}
+
+			MethodInfo fallback = null;
+			foreach (MethodInfo method in type.GetMethods())
+			{
+				if (!string.Equals(method.Name, "GetImagePointer3", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				ParameterInfo[] parameters = method.GetParameters();
+				if (parameters.Length != 6)
+				{
+					continue;
+				}
+
+				if (fallback == null)
+				{
+					fallback = method;
+				}
+
+				if (IsByRefElementType(parameters[0].ParameterType, typeof(IntPtr)) &&
+					IsByRefElementType(parameters[1].ParameterType, typeof(IntPtr)) &&
+					IsByRefElementType(parameters[2].ParameterType, typeof(IntPtr)) &&
+					IsByRefElementType(parameters[3].ParameterType, typeof(string)) &&
+					IsByRefElementType(parameters[4].ParameterType, typeof(int)) &&
+					IsByRefElementType(parameters[5].ParameterType, typeof(int)))
+				{
+					return method;
+				}
+			}
+
+			return fallback;
+		}
+
+		private static bool IsByRefElementType(Type type, Type elementType)
+		{
+			return type != null &&
+				type.IsByRef &&
+				type.GetElementType() == elementType;
+		}
+
+		private static MethodInfo FindWriteImageMethod(Type type)
+		{
+			if (type == null)
+			{
+				return null;
+			}
+
+			foreach (MethodInfo method in type.GetMethods())
+			{
+				if (!string.Equals(method.Name, "WriteImage", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				ParameterInfo[] parameters = method.GetParameters();
+				if (parameters.Length == 3 &&
+					IsStringOrHalconTuple(parameters[0].ParameterType) &&
+					IsNumericOrHalconTuple(parameters[1].ParameterType) &&
+					IsStringOrHalconTuple(parameters[2].ParameterType))
+				{
+					return method;
+				}
+			}
+
+			return null;
+		}
+
+		private static bool IsStringOrHalconTuple(Type type)
+		{
+			if (type == null)
+			{
+				return false;
+			}
+
+			return type == typeof(string) ||
+				((type.FullName ?? string.Empty).IndexOf("HTuple", StringComparison.OrdinalIgnoreCase) >= 0);
+		}
+
+		private static bool IsNumericOrHalconTuple(Type type)
+		{
+			if (type == null)
+			{
+				return false;
+			}
+
+			return type == typeof(int) ||
+				type == typeof(double) ||
+				type == typeof(float) ||
+				((type.FullName ?? string.Empty).IndexOf("HTuple", StringComparison.OrdinalIgnoreCase) >= 0);
+		}
+
+		private static object[] CreateWriteImageArguments(MethodInfo method, string fileName)
+		{
+			ParameterInfo[] parameters = method.GetParameters();
+			return new object[]
+			{
+				CreateHalconTupleCompatibleValue(parameters[0].ParameterType, "bmp"),
+				CreateHalconTupleCompatibleValue(parameters[1].ParameterType, 0),
+				CreateHalconTupleCompatibleValue(parameters[2].ParameterType, fileName)
+			};
+		}
+
+		private static object CreateHalconTupleCompatibleValue(Type targetType, object value)
+		{
+			if (targetType == null || value == null)
+			{
+				return value;
+			}
+
+			if (targetType.IsInstanceOfType(value))
+			{
+				return value;
+			}
+
+			try
+			{
+				if (targetType == typeof(int))
+				{
+					return Convert.ToInt32(value);
+				}
+
+				if (targetType == typeof(string))
+				{
+					return Convert.ToString(value);
+				}
+
+				if ((targetType.FullName ?? string.Empty).IndexOf("HTuple", StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					return Activator.CreateInstance(targetType, new object[] { value });
+				}
+			}
+			catch
+			{
+			}
+
+			return value;
 		}
 
 		private static Type FindType(string typeName)

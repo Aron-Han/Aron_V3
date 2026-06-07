@@ -290,7 +290,9 @@ namespace Aron_V3
 			using (OpenFileDialog dialog = new OpenFileDialog())
 			{
 				dialog.Title = T("选择测试图片", "Select test image");
-				dialog.Filter = "Image Files (*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff)|*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff|All Files (*.*)|*.*";
+				dialog.Filter = T(
+					"图像文件 (*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdb)|*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdb|Cognex CDB (*.cdb)|*.cdb|所有文件 (*.*)|*.*",
+					"Image Files (*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdb)|*.bmp;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdb|Cognex CDB (*.cdb)|*.cdb|All Files (*.*)|*.*");
 				dialog.Multiselect = false;
 
 				if (dialog.ShowDialog(this) != DialogResult.OK)

@@ -20,6 +20,9 @@ namespace Aron_V3
 		private bool _dragging;
 		private Point _dragStartPoint;
 		private Point _formStartPoint;
+		private bool _brandLogoClickCandidate;
+		private Point _brandLogoMouseDownPoint;
+		private const int BrandLogoClickMoveTolerance = 5;
 
 		private Timer _autoLogoutTimer;
 		private ContextMenuStrip _userMenu;
@@ -750,10 +753,44 @@ namespace Aron_V3
 
 			if (picBrandLogo != null)
 			{
-				picBrandLogo.MouseDown += TopBar_MouseDown;
-				picBrandLogo.MouseMove += TopBar_MouseMove;
-				picBrandLogo.MouseUp += TopBar_MouseUp;
-				picBrandLogo.DoubleClick += TopBar_DoubleClick;
+				picBrandLogo.Cursor = Cursors.Hand;
+				picBrandLogo.MouseDown += BrandLogo_MouseDown;
+				picBrandLogo.MouseMove += BrandLogo_MouseMove;
+				picBrandLogo.MouseUp += BrandLogo_MouseUp;
+			}
+		}
+
+		private void BrandLogo_MouseDown(object sender, MouseEventArgs e)
+		{
+			_brandLogoClickCandidate = e.Button == MouseButtons.Left;
+			_brandLogoMouseDownPoint = Cursor.Position;
+			TopBar_MouseDown(sender, e);
+		}
+
+		private void BrandLogo_MouseMove(object sender, MouseEventArgs e)
+		{
+			if (_brandLogoClickCandidate)
+			{
+				Point current = Cursor.Position;
+				if (Math.Abs(current.X - _brandLogoMouseDownPoint.X) > BrandLogoClickMoveTolerance ||
+					Math.Abs(current.Y - _brandLogoMouseDownPoint.Y) > BrandLogoClickMoveTolerance)
+				{
+					_brandLogoClickCandidate = false;
+				}
+			}
+
+			TopBar_MouseMove(sender, e);
+		}
+
+		private void BrandLogo_MouseUp(object sender, MouseEventArgs e)
+		{
+			bool shouldMinimize = _brandLogoClickCandidate && e.Button == MouseButtons.Left;
+			_brandLogoClickCandidate = false;
+			TopBar_MouseUp(sender, e);
+
+			if (shouldMinimize)
+			{
+				MinimizeMainWindow();
 			}
 		}
 
@@ -797,6 +834,11 @@ namespace Aron_V3
 		}
 
 		private void btnMinimize_Click(object sender, EventArgs e)
+		{
+			MinimizeMainWindow();
+		}
+
+		private void MinimizeMainWindow()
 		{
 			TrackLastNonMinimizedWindowState();
 			PrepareStableFrameForMinimize();
@@ -1552,11 +1594,11 @@ namespace Aron_V3
 		{
 			UserAccountStore.LoadOrCreateDefault();
 
-			_userMenu = new ContextMenuStrip();
-			_userMenu.Items.Add("Change Password", null, menuChangePassword_Click);
-			_userMenu.Items.Add("User Management", null, menuUserManagement_Click);
+			_userMenu = CreateUserMenu();
+			_userMenu.Items.Add(CreateUserMenuItem("Change Password", menuChangePassword_Click));
+			_userMenu.Items.Add(CreateUserMenuItem("User Management", menuUserManagement_Click));
 			_userMenu.Items.Add(new ToolStripSeparator());
-			_userMenu.Items.Add("Logout", null, menuLogout_Click);
+			_userMenu.Items.Add(CreateUserMenuItem("Logout", menuLogout_Click));
 			UpdateUserMenuLanguage();
 
 			_autoLogoutTimer = new Timer();
@@ -1580,6 +1622,33 @@ namespace Aron_V3
 			this.FormClosed += Form1_FormClosed_RemoveLoginFilter;
 
 			UpdateLoginUi();
+		}
+
+		private ContextMenuStrip CreateUserMenu()
+		{
+			ContextMenuStrip menu = new ContextMenuStrip();
+			menu.RenderMode = ToolStripRenderMode.Professional;
+			menu.Renderer = new UserMenuRenderer();
+			menu.BackColor = UserMenuRenderer.MenuBackColor;
+			menu.ForeColor = UserMenuRenderer.TextColor;
+			menu.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
+			menu.ShowImageMargin = false;
+			menu.ShowCheckMargin = false;
+			menu.Padding = new Padding(1, 5, 1, 5);
+			menu.AutoSize = true;
+			return menu;
+		}
+
+		private ToolStripMenuItem CreateUserMenuItem(string text, EventHandler clickHandler)
+		{
+			ToolStripMenuItem item = new ToolStripMenuItem(text, null, clickHandler);
+			item.AutoSize = false;
+			item.Width = 154;
+			item.Height = 36;
+			item.Padding = new Padding(14, 0, 18, 0);
+			item.ForeColor = UserMenuRenderer.TextColor;
+			item.TextAlign = ContentAlignment.MiddleLeft;
+			return item;
 		}
 
 		private void Form1_FormClosed_RemoveLoginFilter(object sender, FormClosedEventArgs e)
@@ -1607,7 +1676,8 @@ namespace Aron_V3
 			}
 
 			_userMenu.Items[1].Enabled = LoginSession.Permission.CanUserManagement;
-			_userMenu.Show(lblUser, new Point(0, lblUser.Height));
+			int menuX = lblUser.Width - _userMenu.PreferredSize.Width;
+			_userMenu.Show(lblUser, new Point(menuX, lblUser.Height + 2));
 		}
 
 		private void menuChangePassword_Click(object sender, EventArgs e)
@@ -1685,6 +1755,97 @@ namespace Aron_V3
 			_userMenu.Items[0].Text = _isEnglish ? "Change Password" : "修改密码";
 			_userMenu.Items[1].Text = _isEnglish ? "User Management" : "用户管理";
 			_userMenu.Items[3].Text = _isEnglish ? "Logout" : "退出登录";
+		}
+
+		private sealed class UserMenuRenderer : ToolStripProfessionalRenderer
+		{
+			public static readonly Color MenuBackColor = Color.FromArgb(34, 96, 132);
+			public static readonly Color TextColor = Color.FromArgb(238, 248, 255);
+			private static readonly Color BorderColor = Color.FromArgb(0, 185, 255);
+			private static readonly Color SelectedBackColor = Color.FromArgb(72, 174, 225);
+			private static readonly Color SelectedBorderColor = Color.FromArgb(125, 220, 255);
+			private static readonly Color DisabledTextColor = Color.FromArgb(145, 185, 205);
+			private static readonly Color SeparatorColor = Color.FromArgb(92, 165, 205);
+
+			public UserMenuRenderer()
+				: base(new UserMenuColorTable())
+			{
+			}
+
+			protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+			{
+				using (SolidBrush brush = new SolidBrush(MenuBackColor))
+				{
+					e.Graphics.FillRectangle(brush, e.AffectedBounds);
+				}
+			}
+
+			protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+			{
+				Rectangle rect = new Rectangle(Point.Empty, e.ToolStrip.Size);
+				rect.Width -= 1;
+				rect.Height -= 1;
+
+				using (Pen pen = new Pen(BorderColor))
+				{
+					e.Graphics.DrawRectangle(pen, rect);
+				}
+			}
+
+			protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+			{
+				Rectangle rect = new Rectangle(Point.Empty, e.Item.Size);
+
+				if (e.Item.Selected && e.Item.Enabled)
+				{
+					using (SolidBrush brush = new SolidBrush(SelectedBackColor))
+					{
+						e.Graphics.FillRectangle(brush, rect);
+					}
+
+					using (Pen pen = new Pen(SelectedBorderColor))
+					{
+						rect.Width -= 1;
+						rect.Height -= 1;
+						e.Graphics.DrawRectangle(pen, rect);
+					}
+				}
+				else
+				{
+					using (SolidBrush brush = new SolidBrush(MenuBackColor))
+					{
+						e.Graphics.FillRectangle(brush, rect);
+					}
+				}
+			}
+
+			protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+			{
+				int y = e.Item.Bounds.Height / 2;
+				using (Pen pen = new Pen(SeparatorColor))
+				{
+					e.Graphics.DrawLine(pen, 12, y, e.Item.Bounds.Width - 12, y);
+				}
+			}
+
+			protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+			{
+				e.TextColor = e.Item.Enabled ? TextColor : DisabledTextColor;
+				base.OnRenderItemText(e);
+			}
+		}
+
+		private sealed class UserMenuColorTable : ProfessionalColorTable
+		{
+			public override Color ToolStripDropDownBackground { get { return UserMenuRenderer.MenuBackColor; } }
+			public override Color MenuBorder { get { return Color.FromArgb(0, 185, 255); } }
+			public override Color MenuItemSelected { get { return Color.FromArgb(72, 174, 225); } }
+			public override Color MenuItemBorder { get { return Color.FromArgb(125, 220, 255); } }
+			public override Color ImageMarginGradientBegin { get { return UserMenuRenderer.MenuBackColor; } }
+			public override Color ImageMarginGradientMiddle { get { return UserMenuRenderer.MenuBackColor; } }
+			public override Color ImageMarginGradientEnd { get { return UserMenuRenderer.MenuBackColor; } }
+			public override Color SeparatorDark { get { return Color.FromArgb(92, 165, 205); } }
+			public override Color SeparatorLight { get { return Color.FromArgb(92, 165, 205); } }
 		}
 
 		private void ApplyPermissionToUi()

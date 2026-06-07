@@ -4234,12 +4234,88 @@ namespace Aron_V3
 			StepResult result = new HalconStep(step).Execute(context);
 			RuntimeStepResultStore.SetLatest(_currentJobName, _currentTaskName, step.StepName, result);
 			ApplyAlgorithmRunResultToGrid(result);
+			PublishAlgorithmRunImageToMainDisplay(step, result, context);
 
 			MessageBox.Show(
 				(result.IsOK ? "OK" : "NG") + Environment.NewLine + result.Message,
 				_isEnglish ? "Run Hdev" : "回放运行 Hdev",
 				MessageBoxButtons.OK,
 				result.IsOK ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+		}
+
+		private void PublishAlgorithmRunImageToMainDisplay(StepConfig step, StepResult result, VisionRunContext context)
+		{
+			if (step == null || result == null)
+			{
+				return;
+			}
+
+			StepFlowItem flowItem = GetCurrentStepFlowItem(step);
+			if (flowItem == null)
+			{
+				StepDisplayBindingRunner.TryPublishStepImage(_currentJobName, _currentTaskName, step, result, context);
+				return;
+			}
+
+			string oldDisplayOutputKey = step.DisplayOutputKey;
+			string oldDisplaySlotName = step.DisplaySlotName;
+			string oldDisplayResultKey = step.DisplayResultKey;
+			string oldDisplayMode = step.DisplayMode;
+			string oldInputImageKey = step.InputImageKey;
+
+			try
+			{
+				step.DisplayOutputKey = flowItem.DisplayOutputKey;
+				step.DisplaySlotName = flowItem.DisplaySlotName;
+				step.DisplayResultKey = flowItem.DisplayResultKey;
+				step.DisplayMode = flowItem.DisplayMode;
+				if (!string.IsNullOrWhiteSpace(flowItem.InputImageKey))
+				{
+					step.InputImageKey = flowItem.InputImageKey;
+				}
+
+				StepDisplayBindingRunner.TryPublishStepImage(_currentJobName, _currentTaskName, step, result, context);
+			}
+			finally
+			{
+				step.DisplayOutputKey = oldDisplayOutputKey;
+				step.DisplaySlotName = oldDisplaySlotName;
+				step.DisplayResultKey = oldDisplayResultKey;
+				step.DisplayMode = oldDisplayMode;
+				step.InputImageKey = oldInputImageKey;
+			}
+		}
+
+		private StepFlowItem GetCurrentStepFlowItem(StepConfig step)
+		{
+			if (step == null ||
+				string.IsNullOrWhiteSpace(_currentJobName) ||
+				string.IsNullOrWhiteSpace(_currentTaskName))
+			{
+				return null;
+			}
+
+			try
+			{
+				ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
+				JobConfig job = FlowConfigStore.GetJobs(config, GetSelectedProtocolName(), GetSelectedChannelName()).FirstOrDefault(j =>
+					j != null && string.Equals(j.JobName, _currentJobName, StringComparison.OrdinalIgnoreCase));
+				TaskConfig task = job == null ? null : job.Tasks.FirstOrDefault(t =>
+					t != null && string.Equals(t.TaskName, _currentTaskName, StringComparison.OrdinalIgnoreCase));
+				if (task == null || task.StepFlow == null)
+				{
+					return null;
+				}
+
+				return task.StepFlow.FirstOrDefault(item =>
+					item != null &&
+					item.IsStepBlock &&
+					string.Equals(item.StepName, step.StepName, StringComparison.OrdinalIgnoreCase));
+			}
+			catch
+			{
+				return null;
+			}
 		}
 
 		private StepConfig GetCurrentHdevStepConfig()

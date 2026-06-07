@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Cognex.VisionPro;
 using Cognex.VisionPro.Implementation;
 
@@ -25,7 +27,8 @@ namespace Aron_V3
 				return null;
 			}
 
-			Bitmap sourceBitmap = ImageConvertHelper.TryConvertToBitmap(image);
+			Bitmap sourceBitmap = VisionProImageBitmapConverter.TryConvertToBitmap(image) ??
+				ImageConvertHelper.TryConvertToBitmap(image);
 			if (sourceBitmap == null)
 			{
 				return null;
@@ -282,7 +285,7 @@ namespace Aron_V3
 
 			try
 			{
-				return new TransformInfo(image.GetTransform(spaceName, "#"), true);
+				return new TransformInfo(image.GetTransform("#", spaceName), true);
 			}
 			catch
 			{
@@ -490,34 +493,88 @@ namespace Aron_V3
 			GraphicsState state = graphics.Save();
 			try
 			{
-				PointF origin = TransformPoint(transform, axes.OriginX, axes.OriginY);
-				float rotation = GetTransformedRotationDegrees(
-					transform,
-					axes.OriginX,
-					axes.OriginY,
-					axes.Rotation);
+				PointF origin;
+				PointF xDirection;
+				PointF yDirection;
+				ResolveCoordinateAxesDirections(axes, transform, out origin, out xDirection, out yDirection);
+
 				graphics.TranslateTransform(origin.X, origin.Y);
-				graphics.RotateTransform(rotation);
 				using (Pen pen = CreateScreenPen(axes.Color, axes.LineWidthInScreenPixels, displayScale))
 				{
-					graphics.DrawLine(pen, 0F, 0F, length, 0F);
-					graphics.DrawLine(pen, 0F, 0F, 0F, length);
-					DrawArrow(graphics, pen, length, 0F, arrowLength);
-					DrawArrow(graphics, pen, 0F, length, arrowLength);
-				}
+					PointF xEnd = ScaleDirection(xDirection, length);
+					PointF yEnd = ScaleDirection(yDirection, length);
+					graphics.DrawLine(pen, PointF.Empty, xEnd);
+					graphics.DrawLine(pen, PointF.Empty, yEnd);
+					DrawArrow(graphics, pen, xEnd.X, xEnd.Y, arrowLength);
+					DrawArrow(graphics, pen, yEnd.X, yEnd.Y, arrowLength);
 
-				float fontSize = displayScale > 0F ? 10F / displayScale : 10F;
-				using (Font font = new Font("Microsoft YaHei UI", fontSize, FontStyle.Regular, GraphicsUnit.Point))
-				using (Brush brush = new SolidBrush(ToColor(axes.Color)))
-				{
-					graphics.DrawString("X", font, brush, length + arrowLength, -fontSize);
-					graphics.DrawString("Y", font, brush, arrowLength, length + arrowLength);
+					float fontSize = displayScale > 0F ? 10F / displayScale : 10F;
+					using (Font font = new Font("Microsoft YaHei UI", fontSize, FontStyle.Regular, GraphicsUnit.Point))
+					using (Brush brush = new SolidBrush(ToColor(axes.Color)))
+					{
+						PointF xLabel = OffsetPoint(xEnd, xDirection, arrowLength);
+						PointF yLabel = OffsetPoint(yEnd, yDirection, arrowLength);
+						graphics.DrawString("X", font, brush, xLabel);
+						graphics.DrawString("Y", font, brush, yLabel);
+					}
 				}
 			}
 			finally
 			{
 				graphics.Restore(state);
 			}
+		}
+
+		private static void ResolveCoordinateAxesDirections(
+			CogCoordinateAxes axes,
+			Matrix transform,
+			out PointF origin,
+			out PointF xDirection,
+			out PointF yDirection)
+		{
+			double originX;
+			double originY;
+			double xAxisX;
+			double xAxisY;
+			double yAxisX;
+			double yAxisY;
+			axes.GetOriginCornerXCornerY(
+				out originX,
+				out originY,
+				out xAxisX,
+				out xAxisY,
+				out yAxisX,
+				out yAxisY);
+
+			origin = TransformPoint(transform, originX, originY);
+			PointF xAxis = TransformPoint(transform, xAxisX, xAxisY);
+			PointF yAxis = TransformPoint(transform, yAxisX, yAxisY);
+
+			xDirection = NormalizeDirection(origin, xAxis, 1F, 0F);
+			yDirection = NormalizeDirection(origin, yAxis, 0F, 1F);
+		}
+
+		private static PointF NormalizeDirection(PointF origin, PointF endpoint, float fallbackX, float fallbackY)
+		{
+			float dx = endpoint.X - origin.X;
+			float dy = endpoint.Y - origin.Y;
+			float length = (float)Math.Sqrt(dx * dx + dy * dy);
+			if (length <= 0.0001F)
+			{
+				return new PointF(fallbackX, fallbackY);
+			}
+
+			return new PointF(dx / length, dy / length);
+		}
+
+		private static PointF ScaleDirection(PointF direction, float length)
+		{
+			return new PointF(direction.X * length, direction.Y * length);
+		}
+
+		private static PointF OffsetPoint(PointF point, PointF direction, float offset)
+		{
+			return new PointF(point.X + direction.X * offset, point.Y + direction.Y * offset);
 		}
 
 		private static void DrawArrow(Graphics graphics, Pen pen, float endX, float endY, float arrowLength)
@@ -990,6 +1047,187 @@ namespace Aron_V3
 			{
 				Transform = transform;
 				Resolved = resolved;
+			}
+		}
+	}
+
+	internal static class VisionProImageBitmapConverter
+	{
+		public static Bitmap TryConvertToBitmap(object image)
+		{
+			return TryConvertToBitmap(image as ICogImage);
+		}
+
+		public static Bitmap TryConvertToBitmap(ICogImage image)
+		{
+			if (image == null)
+			{
+				return null;
+			}
+
+			CogImage8Grey grey = image as CogImage8Grey;
+			if (grey != null)
+			{
+				return TryConvertGray8(grey);
+			}
+
+			CogImage24PlanarColor color = image as CogImage24PlanarColor;
+			if (color != null)
+			{
+				return TryConvertColor24(color);
+			}
+
+			return null;
+		}
+
+		private static Bitmap TryConvertGray8(CogImage8Grey image)
+		{
+			if (!HasValidSize(image.Width, image.Height))
+			{
+				return null;
+			}
+
+			Bitmap bitmap = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppArgb);
+
+			try
+			{
+				ICogImage8PixelMemory source = image.Get8GreyPixelMemory(
+					CogImageDataModeConstants.Read,
+					0,
+					0,
+					image.Width,
+					image.Height);
+
+				BitmapData data = null;
+				try
+				{
+					data = bitmap.LockBits(
+						new Rectangle(0, 0, image.Width, image.Height),
+						ImageLockMode.WriteOnly,
+						PixelFormat.Format32bppArgb);
+
+					byte[] sourceRow = new byte[image.Width];
+					byte[] targetRow = new byte[image.Width * 4];
+
+					for (int y = 0; y < image.Height; y++)
+					{
+						Marshal.Copy(IntPtr.Add(source.Scan0, y * source.Stride), sourceRow, 0, image.Width);
+						CopyGrayRowToBgra(sourceRow, targetRow, image.Width);
+						Marshal.Copy(targetRow, 0, IntPtr.Add(data.Scan0, y * data.Stride), targetRow.Length);
+					}
+				}
+				finally
+				{
+					if (data != null)
+					{
+						bitmap.UnlockBits(data);
+					}
+				}
+
+				return bitmap;
+			}
+			catch
+			{
+				bitmap.Dispose();
+				return null;
+			}
+		}
+
+		private static Bitmap TryConvertColor24(CogImage24PlanarColor image)
+		{
+			if (!HasValidSize(image.Width, image.Height))
+			{
+				return null;
+			}
+
+			Bitmap bitmap = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppArgb);
+
+			try
+			{
+				ICogImage8PixelMemory red;
+				ICogImage8PixelMemory green;
+				ICogImage8PixelMemory blue;
+				image.Get24PlanarColorPixelMemory(
+					CogImageDataModeConstants.Read,
+					0,
+					0,
+					image.Width,
+					image.Height,
+					out red,
+					out green,
+					out blue);
+
+				BitmapData data = null;
+				try
+				{
+					data = bitmap.LockBits(
+						new Rectangle(0, 0, image.Width, image.Height),
+						ImageLockMode.WriteOnly,
+						PixelFormat.Format32bppArgb);
+
+					byte[] redRow = new byte[image.Width];
+					byte[] greenRow = new byte[image.Width];
+					byte[] blueRow = new byte[image.Width];
+					byte[] targetRow = new byte[image.Width * 4];
+
+					for (int y = 0; y < image.Height; y++)
+					{
+						Marshal.Copy(IntPtr.Add(red.Scan0, y * red.Stride), redRow, 0, image.Width);
+						Marshal.Copy(IntPtr.Add(green.Scan0, y * green.Stride), greenRow, 0, image.Width);
+						Marshal.Copy(IntPtr.Add(blue.Scan0, y * blue.Stride), blueRow, 0, image.Width);
+						CopyPlanarColorRowToBgra(redRow, greenRow, blueRow, targetRow, image.Width);
+						Marshal.Copy(targetRow, 0, IntPtr.Add(data.Scan0, y * data.Stride), targetRow.Length);
+					}
+				}
+				finally
+				{
+					if (data != null)
+					{
+						bitmap.UnlockBits(data);
+					}
+				}
+
+				return bitmap;
+			}
+			catch
+			{
+				bitmap.Dispose();
+				return null;
+			}
+		}
+
+		private static bool HasValidSize(int width, int height)
+		{
+			return width > 0 && height > 0;
+		}
+
+		private static void CopyGrayRowToBgra(byte[] sourceRow, byte[] targetRow, int width)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				byte value = sourceRow[x];
+				int target = x * 4;
+				targetRow[target] = value;
+				targetRow[target + 1] = value;
+				targetRow[target + 2] = value;
+				targetRow[target + 3] = 255;
+			}
+		}
+
+		private static void CopyPlanarColorRowToBgra(
+			byte[] redRow,
+			byte[] greenRow,
+			byte[] blueRow,
+			byte[] targetRow,
+			int width)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				int target = x * 4;
+				targetRow[target] = blueRow[x];
+				targetRow[target + 1] = greenRow[x];
+				targetRow[target + 2] = redRow[x];
+				targetRow[target + 3] = 255;
 			}
 		}
 	}

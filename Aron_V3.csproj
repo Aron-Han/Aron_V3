@@ -286,7 +286,7 @@
     <Folder Include="Hardware\SDK\" />
   </ItemGroup>
   <Target Name="IncrementAssemblyVersionBeforeRebuild" BeforeTargets="BeforeRebuild" Condition="'$(SkipAssemblyVersionIncrement)' != 'true'">
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)Script\IncrementAssemblyVersion.ps1&quot; -AssemblyInfoPath &quot;$(ProjectDir)Properties\AssemblyInfo.cs&quot;" />
+    <Exec Command="&quot;$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)Script\IncrementAssemblyVersion.ps1&quot; -AssemblyInfoPath &quot;$(ProjectDir)Properties\AssemblyInfo.cs&quot;" />
   </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

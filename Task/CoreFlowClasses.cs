@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
@@ -343,6 +344,8 @@ namespace Aron_V3
 	{
 		public string ImageName { get; set; }
 		public object RawImage { get; set; }
+		[XmlIgnore]
+		public System.Drawing.Bitmap DisplayBitmap { get; set; }
 		public string ImageType { get; set; }
 		public int Width { get; set; }
 		public int Height { get; set; }
@@ -3160,7 +3163,8 @@ namespace Aron_V3
 					throw new Exception("HALCON .NET runtime was not found. Please check halcondotnet.dll and hdevenginedotnet.dll. " + _halconAssemblyLoadMessage);
 				}
 
-				object program = GetOrLoadProgram(filePath, programType);
+				string engineFilePath = PrepareHdevFileForEngine(filePath, _config);
+				object program = GetOrLoadProgram(engineFilePath, programType);
 				object call = Activator.CreateInstance(callType, new object[] { program });
 
 				ApplyInputPinValues(call);
@@ -3186,6 +3190,325 @@ namespace Aron_V3
 			}
 
 			return result;
+		}
+
+		private static string PrepareHdevFileForEngine(string filePath, StepConfig config)
+		{
+			string sourceText;
+			try
+			{
+				sourceText = File.ReadAllText(filePath, Encoding.UTF8);
+			}
+			catch
+			{
+				return filePath;
+			}
+
+			string patchedText = sourceText;
+			string injectedInterface = BuildHdevOutputInterface(config);
+			int interfaceIndex;
+			int interfaceLength;
+			if (!string.IsNullOrWhiteSpace(injectedInterface) &&
+				TryFindEmptyHdevInterface(patchedText, out interfaceIndex, out interfaceLength))
+			{
+				patchedText =
+					patchedText.Substring(0, interfaceIndex) +
+					injectedInterface +
+					patchedText.Substring(interfaceIndex + interfaceLength);
+			}
+
+			patchedText = PatchHdevDisplayWindowForEngine(patchedText);
+			if (string.Equals(sourceText, patchedText, StringComparison.Ordinal))
+			{
+				return filePath;
+			}
+
+			try
+			{
+				string tempName =
+					SanitizeFileName(Path.GetFileNameWithoutExtension(filePath)) +
+					"_" +
+					File.GetLastWriteTimeUtc(filePath).Ticks.ToString() +
+					"_outputs.hdev";
+
+				foreach (string tempFolder in GetHdevEngineCacheFolders(filePath))
+				{
+					try
+					{
+						Directory.CreateDirectory(tempFolder);
+						string tempPath = Path.Combine(tempFolder, tempName);
+
+						if (!File.Exists(tempPath) || !FileEquals(tempPath, patchedText))
+						{
+							File.WriteAllText(tempPath, patchedText, new UTF8Encoding(false));
+						}
+
+						return tempPath;
+					}
+					catch
+					{
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return filePath;
+		}
+
+		private static string PatchHdevDisplayWindowForEngine(string text)
+		{
+			if (string.IsNullOrWhiteSpace(text) ||
+				text.IndexOf("dev_open_window_fit_size", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				return text;
+			}
+
+			const string pattern =
+				@"<l>\s*dev_open_window_fit_size\s*\(\s*" +
+				@"(?<row>[^,]+)\s*,\s*" +
+				@"(?<column>[^,]+)\s*,\s*" +
+				@"(?<width>[^,]+)\s*,\s*" +
+				@"(?<height>[^,]+)\s*,\s*" +
+				@"(?<widthLimit>[^,]+)\s*,\s*" +
+				@"(?<heightLimit>[^,]+)\s*,\s*" +
+				@"(?<handle>[^)]+)\s*\)\s*</l>";
+
+			Match firstMatch = Regex.Match(text, pattern, RegexOptions.IgnoreCase);
+			string windowHandle = firstMatch.Success ? firstMatch.Groups["handle"].Value.Trim() : "WindowHandle";
+			string patched = Regex.Replace(
+				text,
+				pattern,
+				delegate(Match match)
+				{
+					string row = match.Groups["row"].Value.Trim();
+					string column = match.Groups["column"].Value.Trim();
+					string width = match.Groups["width"].Value.Trim();
+					string height = match.Groups["height"].Value.Trim();
+					string handle = match.Groups["handle"].Value.Trim();
+
+					return
+						"<l>open_window (" + row + ", " + column + ", " + width + ", " + height + ", 0, 'invisible', '', " + handle + ")</l>" + Environment.NewLine +
+						"<l>set_part (" + handle + ", 0, 0, " + height + " - 1, " + width + " - 1)</l>" + Environment.NewLine +
+						"<l>dev_set_window (" + handle + ")</l>";
+				},
+				RegexOptions.IgnoreCase);
+
+			return PatchHdevDisplayOperatorsForEngine(patched, windowHandle);
+		}
+
+		private static string PatchHdevDisplayOperatorsForEngine(string text, string windowHandle)
+		{
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return text;
+			}
+
+			string handle = string.IsNullOrWhiteSpace(windowHandle) ? "WindowHandle" : windowHandle.Trim();
+
+			text = Regex.Replace(
+				text,
+				@"<l>(?<indent>\s*)dev_display\s*\(\s*(?<args>.*?)\s*\)\s*</l>",
+				"<l>${indent}disp_obj (${args}, " + handle + ")</l>",
+				RegexOptions.IgnoreCase);
+
+			text = Regex.Replace(
+				text,
+				@"<l>(?<indent>\s*)dev_set_color\s*\(\s*(?<args>.*?)\s*\)\s*</l>",
+				"<l>${indent}set_color (" + handle + ", ${args})</l>",
+				RegexOptions.IgnoreCase);
+
+			text = Regex.Replace(
+				text,
+				@"<l>(?<indent>\s*)dev_set_line_width\s*\(\s*(?<args>.*?)\s*\)\s*</l>",
+				"<l>${indent}set_line_width (" + handle + ", ${args})</l>",
+				RegexOptions.IgnoreCase);
+
+			text = Regex.Replace(
+				text,
+				@"<l>(?<indent>\s*)dev_set_draw\s*\(\s*(?<args>.*?)\s*\)\s*</l>",
+				"<l>${indent}set_draw (" + handle + ", ${args})</l>",
+				RegexOptions.IgnoreCase);
+
+			text = Regex.Replace(
+				text,
+				@"<l>(?<indent>\s*)dev_disp_text\s*\(\s*(?<args>.*?)\s*\)\s*</l>",
+				"<l>${indent}disp_text (" + handle + ", ${args})</l>",
+				RegexOptions.IgnoreCase);
+
+			text = Regex.Replace(
+				text,
+				@"<l>(?<indent>\s*)dev_clear_window\s*\(\s*\)\s*</l>",
+				"<l>${indent}clear_window (" + handle + ")</l>",
+				RegexOptions.IgnoreCase);
+
+			return text;
+		}
+
+		private static string BuildHdevOutputInterface(StepConfig config)
+		{
+			if (config == null || config.OutputPins == null || config.OutputPins.Count == 0)
+			{
+				return string.Empty;
+			}
+
+			StringBuilder iconicOutputs = new StringBuilder();
+			StringBuilder controlOutputs = new StringBuilder();
+			foreach (PinConfig pin in config.OutputPins)
+			{
+				if (pin == null || string.IsNullOrWhiteSpace(pin.PinName))
+				{
+					continue;
+				}
+
+				string line = "<par name=\"" + EscapeXmlAttribute(pin.PinName) + "\" base_type=\"" +
+					(pin.DataType == PinDataType.Image ? "iconic" : "ctrl") +
+					"\" dimension=\"0\"/>";
+
+				if (pin.DataType == PinDataType.Image)
+				{
+					iconicOutputs.AppendLine(line);
+				}
+				else
+				{
+					controlOutputs.AppendLine(line);
+				}
+			}
+
+			if (iconicOutputs.Length == 0 && controlOutputs.Length == 0)
+			{
+				return string.Empty;
+			}
+
+			StringBuilder builder = new StringBuilder();
+			builder.AppendLine("<interface>");
+			if (iconicOutputs.Length > 0)
+			{
+				builder.AppendLine("<oo>");
+				builder.Append(iconicOutputs);
+				builder.AppendLine("</oo>");
+			}
+
+			if (controlOutputs.Length > 0)
+			{
+				builder.AppendLine("<oc>");
+				builder.Append(controlOutputs);
+				builder.AppendLine("</oc>");
+			}
+
+			builder.Append("</interface>");
+			return builder.ToString();
+		}
+
+		private static IEnumerable<string> GetHdevEngineCacheFolders(string filePath)
+		{
+			string sourceFolder = string.Empty;
+			try
+			{
+				sourceFolder = Path.GetDirectoryName(Path.GetFullPath(filePath));
+			}
+			catch
+			{
+			}
+
+			if (!string.IsNullOrWhiteSpace(sourceFolder))
+			{
+				yield return Path.Combine(sourceFolder, ".aron_hdev_cache");
+			}
+
+			yield return Path.Combine(Path.GetTempPath(), "Aron_V3", "HdevEngine");
+		}
+
+		private static bool TryFindEmptyHdevInterface(string text, out int index, out int length)
+		{
+			index = -1;
+			length = 0;
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				return false;
+			}
+
+			string[] selfClosing = new string[] { "<interface/>", "<interface />" };
+			foreach (string marker in selfClosing)
+			{
+				index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+				if (index >= 0)
+				{
+					length = marker.Length;
+					return true;
+				}
+			}
+
+			const string openTag = "<interface>";
+			const string closeTag = "</interface>";
+			int openIndex = text.IndexOf(openTag, StringComparison.OrdinalIgnoreCase);
+			if (openIndex < 0)
+			{
+				return false;
+			}
+
+			int closeIndex = text.IndexOf(closeTag, openIndex + openTag.Length, StringComparison.OrdinalIgnoreCase);
+			if (closeIndex < 0)
+			{
+				return false;
+			}
+
+			string content = text.Substring(openIndex + openTag.Length, closeIndex - openIndex - openTag.Length);
+			if (!string.IsNullOrWhiteSpace(content))
+			{
+				return false;
+			}
+
+			index = openIndex;
+			length = closeIndex + closeTag.Length - openIndex;
+			return true;
+		}
+
+		private static bool FileEquals(string path, string text)
+		{
+			try
+			{
+				return string.Equals(File.ReadAllText(path, Encoding.UTF8), text, StringComparison.Ordinal);
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		private static string SanitizeFileName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				return "hdev";
+			}
+
+			foreach (char c in Path.GetInvalidFileNameChars())
+			{
+				name = name.Replace(c, '_');
+			}
+
+			return name;
+		}
+
+		private static string EscapeXmlAttribute(string value)
+		{
+			if (value == null)
+			{
+				return string.Empty;
+			}
+
+			return value
+				.Replace("&", "&amp;")
+				.Replace("\"", "&quot;")
+				.Replace("<", "&lt;")
+				.Replace(">", "&gt;");
+		}
+
+		public static string PrepareProgramFileForEngine(string filePath, StepConfig config)
+		{
+			return PrepareHdevFileForEngine(filePath, config);
 		}
 
 		public static bool WarmUpProgram(string filePath, out string warning)
@@ -3618,6 +3941,22 @@ namespace Aron_V3
 						image.ImageType = "Halcon";
 						image.SourceStep = _config.StepName;
 						image.RawImage = imageValue;
+						image.DisplayBitmap = ImageConvertHelper.TryConvertToBitmap(imageValue);
+						if (image.DisplayBitmap != null)
+						{
+							image.Width = image.DisplayBitmap.Width;
+							image.Height = image.DisplayBitmap.Height;
+						}
+						else
+						{
+							RuntimeLogStore.Append(
+								DateTime.Now,
+								RuntimeLogCategory.Step,
+								"Hdev output image was read but could not be converted to Bitmap. Step=" + _config.StepName +
+								", Output=" + pin.PinName +
+								", RawType=" + GetDebugTypeName(imageValue),
+								true);
+						}
 						result.OutputImages[pin.PinName] = image;
 					}
 					else
@@ -3644,6 +3983,11 @@ namespace Aron_V3
 			}
 
 			return missingOutputs;
+		}
+
+		private static string GetDebugTypeName(object value)
+		{
+			return value == null ? "null" : (value.GetType().FullName ?? value.GetType().Name);
 		}
 
 		private string BuildSuccessMessage(StepResult result, List<string> missingOutputs)
@@ -3946,12 +4290,14 @@ namespace Aron_V3
 				}
 
 				string normalizedPath = Path.GetFullPath(hdevPath);
-				if (warmedPaths != null && warmedPaths.Contains(normalizedPath))
+				string enginePath = HalconStep.PrepareProgramFileForEngine(normalizedPath, step);
+				if (warmedPaths != null &&
+					(warmedPaths.Contains(normalizedPath) || warmedPaths.Contains(enginePath)))
 				{
 					return true;
 				}
 
-				if (!HalconStep.WarmUpProgram(normalizedPath, out warning))
+				if (!HalconStep.WarmUpProgram(enginePath, out warning))
 				{
 					warning = FormatWarning(job, task, step, warning);
 					return false;
@@ -3960,6 +4306,10 @@ namespace Aron_V3
 				if (warmedPaths != null)
 				{
 					warmedPaths.Add(normalizedPath);
+					if (!string.Equals(normalizedPath, enginePath, StringComparison.OrdinalIgnoreCase))
+					{
+						warmedPaths.Add(enginePath);
+					}
 				}
 
 				return true;
@@ -4524,6 +4874,17 @@ namespace Aron_V3
 					", Task=" + context.TaskName +
 					", Step=" + runStepConfig.StepName +
 					", Cost=" + (DateTime.Now - stepStartTime).TotalMilliseconds.ToString("0.0") + " ms");
+
+				if (runStepConfig.StepType == StepType.Halcon && executeResult.StepResult != null)
+				{
+					AppendStepLog(
+						RuntimeLogCategory.Step,
+						"Hdev outputs. Step=" + runStepConfig.StepName +
+						", IsOK=" + executeResult.StepResult.IsOK +
+						", Outputs=" + (executeResult.StepResult.Outputs == null ? 0 : executeResult.StepResult.Outputs.Count) +
+						", Images=" + (executeResult.StepResult.OutputImages == null ? 0 : executeResult.StepResult.OutputImages.Count) +
+						", Message=" + (executeResult.StepResult.Message ?? string.Empty).Replace("\r", " ").Replace("\n", " "));
+				}
 			}
 			catch (Exception ex)
 			{

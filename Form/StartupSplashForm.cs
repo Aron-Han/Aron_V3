@@ -421,9 +421,13 @@ namespace Aron_V3
 
 				int shimmerX = fill.X + (int)((fill.Width + 40) * _phase) - 40;
 				Rectangle shimmer = new Rectangle(shimmerX, fill.Y, 34, fill.Height);
-				using (SolidBrush shimmerBrush = new SolidBrush(Color.FromArgb(80, 255, 255, 255)))
+				shimmer.Intersect(fill);
+				if (!shimmer.IsEmpty)
 				{
-					g.FillRectangle(shimmerBrush, shimmer);
+					using (SolidBrush shimmerBrush = new SolidBrush(Color.FromArgb(80, 255, 255, 255)))
+					{
+						g.FillRectangle(shimmerBrush, shimmer);
+					}
 				}
 			}
 

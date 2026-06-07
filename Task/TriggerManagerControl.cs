@@ -4094,19 +4094,37 @@ namespace Aron_V3
 				return null;
 			}
 
-			CogImageFile imageFile = null;
+			CogImageFileTool imageFileTool = null;
 
 			try
 			{
-				imageFile = new CogImageFile();
-				imageFile.Open(imagePath, CogImageFileModeConstants.Read);
-				return imageFile[0];
+				imageFileTool = new CogImageFileTool();
+				imageFileTool.Operator.Open(imagePath, CogImageFileModeConstants.Read);
+				imageFileTool.Run();
+
+				object image = imageFileTool.OutputImage;
+				if (image == null)
+				{
+					throw new InvalidOperationException(
+						(_isEnglish
+							? "Test image is empty. Please confirm the file is a VisionPro-supported image or CDB: "
+							: "测试图片读取为空，请确认文件是 VisionPro 支持的图片或 CDB 格式：") +
+						imagePath);
+				}
+
+				return image;
 			}
 			finally
 			{
-				if (imageFile != null)
+				if (imageFileTool != null && imageFileTool.Operator != null)
 				{
-					imageFile.Close();
+					try
+					{
+						imageFileTool.Operator.Close();
+					}
+					catch
+					{
+					}
 				}
 			}
 		}
