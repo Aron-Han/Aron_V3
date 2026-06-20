@@ -65,12 +65,15 @@ namespace Aron_V3
 			Label lblCount = CreateLabel("显示框数量", 14, 14, 90, 26);
 			numCount = new NumericUpDown();
 			numCount.Left = 110;
-			numCount.Top = 13;
-			numCount.Width = 130;
-			numCount.Height = 28;
+			numCount.Top = 15;
+			numCount.Width = 110;
+			numCount.Height = 24;
 			numCount.Minimum = 1;
 			numCount.Maximum = 16;
-			numCount.BackColor = Color.White;
+			numCount.BackColor = _back;
+			numCount.ForeColor = Color.White;
+			numCount.BorderStyle = BorderStyle.FixedSingle;
+			numCount.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular);
 			numCount.ValueChanged += delegate { ApplyCountToGrid(); };
 
 			top.Controls.Add(lblCount);

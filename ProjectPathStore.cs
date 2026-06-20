@@ -70,7 +70,7 @@ namespace Aron_V3
 		{
 			get
 			{
-				string path = Path.Combine(ProjectRoot, "Job");
+				string path = Path.Combine(ConfigRoot, "Program");
 				Directory.CreateDirectory(path);
 				return path;
 			}

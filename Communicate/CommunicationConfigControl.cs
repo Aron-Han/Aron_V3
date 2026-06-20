@@ -3643,6 +3643,7 @@ namespace Aron_V3
 					item.Length.ToString(),
 					item.Remark);
 				GlobalVariableBindingUi.SetCellValue(dgvOutput.Rows[rowIndex], "colOutputGlobalVariable", item.GlobalVariableName);
+				dgvOutput.Rows[rowIndex].Tag = item.Name;
 				UpdateOutputCurrentValueCell(dgvOutput.Rows[rowIndex]);
 			}
 		}
@@ -3735,11 +3736,11 @@ namespace Aron_V3
 
 			if (InvokeRequired)
 			{
-				BeginInvoke(new Action(delegate { RefreshInputCurrentValues(); }));
+				BeginInvoke(new Action(delegate { ReloadCommunicationConfigFromStore(); }));
 				return;
 			}
 
-			RefreshInputCurrentValues();
+			ReloadCommunicationConfigFromStore();
 		}
 
 		private void RuntimeCommunicationOutputService_OutputValuesChanged(object sender, RuntimeCommunicationOutputValuesChangedEventArgs e)
@@ -3985,17 +3986,252 @@ namespace Aron_V3
 			if (_selectedType == CommunicationType.TcpIp)
 			{
 				TcpIpConfig tcpIp = GetCurrentTcpConfig();
+				OutputVariableNameChanges outputChanges = BuildOutputVariableNameChanges(tcpIp.OutputVariables);
 				SaveTcpOrS7VariablesFromGrid(tcpIp.InputVariables, tcpIp.OutputVariables);
+				ApplyOutputVariableNameChanges(outputChanges);
 			}
 			else if (_selectedType == CommunicationType.Profinet)
 			{
+				OutputVariableNameChanges outputChanges = BuildOutputVariableNameChanges(GetCurrentProfinetConfig().OutputVariables);
 				SaveProfinetVariablesFromGrid();
+				ApplyOutputVariableNameChanges(outputChanges);
 			}
 			else
 			{
 				S7Config s7 = GetCurrentS7Config();
+				OutputVariableNameChanges outputChanges = BuildOutputVariableNameChanges(s7.OutputVariables);
 				SaveTcpOrS7VariablesFromGrid(s7.InputVariables, s7.OutputVariables);
+				ApplyOutputVariableNameChanges(outputChanges);
 			}
+		}
+
+		private OutputVariableNameChanges BuildOutputVariableNameChanges(List<CommOutputVariable> existingOutputs)
+		{
+			OutputVariableNameChanges changes = new OutputVariableNameChanges();
+			if (existingOutputs == null || existingOutputs.Count <= 0)
+			{
+				return changes;
+			}
+
+			HashSet<string> existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (CommOutputVariable output in existingOutputs)
+			{
+				if (output == null || string.IsNullOrWhiteSpace(output.Name))
+				{
+					continue;
+				}
+
+				existingNames.Add(output.Name.Trim());
+			}
+
+			HashSet<string> observedOriginalNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (DataGridViewRow row in dgvOutput.Rows)
+			{
+				if (row == null || row.IsNewRow)
+				{
+					continue;
+				}
+
+				string originalName = row.Tag as string;
+				string currentName = GetCellString(row, 0);
+				if (string.IsNullOrWhiteSpace(originalName))
+				{
+					continue;
+				}
+
+				observedOriginalNames.Add(originalName.Trim());
+				if (string.IsNullOrWhiteSpace(currentName))
+				{
+					changes.DeletedNames.Add(originalName.Trim());
+					continue;
+				}
+
+				currentName = currentName.Trim();
+				if (!string.Equals(originalName.Trim(), currentName, StringComparison.OrdinalIgnoreCase))
+				{
+					changes.RenamedNames[originalName.Trim()] = currentName;
+				}
+			}
+
+			foreach (string existingName in existingNames)
+			{
+				if (!observedOriginalNames.Contains(existingName))
+				{
+					changes.DeletedNames.Add(existingName);
+				}
+			}
+
+			return changes;
+		}
+
+		private void ApplyOutputVariableNameChanges(OutputVariableNameChanges changes)
+		{
+			if (changes == null || !changes.HasChanges)
+			{
+				return;
+			}
+
+			UpdateChannelOutputReferences(GetCurrentTypeChannels(), changes);
+			UpdateHeartbeatOutputReference(GetCurrentTypeHeartbeat(), changes);
+			UpdateFlowSignalOutputReferences(changes);
+		}
+
+		private bool UpdateChannelOutputReferences(
+			List<CommunicationChannelConfig> channels,
+			OutputVariableNameChanges changes)
+		{
+			bool changed = false;
+			if (channels == null || changes == null)
+			{
+				return false;
+			}
+
+			foreach (CommunicationChannelConfig channel in channels)
+			{
+				if (channel == null)
+				{
+					continue;
+				}
+
+				string readyOutputName = channel.ChannelReadyOutputName;
+				if (changes.TryUpdateReference(ref readyOutputName))
+				{
+					channel.ChannelReadyOutputName = readyOutputName;
+					changed = true;
+				}
+
+				string programOutputName = channel.ProgramNoOutputName;
+				if (changes.TryUpdateReference(ref programOutputName))
+				{
+					channel.ProgramNoOutputName = programOutputName;
+					changed = true;
+				}
+			}
+
+			return changed;
+		}
+
+		private bool UpdateHeartbeatOutputReference(
+			CommunicationHeartbeatConfig heartbeat,
+			OutputVariableNameChanges changes)
+		{
+			if (heartbeat == null || changes == null)
+			{
+				return false;
+			}
+
+			string outputName = heartbeat.OutputName;
+			if (!changes.TryUpdateReference(ref outputName))
+			{
+				return false;
+			}
+
+			heartbeat.OutputName = outputName;
+			return true;
+		}
+
+		private void UpdateFlowSignalOutputReferences(OutputVariableNameChanges changes)
+		{
+			if (changes == null || !changes.HasChanges)
+			{
+				return;
+			}
+
+			ProjectFlowConfig flowConfig = FlowConfigStore.LoadOrCreateDefault();
+			if (flowConfig == null || flowConfig.Jobs == null)
+			{
+				return;
+			}
+
+			bool changed = false;
+			string selectedProtocolName = CommunicationRuntimeNaming.GetProtocolName(_selectedType);
+			string selectedInstanceName = CommunicationRuntimeNaming.NormalizeInstanceName(
+				selectedProtocolName,
+				_selectedInstanceName,
+				_config);
+
+			foreach (JobConfig job in flowConfig.Jobs)
+			{
+				if (job == null || job.Tasks == null)
+				{
+					continue;
+				}
+
+				foreach (TaskConfig task in job.Tasks)
+				{
+					if (task == null || task.StepFlow == null)
+					{
+						continue;
+					}
+
+					foreach (StepFlowItem item in task.StepFlow)
+					{
+						if (item == null || item.SignalOutputs == null ||
+							!IsSignalOutputItemForSelectedCommunication(item, task, selectedProtocolName, selectedInstanceName))
+						{
+							continue;
+						}
+
+						foreach (SignalOutputBinding binding in item.SignalOutputs)
+						{
+							if (binding == null)
+							{
+								continue;
+							}
+
+							string outputName = binding.OutputName;
+							bool deleted = changes.IsDeleted(outputName);
+							if (changes.TryUpdateReference(ref outputName))
+							{
+								binding.OutputName = outputName;
+								if (deleted)
+								{
+									binding.AssignedValue = string.Empty;
+									binding.ForceValue = false;
+									binding.Enabled = false;
+								}
+
+								changed = true;
+							}
+						}
+					}
+				}
+			}
+
+			if (changed)
+			{
+				FlowConfigStore.Save(flowConfig);
+			}
+		}
+
+		private bool IsSignalOutputItemForSelectedCommunication(
+			StepFlowItem item,
+			TaskConfig task,
+			string selectedProtocolName,
+			string selectedInstanceName)
+		{
+			string protocolName = string.IsNullOrWhiteSpace(item.SignalProtocol)
+				? item.CommunicationOutputProtocol
+				: item.SignalProtocol;
+			string instanceName = string.IsNullOrWhiteSpace(item.SignalInstanceName)
+				? item.CommunicationOutputInstanceName
+				: item.SignalInstanceName;
+
+			if (string.IsNullOrWhiteSpace(protocolName) && task != null)
+			{
+				protocolName = task.CommunicationProtocol;
+			}
+
+			if (string.IsNullOrWhiteSpace(instanceName) && task != null)
+			{
+				instanceName = task.CommunicationInstanceName;
+			}
+
+			protocolName = CommunicationRuntimeNaming.NormalizeProtocolName(protocolName);
+			instanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, _config);
+
+			return string.Equals(protocolName, selectedProtocolName, StringComparison.OrdinalIgnoreCase) &&
+				string.Equals(instanceName, selectedInstanceName, StringComparison.OrdinalIgnoreCase);
 		}
 
 		private void SaveTcpOrS7VariablesFromGrid(
@@ -4064,6 +4300,7 @@ namespace Aron_V3
 				item.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colOutputGlobalVariable");
 
 				outputList.Add(item);
+				row.Tag = item.Name;
 			}
 		}
 
@@ -4133,6 +4370,7 @@ namespace Aron_V3
 				item.GlobalVariableName = GlobalVariableBindingUi.GetCellValue(row, "colOutputGlobalVariable");
 
 				profinet.OutputVariables.Add(item);
+				row.Tag = item.Name;
 			}
 		}
 
@@ -4209,6 +4447,7 @@ namespace Aron_V3
 				"1",
 				string.Empty);
 			GlobalVariableBindingUi.SetCellValue(dgvOutput.Rows[rowIndex], "colOutputGlobalVariable", string.Empty);
+			dgvOutput.Rows[rowIndex].Tag = string.Empty;
 			UpdateOutputCurrentValueCell(dgvOutput.Rows[rowIndex]);
 			ApplyTcpByteLengthRule(dgvOutput.Rows[rowIndex], false);
 			ValidateCommunicationRangeGrid(dgvOutput);
@@ -4316,6 +4555,8 @@ namespace Aron_V3
 		{
 			SaveCurrentTypeParamsFromUI();
 			SaveCurrentTypeVariablesFromGrid();
+			string selectedInstanceName = _selectedInstanceName;
+			string selectedProtocolName = CommunicationRuntimeNaming.GetProtocolName(_selectedType);
 
 			using (CommunicationChannelSettingsDialog dialog =
 				new CommunicationChannelSettingsDialog(
@@ -4332,6 +4573,13 @@ namespace Aron_V3
 
 				SetCurrentTypeChannels(dialog.Channels);
 				CommunicationConfigStore.Save(_config);
+				if (dialog.ChannelRenames != null && dialog.ChannelRenames.Count > 0)
+				{
+					FlowConfigStore.RenameCommunicationChannelReferences(
+						selectedProtocolName,
+						selectedInstanceName,
+						dialog.ChannelRenames);
+				}
 				LoadConfigToUI(_config);
 			}
 		}
@@ -4872,6 +5120,51 @@ namespace Aron_V3
 			this.Refresh();
 		}
 
+		private sealed class OutputVariableNameChanges
+		{
+			public Dictionary<string, string> RenamedNames { get; private set; }
+			public HashSet<string> DeletedNames { get; private set; }
+
+			public OutputVariableNameChanges()
+			{
+				RenamedNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+				DeletedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			}
+
+			public bool HasChanges
+			{
+				get { return RenamedNames.Count > 0 || DeletedNames.Count > 0; }
+			}
+
+			public bool IsDeleted(string name)
+			{
+				return !string.IsNullOrWhiteSpace(name) && DeletedNames.Contains(name.Trim());
+			}
+
+			public bool TryUpdateReference(ref string name)
+			{
+				if (string.IsNullOrWhiteSpace(name))
+				{
+					return false;
+				}
+
+				string normalizedName = name.Trim();
+				string renamedName;
+				if (RenamedNames.TryGetValue(normalizedName, out renamedName))
+				{
+					name = renamedName;
+					return true;
+				}
+
+				if (DeletedNames.Contains(normalizedName))
+				{
+					name = string.Empty;
+					return true;
+				}
+
+				return false;
+			}
+		}
 
 		protected override void OnHandleDestroyed(EventArgs e)
 		{
@@ -5204,6 +5497,7 @@ namespace Aron_V3
 
 			return result;
 		}
+
 	}
 
 	internal class CommunicationChannelSettingsDialog : Form
@@ -5219,6 +5513,7 @@ namespace Aron_V3
 		private readonly Button _btnCancel;
 
 		public List<CommunicationChannelConfig> Channels { get; private set; }
+		public Dictionary<string, string> ChannelRenames { get; private set; }
 
 		public CommunicationChannelSettingsDialog(
 			List<CommunicationChannelConfig> channels,
@@ -5236,6 +5531,7 @@ namespace Aron_V3
 			_inputVariables = CloneInputVariables(inputVariables);
 			_outputVariables = CloneOutputVariables(outputVariables);
 			Channels = CloneChannels(channels);
+			ChannelRenames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 			Text = _isEnglish ? "Channel Settings" : "通道设置";
 			StartPosition = FormStartPosition.CenterParent;
@@ -5260,10 +5556,12 @@ namespace Aron_V3
 			_grid.EnableHeadersVisualStyles = false;
 			_grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
 			_grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+			_grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			_grid.DefaultCellStyle.BackColor = Color.FromArgb(2, 10, 20);
 			_grid.DefaultCellStyle.ForeColor = Color.White;
 			_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
 			_grid.DefaultCellStyle.SelectionForeColor = Color.White;
+			_grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			_grid.CellClick += Grid_CellContentClick;
 			SetDoubleBuffered(_grid);
 
@@ -5319,6 +5617,9 @@ namespace Aron_V3
 			try
 			{
 				_grid.Columns.Add(CreateTextColumn("colChannel", _isEnglish ? "Channel" : "通道", 120, false));
+				DataGridViewTextBoxColumn originalChannelColumn = CreateTextColumn("colOriginalChannel", "OriginalChannel", 10, true);
+				originalChannelColumn.Visible = false;
+				_grid.Columns.Add(originalChannelColumn);
 
 				DataGridViewCheckBoxColumn enabledColumn = new DataGridViewCheckBoxColumn();
 				enabledColumn.Name = "colEnabled";
@@ -5333,7 +5634,7 @@ namespace Aron_V3
 				_grid.Columns.Add(CreateTextColumn("colTriggerValue", _isEnglish ? "Trigger Value" : "触发期望值", 100, false));
 				DataGridViewTextBoxColumn customTriggerColumn = CreateTextColumn(
 					"colCustomTriggerGlobal",
-					_isEnglish ? "Custom Trigger" : "用户自定义触发源",
+					_isEnglish ? "Other Custom Trigger" : "其它自定义触发源",
 					220,
 					true);
 				customTriggerColumn.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
@@ -5350,7 +5651,7 @@ namespace Aron_V3
 				_grid.Columns.Add(CreateButtonColumn(
 					"colChannelReady",
 					_isEnglish ? "Channel Ready" : "通道准备信号",
-					190));
+					260));
 				_grid.Columns.Add(CreateButtonColumn(
 					"colProgramOutput",
 					_isEnglish ? "Program Output" : "输出程序号",
@@ -5418,6 +5719,7 @@ namespace Aron_V3
 					}
 
 					int rowIndex = _grid.Rows.Add(
+						channel.ChannelName,
 						channel.ChannelName,
 						channel.Enabled,
 						string.Empty,
@@ -5568,6 +5870,7 @@ namespace Aron_V3
 
 			int rowIndex = _grid.Rows.Add(
 				"Channel" + (_grid.Rows.Count + 1).ToString("00"),
+				string.Empty,
 				true,
 				string.Empty,
 				"1",
@@ -5605,9 +5908,30 @@ namespace Aron_V3
 				return _isEnglish ? "Select..." : "选择...";
 			}
 
-			return outputName.Trim() + "  " +
-				(_isEnglish ? "Busy=" : "忙=") + (busyValue ?? string.Empty) + "  " +
-				(_isEnglish ? "Ready=" : "就绪=") + (doneValue ?? string.Empty);
+			return FormatOutputVariableName(outputName) + "  " +
+				(_isEnglish ? "Ready=" : "就绪=") + (doneValue ?? string.Empty) + "  " +
+				(_isEnglish ? "Not Ready=" : "非就绪=") + (busyValue ?? string.Empty);
+		}
+
+		private string FormatOutputVariableName(string outputName)
+		{
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return string.Empty;
+			}
+
+			string normalizedOutputName = outputName.Trim();
+			CommOutputVariable output = _outputVariables.FirstOrDefault(x =>
+				x != null &&
+				!string.IsNullOrWhiteSpace(x.Name) &&
+				string.Equals(x.Name.Trim(), normalizedOutputName, StringComparison.OrdinalIgnoreCase));
+
+			if (output == null)
+			{
+				return normalizedOutputName + (_isEnglish ? " (missing)" : "（未找到）");
+			}
+
+			return normalizedOutputName;
 		}
 
 		private string FormatOutputSelection(string outputName)
@@ -5647,8 +5971,139 @@ namespace Aron_V3
 		{
 			_grid.EndEdit();
 			Channels = ReadChannelsFromGrid();
+			if (!ValidateChannelNames(Channels))
+			{
+				return;
+			}
+			if (!ValidateReferencedOutputVariables(Channels))
+			{
+				return;
+			}
+
+			ChannelRenames = ReadChannelRenamesFromGrid();
 			DialogResult = DialogResult.OK;
 			Close();
+		}
+
+		private bool ValidateChannelNames(List<CommunicationChannelConfig> channels)
+		{
+			HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (CommunicationChannelConfig channel in channels ?? new List<CommunicationChannelConfig>())
+			{
+				if (channel == null || string.IsNullOrWhiteSpace(channel.ChannelName))
+				{
+					continue;
+				}
+
+				string name = channel.ChannelName.Trim();
+				if (!names.Add(name))
+				{
+					ThemedDialog.ShowWarning(
+						this,
+						Text,
+						_isEnglish
+							? "Channel names must be unique."
+							: "通道名称不能重复。",
+						_isEnglish);
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		private bool ValidateReferencedOutputVariables(List<CommunicationChannelConfig> channels)
+		{
+			HashSet<string> outputNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (CommOutputVariable output in _outputVariables)
+			{
+				if (output == null || string.IsNullOrWhiteSpace(output.Name))
+				{
+					continue;
+				}
+
+				outputNames.Add(output.Name.Trim());
+			}
+
+			foreach (CommunicationChannelConfig channel in channels ?? new List<CommunicationChannelConfig>())
+			{
+				if (channel == null)
+				{
+					continue;
+				}
+
+				if (!ValidateOutputReference(
+					outputNames,
+					channel.ChannelName,
+					channel.ChannelReadyOutputName,
+					_isEnglish ? "Channel Ready" : "通道准备信号"))
+				{
+					return false;
+				}
+
+				if (!ValidateOutputReference(
+					outputNames,
+					channel.ChannelName,
+					channel.ProgramNoOutputName,
+					_isEnglish ? "Program Output" : "输出程序号"))
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		private bool ValidateOutputReference(
+			HashSet<string> outputNames,
+			string channelName,
+			string outputName,
+			string fieldName)
+		{
+			if (string.IsNullOrWhiteSpace(outputName))
+			{
+				return true;
+			}
+
+			if (outputNames != null && outputNames.Contains(outputName.Trim()))
+			{
+				return true;
+			}
+
+			ThemedDialog.ShowWarning(
+				this,
+				Text,
+				_isEnglish
+					? fieldName + " of " + (channelName ?? string.Empty) + " references a missing output variable: " + outputName.Trim() + ". Please add it in Output Variables or select an existing output variable."
+					: (channelName ?? string.Empty) + " 的" + fieldName + "引用了不存在的输出变量：" + outputName.Trim() + "。请先在输出变量表新增它，或选择已有输出变量。",
+				_isEnglish);
+			return false;
+		}
+
+		private Dictionary<string, string> ReadChannelRenamesFromGrid()
+		{
+			Dictionary<string, string> renames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (DataGridViewRow row in _grid.Rows)
+			{
+				if (row.IsNewRow)
+				{
+					continue;
+				}
+
+				string original = GetCellString(row, "colOriginalChannel");
+				string current = GetCellString(row, "colChannel");
+				if (string.IsNullOrWhiteSpace(original) ||
+					string.IsNullOrWhiteSpace(current) ||
+					string.Equals(original, current, StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				renames[original.Trim()] = current.Trim();
+			}
+
+			return renames;
 		}
 
 		private List<CommunicationChannelConfig> ReadChannelsFromGrid()
@@ -6163,7 +6618,9 @@ namespace Aron_V3
 		private class CommunicationChannelReadySettingsDialog : Form
 		{
 			private readonly bool _isEnglish;
-			private readonly ComboBox _cmbOutput;
+			private readonly List<CommOutputVariable> _outputs;
+			private readonly TextBox _txtOutputName;
+			private readonly Button _btnSelectOutput;
 			private readonly TextBox _txtBusyValue;
 			private readonly TextBox _txtDoneValue;
 			private readonly Button _btnOk;
@@ -6182,45 +6639,49 @@ namespace Aron_V3
 				bool isEnglish)
 			{
 				_isEnglish = isEnglish;
+				_outputs = CloneOutputVariables(outputs);
 				OutputName = outputName ?? string.Empty;
 				BusyValue = string.IsNullOrWhiteSpace(busyValue) ? "0" : busyValue;
 				DoneValue = string.IsNullOrWhiteSpace(doneValue) ? "1" : doneValue;
 
 				Text = _isEnglish ? "Channel Ready Signal" : "通道准备信号";
 				StartPosition = FormStartPosition.CenterParent;
-				Size = new Size(520, 300);
+				Size = new Size(620, 330);
 				FormBorderStyle = FormBorderStyle.FixedDialog;
 				MinimizeBox = false;
 				MaximizeBox = false;
 				BackColor = Color.FromArgb(3, 14, 27);
 				ForeColor = Color.White;
 
-				Controls.Add(CreateLabel(_isEnglish ? "Output Pin" : "输出引脚", 34, 42));
-				_cmbOutput = new ComboBox();
-				_cmbOutput.DropDownStyle = ComboBoxStyle.DropDownList;
-				_cmbOutput.Location = new Point(190, 38);
-				_cmbOutput.Size = new Size(270, 28);
-				Controls.Add(_cmbOutput);
+				Controls.Add(CreateLabel(_isEnglish ? "Signal Variable Name" : "信号变量名称", 34, 42));
+				_txtOutputName = new TextBox();
+				_txtOutputName.Location = new Point(190, 38);
+				_txtOutputName.Size = new Size(270, 28);
+				_txtOutputName.ReadOnly = true;
+				_txtOutputName.Text = OutputName;
+				Controls.Add(_txtOutputName);
 
-				Controls.Add(CreateLabel(_isEnglish ? "Switching Value" : "切换时输出值", 34, 92));
-				_txtBusyValue = new TextBox();
-				_txtBusyValue.Location = new Point(190, 88);
-				_txtBusyValue.Size = new Size(270, 28);
-				_txtBusyValue.Text = BusyValue;
-				Controls.Add(_txtBusyValue);
+				_btnSelectOutput = CreateButton(_isEnglish ? "Select" : "选择", 470, 36);
+				_btnSelectOutput.Click += btnSelectOutput_Click;
+				Controls.Add(_btnSelectOutput);
 
-				Controls.Add(CreateLabel(_isEnglish ? "Ready Value" : "切换完成输出值", 34, 142));
+				Controls.Add(CreateLabel(_isEnglish ? "Ready Value" : "就绪值", 34, 92));
 				_txtDoneValue = new TextBox();
-				_txtDoneValue.Location = new Point(190, 138);
-				_txtDoneValue.Size = new Size(270, 28);
+				_txtDoneValue.Location = new Point(190, 88);
+				_txtDoneValue.Size = new Size(370, 28);
 				_txtDoneValue.Text = DoneValue;
 				Controls.Add(_txtDoneValue);
 
-				LoadOutputs(outputs, outputName);
+				Controls.Add(CreateLabel(_isEnglish ? "Not Ready Value" : "非就绪值", 34, 142));
+				_txtBusyValue = new TextBox();
+				_txtBusyValue.Location = new Point(190, 138);
+				_txtBusyValue.Size = new Size(370, 28);
+				_txtBusyValue.Text = BusyValue;
+				Controls.Add(_txtBusyValue);
 
-				_btnClear = CreateButton(_isEnglish ? "Clear" : "清空", 34, 210);
-				_btnOk = CreateButton(_isEnglish ? "OK" : "确定", 270, 210);
-				_btnCancel = CreateButton(_isEnglish ? "Cancel" : "取消", 380, 210);
+				_btnClear = CreateButton(_isEnglish ? "Clear" : "清空", 34, 230);
+				_btnOk = CreateButton(_isEnglish ? "OK" : "确定", 370, 230);
+				_btnCancel = CreateButton(_isEnglish ? "Cancel" : "取消", 480, 230);
 				_btnClear.Click += delegate
 				{
 					OutputName = string.Empty;
@@ -6237,32 +6698,6 @@ namespace Aron_V3
 
 				AcceptButton = _btnOk;
 				CancelButton = _btnCancel;
-			}
-
-			private void LoadOutputs(List<CommOutputVariable> outputs, string selectedOutput)
-			{
-				_cmbOutput.Items.Clear();
-				if (outputs != null)
-				{
-					foreach (CommOutputVariable output in outputs)
-					{
-						if (output == null || string.IsNullOrWhiteSpace(output.Name))
-						{
-							continue;
-						}
-
-						_cmbOutput.Items.Add(output.Name);
-					}
-				}
-
-				if (!string.IsNullOrWhiteSpace(selectedOutput) && _cmbOutput.Items.Contains(selectedOutput))
-				{
-					_cmbOutput.SelectedItem = selectedOutput;
-				}
-				else if (_cmbOutput.Items.Count > 0)
-				{
-					_cmbOutput.SelectedIndex = 0;
-				}
 			}
 
 			private Label CreateLabel(string text, int x, int y)
@@ -6288,9 +6723,24 @@ namespace Aron_V3
 				return button;
 			}
 
+			private void btnSelectOutput_Click(object sender, EventArgs e)
+			{
+				using (CommunicationOutputVariableSelectDialog dialog =
+					new CommunicationOutputVariableSelectDialog(OutputName, _outputs, _isEnglish))
+				{
+					if (dialog.ShowDialog(this) != DialogResult.OK)
+					{
+						return;
+					}
+
+					OutputName = dialog.SelectedOutputName;
+					_txtOutputName.Text = OutputName;
+				}
+			}
+
 			private void btnOk_Click(object sender, EventArgs e)
 			{
-				OutputName = _cmbOutput.SelectedItem == null ? string.Empty : _cmbOutput.SelectedItem.ToString();
+				OutputName = _txtOutputName.Text == null ? string.Empty : _txtOutputName.Text.Trim();
 				BusyValue = _txtBusyValue.Text == null ? string.Empty : _txtBusyValue.Text.Trim();
 				DoneValue = _txtDoneValue.Text == null ? string.Empty : _txtDoneValue.Text.Trim();
 
@@ -6300,7 +6750,7 @@ namespace Aron_V3
 					ThemedDialog.ShowWarning(
 						this,
 						Text,
-						_isEnglish ? "Please input switching and ready values." : "请输入切换时输出值和切换完成输出值。",
+						_isEnglish ? "Please input ready and not-ready values." : "请输入就绪值和非就绪值。",
 						_isEnglish);
 					return;
 				}
@@ -6309,6 +6759,222 @@ namespace Aron_V3
 				if (string.IsNullOrWhiteSpace(DoneValue)) DoneValue = "1";
 				DialogResult = DialogResult.OK;
 				Close();
+			}
+
+			private static List<CommOutputVariable> CloneOutputVariables(List<CommOutputVariable> outputs)
+			{
+				List<CommOutputVariable> result = new List<CommOutputVariable>();
+				if (outputs == null)
+				{
+					return result;
+				}
+
+				foreach (CommOutputVariable output in outputs)
+				{
+					if (output == null)
+					{
+						continue;
+					}
+
+					result.Add(new CommOutputVariable
+					{
+						Name = output.Name,
+						DataType = output.DataType,
+						ByteOffset = output.ByteOffset,
+						BitOffset = output.BitOffset,
+						Length = output.Length,
+						Remark = output.Remark,
+						GlobalVariableName = output.GlobalVariableName
+					});
+				}
+
+				return result;
+			}
+
+			private sealed class CommunicationOutputVariableSelectDialog : Form
+			{
+				private readonly bool _isEnglish;
+				private readonly List<CommOutputVariable> _outputs;
+				private readonly string _initialOutputName;
+				private readonly TextBox _txtSearch;
+				private readonly DataGridView _grid;
+				private readonly Button _btnOk;
+				private readonly Button _btnClear;
+				private readonly Button _btnCancel;
+
+				public string SelectedOutputName { get; private set; }
+
+				public CommunicationOutputVariableSelectDialog(
+					string selectedOutputName,
+					List<CommOutputVariable> outputs,
+					bool isEnglish)
+				{
+					_isEnglish = isEnglish;
+					_outputs = CloneOutputVariables(outputs);
+					_initialOutputName = selectedOutputName ?? string.Empty;
+					SelectedOutputName = _initialOutputName;
+
+					Text = _isEnglish ? "Select Signal Variable" : "选择信号变量";
+					StartPosition = FormStartPosition.CenterParent;
+					Size = new Size(760, 430);
+					MinimumSize = new Size(620, 360);
+					BackColor = Color.FromArgb(2, 10, 20);
+					ForeColor = Color.White;
+					Font = new Font("Microsoft YaHei UI", 9F);
+
+					TableLayoutPanel root = new TableLayoutPanel();
+					root.Dock = DockStyle.Fill;
+					root.Padding = new Padding(14);
+					root.ColumnCount = 1;
+					root.RowCount = 3;
+					root.BackColor = BackColor;
+					root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
+					root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+					root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
+
+					Panel searchPanel = new Panel();
+					searchPanel.Dock = DockStyle.Fill;
+					searchPanel.BackColor = BackColor;
+					Label lblSearch = new Label();
+					lblSearch.Text = _isEnglish ? "Keyword" : "关键字";
+					lblSearch.AutoSize = true;
+					lblSearch.ForeColor = Color.White;
+					lblSearch.Location = new Point(0, 10);
+					_txtSearch = new TextBox();
+					_txtSearch.Location = new Point(70, 6);
+					_txtSearch.Width = 360;
+					_txtSearch.BackColor = Color.FromArgb(8, 22, 38);
+					_txtSearch.ForeColor = Color.White;
+					_txtSearch.BorderStyle = BorderStyle.FixedSingle;
+					_txtSearch.TextChanged += delegate { LoadOutputs(); };
+					searchPanel.Controls.Add(lblSearch);
+					searchPanel.Controls.Add(_txtSearch);
+
+					_grid = new BufferedDataGridView();
+					_grid.Dock = DockStyle.Fill;
+					_grid.AllowUserToAddRows = false;
+					_grid.AllowUserToDeleteRows = false;
+					_grid.ReadOnly = true;
+					_grid.RowHeadersVisible = false;
+					_grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+					_grid.MultiSelect = false;
+					_grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+					_grid.BackgroundColor = BackColor;
+					_grid.GridColor = Color.FromArgb(38, 62, 86);
+					_grid.BorderStyle = BorderStyle.FixedSingle;
+					_grid.EnableHeadersVisualStyles = false;
+					_grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
+					_grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+					_grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+					_grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+					_grid.DefaultCellStyle.BackColor = BackColor;
+					_grid.DefaultCellStyle.ForeColor = Color.White;
+					_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
+					_grid.DefaultCellStyle.SelectionForeColor = Color.White;
+					_grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+					_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Name", HeaderText = _isEnglish ? "Name" : "名称", FillWeight = 120 });
+					_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Type", HeaderText = _isEnglish ? "Type" : "类型", FillWeight = 80 });
+					_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Source", HeaderText = _isEnglish ? "Source" : "关联来源", FillWeight = 130 });
+					_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Remark", HeaderText = _isEnglish ? "Remark" : "备注", FillWeight = 150 });
+					_grid.CellDoubleClick += delegate(object sender, DataGridViewCellEventArgs e)
+					{
+						if (e.RowIndex >= 0)
+						{
+							AcceptSelection();
+						}
+					};
+
+					FlowLayoutPanel buttons = new FlowLayoutPanel();
+					buttons.Dock = DockStyle.Fill;
+					buttons.FlowDirection = FlowDirection.RightToLeft;
+					buttons.Padding = new Padding(0, 10, 0, 0);
+					buttons.BackColor = BackColor;
+					_btnOk = CreateDialogButton(_isEnglish ? "OK" : "确定", true);
+					_btnClear = CreateDialogButton(_isEnglish ? "Clear" : "清除关联", false);
+					_btnCancel = CreateDialogButton(_isEnglish ? "Cancel" : "取消", false);
+					_btnOk.Click += delegate { AcceptSelection(); };
+					_btnClear.Click += delegate
+					{
+						SelectedOutputName = string.Empty;
+						DialogResult = DialogResult.OK;
+						Close();
+					};
+					_btnCancel.DialogResult = DialogResult.Cancel;
+					buttons.Controls.Add(_btnOk);
+					buttons.Controls.Add(_btnCancel);
+					buttons.Controls.Add(_btnClear);
+
+					root.Controls.Add(searchPanel, 0, 0);
+					root.Controls.Add(_grid, 0, 1);
+					root.Controls.Add(buttons, 0, 2);
+					Controls.Add(root);
+					AcceptButton = _btnOk;
+					CancelButton = _btnCancel;
+
+					LoadOutputs();
+				}
+
+				private void LoadOutputs()
+				{
+					string keyword = (_txtSearch.Text ?? string.Empty).Trim();
+					_grid.Rows.Clear();
+
+					foreach (CommOutputVariable output in _outputs.Where(output =>
+						output != null &&
+						!string.IsNullOrWhiteSpace(output.Name) &&
+						(string.IsNullOrWhiteSpace(keyword) ||
+						 output.Name.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
+						 output.DataType.ToString().IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
+						 (output.GlobalVariableName ?? string.Empty).IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
+						 (output.Remark ?? string.Empty).IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)))
+					{
+						int rowIndex = _grid.Rows.Add(
+							output.Name,
+							output.DataType.ToString(),
+							output.GlobalVariableName,
+							output.Remark);
+
+						if (string.Equals(output.Name, _initialOutputName, StringComparison.OrdinalIgnoreCase))
+						{
+							_grid.Rows[rowIndex].Selected = true;
+							_grid.CurrentCell = _grid.Rows[rowIndex].Cells["Name"];
+						}
+					}
+				}
+
+				private Button CreateDialogButton(string text, bool primary)
+				{
+					Button button = new Button();
+					button.Text = text;
+					button.Size = new Size(100, 32);
+					button.Margin = new Padding(8, 0, 0, 0);
+					button.FlatStyle = FlatStyle.Flat;
+					button.FlatAppearance.BorderColor = Color.FromArgb(0, 150, 220);
+					button.BackColor = primary ? Color.FromArgb(0, 95, 220) : Color.FromArgb(3, 14, 27);
+					button.ForeColor = Color.White;
+					return button;
+				}
+
+				private void AcceptSelection()
+				{
+					if (_grid.CurrentRow == null)
+					{
+						return;
+					}
+
+					SelectedOutputName = Convert.ToString(_grid.CurrentRow.Cells["Name"].Value);
+					DialogResult = DialogResult.OK;
+					Close();
+				}
+
+				private class BufferedDataGridView : DataGridView
+				{
+					public BufferedDataGridView()
+					{
+						DoubleBuffered = true;
+						SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+					}
+				}
 			}
 		}
 
@@ -6336,7 +7002,7 @@ namespace Aron_V3
 				_inputVariables = CloneInputVariables(inputVariables);
 				Triggers = CloneCustomTriggers(triggers);
 
-				Text = _isEnglish ? "Custom Trigger Sources" : "用户自定义触发源";
+				Text = _isEnglish ? "Other Custom Trigger Sources" : "其它自定义触发源";
 				StartPosition = FormStartPosition.CenterParent;
 				Size = new Size(620, 430);
 				MinimizeBox = false;
@@ -6359,10 +7025,12 @@ namespace Aron_V3
 				_grid.EnableHeadersVisualStyles = false;
 				_grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
 				_grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+				_grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 				_grid.DefaultCellStyle.BackColor = Color.FromArgb(2, 10, 20);
 				_grid.DefaultCellStyle.ForeColor = Color.White;
 				_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
 				_grid.DefaultCellStyle.SelectionForeColor = Color.White;
+				_grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 				SetDoubleBuffered(_grid);
 
 				ConfigureGrid();

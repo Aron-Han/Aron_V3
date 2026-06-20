@@ -665,6 +665,11 @@ namespace Aron_V3
 				return false;
 			}
 
+			if (task != null && !task.ProgramSwitchEnabled)
+			{
+				return true;
+			}
+
 			TaskCommunicationTriggerBinding binding = FindTriggerBinding(task, protocolName, string.Empty);
 			string channelName = binding == null ? (task == null ? string.Empty : task.CommunicationChannel) : binding.CommunicationChannel;
 			if (string.IsNullOrWhiteSpace(channelName))
@@ -2498,15 +2503,18 @@ namespace Aron_V3
 			}
 
 			string projectRoot = ProjectPathStore.ProjectRoot;
+			string safeJob = ProjectPathStore.MakeSafeName(jobName);
 
 			List<string> roots = new List<string>();
 
 			// 当前推荐目录：
-			// Project\Job\<JobName>\Hardware\Camera\<CamName>\*.vpp
+			// Project\Config\Program\<JobName>\Hardware\Camera\<CamName>\*.vpp
 			if (!string.IsNullOrWhiteSpace(jobName))
 			{
-				roots.Add(Path.Combine(projectRoot, "Job", jobName, "Hardware", "Camera"));
-				roots.Add(Path.Combine(projectRoot, "Job", jobName, "Camera"));
+				roots.Add(Path.Combine(projectRoot, "Config", "Program", safeJob, "Hardware", "Camera"));
+				roots.Add(Path.Combine(projectRoot, "Config", "Program", safeJob, "Camera"));
+				roots.Add(Path.Combine(projectRoot, "Job", safeJob, "Hardware", "Camera"));
+				roots.Add(Path.Combine(projectRoot, "Job", safeJob, "Camera"));
 			}
 
 			// 兼容旧目录。
@@ -2585,14 +2593,13 @@ namespace Aron_V3
 
 			try
 			{
-				string configPath = Path.Combine(
-					ProjectPathStore.ProjectRoot,
-					"Job",
-					ProjectPathStore.MakeSafeName(jobName),
-					"Hardware",
-					"HardwareConfig.xml");
+				string safeJob = ProjectPathStore.MakeSafeName(jobName);
+				List<string> configPaths = new List<string>();
+				configPaths.Add(Path.Combine(ProjectPathStore.ProjectRoot, "Config", "Program", safeJob, "Hardware", "HardwareConfig.xml"));
+				configPaths.Add(Path.Combine(ProjectPathStore.ProjectRoot, "Job", safeJob, "Hardware", "HardwareConfig.xml"));
 
-				if (!File.Exists(configPath))
+				string configPath = configPaths.FirstOrDefault(File.Exists);
+				if (string.IsNullOrWhiteSpace(configPath))
 				{
 					return null;
 				}
@@ -2658,18 +2665,25 @@ namespace Aron_V3
 
 			try
 			{
-				string jobRoot = Path.Combine(ProjectPathStore.ProjectRoot, "Job");
 				string fullPath = Path.GetFullPath(vppPath);
-				string fullJobRoot = Path.GetFullPath(jobRoot);
+				List<string> roots = new List<string>();
+				roots.Add(Path.Combine(ProjectPathStore.ProjectRoot, "Config", "Program"));
+				roots.Add(Path.Combine(ProjectPathStore.ProjectRoot, "Job"));
 
-				if (!fullPath.StartsWith(fullJobRoot, StringComparison.OrdinalIgnoreCase))
+				foreach (string root in roots)
 				{
-					return string.Empty;
+					string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+					if (!fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+
+					string relative = fullPath.Substring(fullRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+					int separator = relative.IndexOfAny(new char[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar });
+					return separator > 0 ? relative.Substring(0, separator) : string.Empty;
 				}
 
-				string relative = fullPath.Substring(fullJobRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-				int separator = relative.IndexOfAny(new char[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar });
-				return separator > 0 ? relative.Substring(0, separator) : string.Empty;
+				return string.Empty;
 			}
 			catch
 			{

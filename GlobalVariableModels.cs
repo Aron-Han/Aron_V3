@@ -446,6 +446,30 @@ namespace Aron_V3
 			changed |= UpdateCommOutputs(config.S7 == null ? null : config.S7.OutputVariables, renameMap, deletedNames);
 			changed |= UpdateChannels(config.S7 == null ? null : config.S7.Channels, renameMap, deletedNames);
 
+			if (config.Instances != null)
+			{
+				foreach (CommunicationInstanceConfig instance in config.Instances)
+				{
+					if (instance == null)
+					{
+						continue;
+					}
+
+					changed |= UpdateCommInputs(instance.TcpIp == null ? null : instance.TcpIp.InputVariables, renameMap, deletedNames);
+					changed |= UpdateCommOutputs(instance.TcpIp == null ? null : instance.TcpIp.OutputVariables, renameMap, deletedNames);
+					changed |= UpdateChannels(instance.TcpIp == null ? null : instance.TcpIp.Channels, renameMap, deletedNames);
+
+					changed |= UpdateCommInputs(instance.Profinet == null ? null : instance.Profinet.InputVariables, renameMap, deletedNames);
+					changed |= UpdateCommOutputs(instance.Profinet == null ? null : instance.Profinet.OutputVariables, renameMap, deletedNames);
+					changed |= UpdateChannels(instance.Profinet == null ? null : instance.Profinet.Channels, renameMap, deletedNames);
+
+					changed |= UpdateCommInputs(instance.S7 == null ? null : instance.S7.InputVariables, renameMap, deletedNames);
+					changed |= UpdateCommOutputs(instance.S7 == null ? null : instance.S7.OutputVariables, renameMap, deletedNames);
+					changed |= UpdateChannels(instance.S7 == null ? null : instance.S7.Channels, renameMap, deletedNames);
+					changed |= UpdateChannels(instance.Channels, renameMap, deletedNames);
+				}
+			}
+
 			if (changed)
 			{
 				CommunicationConfigStore.Save(config);
@@ -502,6 +526,22 @@ namespace Aron_V3
 				changed |= UpdateProperty(channel.ProgramSwitchFailName, x => channel.ProgramSwitchFailName = x, renameMap, deletedNames);
 				changed |= UpdateProperty(channel.TriggerName, x => channel.TriggerName = x, renameMap, deletedNames);
 				changed |= UpdateProperty(channel.PositionSourceName, x => channel.PositionSourceName = x, renameMap, deletedNames);
+				changed |= UpdateCustomTriggers(channel.CustomTriggers, renameMap, deletedNames);
+			}
+			return changed;
+		}
+
+		private static bool UpdateCustomTriggers(
+			List<CommunicationCustomTriggerOption> triggers,
+			Dictionary<string, string> renameMap,
+			HashSet<string> deletedNames)
+		{
+			bool changed = false;
+			if (triggers == null) return false;
+			foreach (CommunicationCustomTriggerOption trigger in triggers)
+			{
+				if (trigger == null) continue;
+				changed |= UpdateProperty(trigger.Name, x => trigger.Name = x, renameMap, deletedNames);
 			}
 			return changed;
 		}

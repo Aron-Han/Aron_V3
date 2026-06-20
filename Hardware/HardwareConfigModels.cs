@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 using System.Xml.Serialization;
 
@@ -258,13 +259,18 @@ namespace Aron_V3
 		{
 			get
 			{
-				string folder = Path.Combine(ProjectRoot, "Job");
+				string folder = Path.Combine(ProjectRoot, "Config", "Program");
 				if (!Directory.Exists(folder))
 				{
 					Directory.CreateDirectory(folder);
 				}
 				return folder;
 			}
+		}
+
+		public static string LegacyJobRootContainer
+		{
+			get { return Path.Combine(ProjectRoot, "Job"); }
 		}
 
 		public static string JobRootFolder
@@ -328,16 +334,31 @@ namespace Aron_V3
 			}
 
 			string jobRoot = JobRootContainer;
+			string[] dirs = Directory.Exists(jobRoot)
+				? Directory.GetDirectories(jobRoot)
+				: new string[0];
 
-			if (!Directory.Exists(jobRoot))
+			if ((dirs == null || dirs.Length == 0) && Directory.Exists(LegacyJobRootContainer))
 			{
-				return;
+				dirs = Directory.GetDirectories(LegacyJobRootContainer);
 			}
-
-			string[] dirs = Directory.GetDirectories(jobRoot);
 
 			if (dirs == null || dirs.Length == 0)
 			{
+				try
+				{
+					ProjectFlowConfig flowConfig = FlowConfigStore.LoadOrCreateDefault();
+					JobConfig firstJob = flowConfig == null || flowConfig.Jobs == null
+						? null
+						: flowConfig.Jobs.FirstOrDefault(x => x != null && !string.IsNullOrWhiteSpace(x.JobName));
+					if (firstJob != null)
+					{
+						_currentJobName = NormalizeFileName(firstJob.JobName, string.Empty);
+					}
+				}
+				catch
+				{
+				}
 				return;
 			}
 
@@ -365,6 +386,12 @@ namespace Aron_V3
 			}
 
 			string folder = Path.Combine(JobRootContainer, safeJob);
+			string legacyFolder = Path.Combine(LegacyJobRootContainer, safeJob);
+
+			if (!Directory.Exists(folder) && Directory.Exists(legacyFolder))
+			{
+				MigrateLegacyHardwareFolder(legacyFolder, folder);
+			}
 
 			if (createIfMissing && !Directory.Exists(folder))
 			{
@@ -372,6 +399,74 @@ namespace Aron_V3
 			}
 
 			return folder;
+		}
+
+		private static void MigrateLegacyHardwareFolder(string legacyJobFolder, string currentJobFolder)
+		{
+			try
+			{
+				if (string.IsNullOrWhiteSpace(legacyJobFolder) ||
+					string.IsNullOrWhiteSpace(currentJobFolder) ||
+					!Directory.Exists(legacyJobFolder))
+				{
+					return;
+				}
+
+				string legacyHardware = Path.Combine(legacyJobFolder, "Hardware");
+				string currentHardware = Path.Combine(currentJobFolder, "Hardware");
+				if (Directory.Exists(legacyHardware))
+				{
+					MoveDirectoryContent(legacyHardware, currentHardware);
+				}
+
+				string legacyCamera = Path.Combine(legacyJobFolder, "Camera");
+				if (Directory.Exists(legacyCamera))
+				{
+					MoveDirectoryContent(legacyCamera, Path.Combine(currentHardware, "Camera"));
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private static void MoveDirectoryContent(string sourceDir, string targetDir)
+		{
+			if (string.IsNullOrWhiteSpace(sourceDir) || string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(sourceDir))
+			{
+				return;
+			}
+
+			if (!Directory.Exists(targetDir))
+			{
+				Directory.CreateDirectory(targetDir);
+			}
+
+			foreach (string file in Directory.GetFiles(sourceDir))
+			{
+				string targetFile = Path.Combine(targetDir, Path.GetFileName(file));
+				if (File.Exists(targetFile))
+				{
+					File.Delete(targetFile);
+				}
+				File.Move(file, targetFile);
+			}
+
+			foreach (string dir in Directory.GetDirectories(sourceDir))
+			{
+				string targetSubDir = Path.Combine(targetDir, Path.GetFileName(dir));
+				MoveDirectoryContent(dir, targetSubDir);
+				try
+				{
+					if (Directory.Exists(dir) && Directory.GetFiles(dir).Length == 0 && Directory.GetDirectories(dir).Length == 0)
+					{
+						Directory.Delete(dir, false);
+					}
+				}
+				catch
+				{
+				}
+			}
 		}
 
 		public static string GetCameraRootFolder()
@@ -585,19 +680,20 @@ namespace Aron_V3
 
 				XmlSerializer serializer = new XmlSerializer(typeof(HardwareProjectConfig));
 
+				HardwareProjectConfig config;
 				using (FileStream fs = new FileStream(ConfigFilePath, FileMode.Open, FileAccess.Read))
 				{
-					HardwareProjectConfig config = serializer.Deserialize(fs) as HardwareProjectConfig;
-
-					if (config == null)
-					{
-						config = CreateDefault();
-					}
-
-					EnsureCameraFolders(config);
-					SaveImageSourceList(config);
-					return config;
+					config = serializer.Deserialize(fs) as HardwareProjectConfig;
 				}
+
+				if (config == null)
+				{
+					config = CreateDefault();
+				}
+
+				EnsureCameraFolders(config);
+				Save(config);
+				return config;
 			}
 			catch
 			{
@@ -876,6 +972,7 @@ namespace Aron_V3
 
 				if (!string.IsNullOrWhiteSpace(camera.VisionPro.AcqVppPath))
 				{
+					camera.VisionPro.AcqVppPath = NormalizeStoredPathForCurrentJob(camera.VisionPro.AcqVppPath);
 					string fileName = Path.GetFileNameWithoutExtension(camera.VisionPro.AcqVppPath);
 					camera.VisionPro.ToolName = NormalizeFileName(fileName, camera.VisionPro.ToolName);
 
@@ -905,12 +1002,66 @@ namespace Aron_V3
 
 				if (!string.IsNullOrWhiteSpace(camera.Sdk.ConfigPath))
 				{
+					camera.Sdk.ConfigPath = NormalizeStoredPathForCurrentJob(camera.Sdk.ConfigPath);
 					string fileName = Path.GetFileNameWithoutExtension(camera.Sdk.ConfigPath);
 					camera.Sdk.ToolName = NormalizeFileName(fileName, camera.Sdk.ToolName);
 				}
 
 				DeleteLegacyCameraVppIfNotUsed(camera);
 			}
+		}
+
+		private static string NormalizeStoredPathForCurrentJob(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path) || !HasCurrentJob)
+			{
+				return path;
+			}
+
+			try
+			{
+				string safeJob = NormalizeFileName(_currentJobName, string.Empty);
+				if (string.IsNullOrWhiteSpace(safeJob))
+				{
+					return path;
+				}
+
+				string fullPath = Path.GetFullPath(path);
+				string currentJobRoot = Path.GetFullPath(Path.Combine(JobRootContainer, safeJob));
+				string legacyJobRoot = Path.GetFullPath(Path.Combine(LegacyJobRootContainer, safeJob));
+
+				if (fullPath.StartsWith(currentJobRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+				{
+					return fullPath;
+				}
+
+				if (!fullPath.StartsWith(legacyJobRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+				{
+					return path;
+				}
+
+				string relative = fullPath.Substring(legacyJobRoot.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				string mapped = Path.GetFullPath(Path.Combine(currentJobRoot, relative));
+				if (File.Exists(mapped))
+				{
+					return mapped;
+				}
+
+				if (relative.StartsWith("Camera" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+					relative.StartsWith("Camera" + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+				{
+					string hardwareMapped = Path.GetFullPath(Path.Combine(currentJobRoot, "Hardware", relative));
+					if (File.Exists(hardwareMapped))
+					{
+						return hardwareMapped;
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			return path;
 		}
 
 		private static void DeleteLegacyCameraVppIfNotUsed(CameraDeviceConfig camera)

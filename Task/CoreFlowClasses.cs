@@ -979,6 +979,9 @@ namespace Aron_V3
 		public bool Enabled { get; set; }
 
 		[XmlAttribute]
+		public bool ProgramSwitchEnabled { get; set; }
+
+		[XmlAttribute]
 		public TaskConcurrencyPolicy ConcurrencyPolicy { get; set; }
 
 		[XmlAttribute]
@@ -1099,6 +1102,7 @@ namespace Aron_V3
 			TaskName = string.Empty;
 			RunOrder = 0;
 			Enabled = true;
+			ProgramSwitchEnabled = true;
 			ConcurrencyPolicy = TaskConcurrencyPolicy.IgnoreWhenRunning;
 			TriggerName = string.Empty;
 			TriggerValue = "1";
@@ -1283,6 +1287,7 @@ namespace Aron_V3
 			ProjectFlowConfig config = new ProjectFlowConfig();
 
 			string filePath = FlowConfigFile;
+			bool loadedFromLegacyJobFile = false;
 			if (!File.Exists(filePath) && File.Exists(LegacyCommunicationFlowConfigFile))
 			{
 				filePath = LegacyCommunicationFlowConfigFile;
@@ -1290,6 +1295,7 @@ namespace Aron_V3
 			else if (!File.Exists(filePath) && File.Exists(LegacyFlowConfigFile))
 			{
 				filePath = LegacyFlowConfigFile;
+				loadedFromLegacyJobFile = true;
 			}
 
 			if (File.Exists(filePath))
@@ -1306,6 +1312,7 @@ namespace Aron_V3
 			try
 			{
 				EnsureStepFolders(config);
+				MigrateLegacyProjectJobRoot(config, loadedFromLegacyJobFile);
 			}
 			catch
 			{
@@ -1326,6 +1333,7 @@ namespace Aron_V3
 			SyncFlatJobs(config);
 			XmlConfigHelper.Save(FlowConfigFile, config);
 			EnsureStepFolders(config);
+			MigrateLegacyProjectJobRoot(config, false);
 
 			DiagnosticLogStore.Append(
 				DiagnosticLogLevel.Info,
@@ -1577,6 +1585,7 @@ namespace Aron_V3
 			task.TaskName = taskName;
 			task.RunOrder = runOrder;
 			task.Enabled = true;
+			task.ProgramSwitchEnabled = false;
 			task.TriggerName = "Trigger_" + (runOrder - 1).ToString();
 			task.TriggerValue = "1";
 			task.TriggerCompare = TriggerCompareType.Equal;
@@ -1702,8 +1711,6 @@ namespace Aron_V3
 				}
 			}
 
-			EnsureCommunicationChannels(config);
-
 			foreach (ProtocolFlowConfig protocol in config.Protocols)
 			{
 				if (protocol == null)
@@ -1745,7 +1752,56 @@ namespace Aron_V3
 				NormalizeJob(job);
 			}
 
+			RemoveEmptyJobsAndChannels(config);
 			SyncFlatJobs(config);
+		}
+
+		private static void RemoveEmptyJobsAndChannels(ProjectFlowConfig config)
+		{
+			if (config == null || config.Protocols == null)
+			{
+				return;
+			}
+
+			foreach (ProtocolFlowConfig protocol in config.Protocols)
+			{
+				if (protocol == null || protocol.Channels == null)
+				{
+					continue;
+				}
+
+				foreach (ChannelFlowConfig channel in protocol.Channels)
+				{
+					if (channel == null || channel.Jobs == null)
+					{
+						continue;
+					}
+
+					channel.Jobs.RemoveAll(IsEmptyJob);
+				}
+
+				protocol.Channels.RemoveAll(channel =>
+					channel == null || channel.Jobs == null || channel.Jobs.Count <= 0);
+			}
+
+			config.Protocols.RemoveAll(protocol =>
+				protocol == null || protocol.Channels == null || protocol.Channels.Count <= 0);
+		}
+
+		private static bool IsEmptyJob(JobConfig job)
+		{
+			if (job == null)
+			{
+				return true;
+			}
+
+			if (job.Tasks == null)
+			{
+				return true;
+			}
+
+			job.Tasks.RemoveAll(task => task == null || string.IsNullOrWhiteSpace(task.TaskName));
+			return job.Tasks.Count <= 0;
 		}
 
 		private static void NormalizeJob(JobConfig job)
@@ -1761,6 +1817,7 @@ namespace Aron_V3
 			job.ChannelName = NormalizeChannelName(job.ChannelName);
 			if (string.IsNullOrWhiteSpace(job.ProgramNo)) job.ProgramNo = DeriveProgramNo(job.JobName);
 			if (job.Tasks == null) job.Tasks = new List<TaskConfig>();
+			job.Tasks.RemoveAll(task => task == null || string.IsNullOrWhiteSpace(task.TaskName));
 
 			foreach (TaskConfig task in job.Tasks)
 			{
@@ -2008,57 +2065,372 @@ namespace Aron_V3
 			config.Jobs = jobs;
 		}
 
-		private static void EnsureCommunicationChannels(ProjectFlowConfig config)
+		public static int RenameCommunicationChannelReferences(
+			string protocolName,
+			string instanceName,
+			IDictionary<string, string> channelRenames)
 		{
+			Dictionary<string, string> renames = NormalizeChannelRenameMap(channelRenames);
+			if (renames.Count <= 0)
+			{
+				return 0;
+			}
+
+			protocolName = NormalizeProtocolName(protocolName);
+			CommunicationConfig communicationConfig = null;
 			try
 			{
-				CommunicationConfig communication = CommunicationConfigStore.LoadOrCreateDefault();
-				bool added = false;
-				if (communication.TcpIp != null && communication.TcpIp.Enabled)
-				{
-					EnsureProtocolChannels(config, "TCP/IP", communication.TcpIp.Channels);
-					added = true;
-				}
-
-				if (communication.Profinet != null && communication.Profinet.Enabled)
-				{
-					EnsureProtocolChannels(config, "Profinet", communication.Profinet.Channels);
-					added = true;
-				}
-
-				if (communication.S7 != null && communication.S7.Enabled)
-				{
-					EnsureProtocolChannels(config, "S7", communication.S7.Channels);
-					added = true;
-				}
-
-				if (!added)
-				{
-					GetOrCreateChannel(config, "TCP/IP", "Channel01");
-				}
+				communicationConfig = CommunicationConfigStore.LoadOrCreateDefault();
 			}
 			catch
 			{
-				GetOrCreateChannel(config, "TCP/IP", "Channel01");
 			}
+
+			string targetInstanceName = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, instanceName, communicationConfig);
+			ProjectFlowConfig config = LoadOrCreateDefault();
+			int changed = 0;
+
+			if (config.Protocols != null)
+			{
+				foreach (ProtocolFlowConfig protocol in config.Protocols)
+				{
+					if (protocol == null ||
+						protocol.Channels == null ||
+						!string.Equals(NormalizeProtocolName(protocol.ProtocolName), protocolName, StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+
+					for (int i = 0; i < protocol.Channels.Count; i++)
+					{
+						ChannelFlowConfig channel = protocol.Channels[i];
+						if (channel == null || channel.Jobs == null)
+						{
+							continue;
+						}
+
+						string originalChannelName = NormalizeChannelName(channel.ChannelName);
+						List<JobConfig> changedJobs = new List<JobConfig>();
+						foreach (JobConfig job in channel.Jobs)
+						{
+							int jobChanges = RenameJobChannelReferences(
+								job,
+								protocolName,
+								targetInstanceName,
+								renames,
+								communicationConfig);
+							if (jobChanges > 0)
+							{
+								changedJobs.Add(job);
+								changed += jobChanges;
+							}
+						}
+
+						string renamedChannelName;
+						if (changedJobs.Count > 0 &&
+							TryGetRenamedChannelName(originalChannelName, renames, out renamedChannelName))
+						{
+							if (changedJobs.Count == channel.Jobs.Count)
+							{
+								channel.ChannelName = renamedChannelName;
+							}
+							else
+							{
+								foreach (JobConfig changedJob in changedJobs)
+								{
+									channel.Jobs.Remove(changedJob);
+								}
+
+								ChannelFlowConfig targetChannel = GetOrCreateProtocolChannel(
+									protocol,
+									renamedChannelName,
+									channel.ActiveProgramNo);
+								foreach (JobConfig changedJob in changedJobs)
+								{
+									if (!targetChannel.Jobs.Contains(changedJob))
+									{
+										targetChannel.Jobs.Add(changedJob);
+									}
+								}
+							}
+
+							changed++;
+						}
+					}
+
+					MergeDuplicateChannels(protocol);
+				}
+			}
+
+			if (changed > 0)
+			{
+				Save(config);
+				RenameLegacyCommunicationChannelFolders(protocolName, renames);
+			}
+
+			return changed;
 		}
 
-		private static void EnsureProtocolChannels(ProjectFlowConfig config, string protocolName, List<CommunicationChannelConfig> channels)
+		private static ChannelFlowConfig GetOrCreateProtocolChannel(
+			ProtocolFlowConfig protocol,
+			string channelName,
+			string activeProgramNo)
 		{
-			if (channels == null || channels.Count <= 0)
+			if (protocol.Channels == null)
 			{
-				GetOrCreateChannel(config, protocolName, "Channel01");
-				return;
+				protocol.Channels = new List<ChannelFlowConfig>();
 			}
 
-			foreach (CommunicationChannelConfig channel in channels)
+			channelName = NormalizeChannelName(channelName);
+			ChannelFlowConfig channel = protocol.Channels.FirstOrDefault(x =>
+				x != null && string.Equals(NormalizeChannelName(x.ChannelName), channelName, StringComparison.OrdinalIgnoreCase));
+			if (channel != null)
 			{
-				if (channel == null || !channel.Enabled)
+				if (channel.Jobs == null) channel.Jobs = new List<JobConfig>();
+				return channel;
+			}
+
+			channel = new ChannelFlowConfig();
+			channel.ChannelName = channelName;
+			channel.ActiveProgramNo = string.IsNullOrWhiteSpace(activeProgramNo) ? "1" : activeProgramNo;
+			channel.Jobs = new List<JobConfig>();
+			protocol.Channels.Add(channel);
+			return channel;
+		}
+
+		private static Dictionary<string, string> NormalizeChannelRenameMap(IDictionary<string, string> channelRenames)
+		{
+			Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			if (channelRenames == null)
+			{
+				return result;
+			}
+
+			foreach (KeyValuePair<string, string> pair in channelRenames)
+			{
+				string oldName = NormalizeChannelName(pair.Key);
+				string newName = NormalizeChannelName(pair.Value);
+				if (string.IsNullOrWhiteSpace(oldName) ||
+					string.IsNullOrWhiteSpace(newName) ||
+					string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
 				{
 					continue;
 				}
 
-				GetOrCreateChannel(config, protocolName, channel.ChannelName);
+				result[oldName] = newName;
+			}
+
+			return result;
+		}
+
+		private static int RenameJobChannelReferences(
+			JobConfig job,
+			string protocolName,
+			string targetInstanceName,
+			Dictionary<string, string> channelRenames,
+			CommunicationConfig communicationConfig)
+		{
+			if (job == null ||
+				channelRenames == null ||
+				channelRenames.Count <= 0 ||
+				!string.Equals(NormalizeProtocolName(job.ProtocolName), protocolName, StringComparison.OrdinalIgnoreCase))
+			{
+				return 0;
+			}
+
+			int changed = 0;
+			bool jobContainsChangedTask = false;
+			if (job.Tasks != null)
+			{
+				foreach (TaskConfig task in job.Tasks)
+				{
+					if (task == null)
+					{
+						continue;
+					}
+
+					if (IsTargetCommunication(task.CommunicationProtocol, task.CommunicationInstanceName, protocolName, targetInstanceName, communicationConfig))
+					{
+						string renamedTaskChannel;
+						if (TryGetRenamedChannelName(task.CommunicationChannel, channelRenames, out renamedTaskChannel))
+						{
+							task.CommunicationChannel = renamedTaskChannel;
+							jobContainsChangedTask = true;
+							changed++;
+						}
+					}
+
+					if (task.CommunicationTriggerBindings == null)
+					{
+						continue;
+					}
+
+					foreach (TaskCommunicationTriggerBinding binding in task.CommunicationTriggerBindings)
+					{
+						if (binding == null)
+						{
+							continue;
+						}
+
+						string bindingProtocol = string.IsNullOrWhiteSpace(binding.CommunicationProtocol)
+							? task.CommunicationProtocol
+							: binding.CommunicationProtocol;
+						string bindingInstance = string.IsNullOrWhiteSpace(binding.CommunicationInstanceName)
+							? task.CommunicationInstanceName
+							: binding.CommunicationInstanceName;
+
+						if (!IsTargetCommunication(bindingProtocol, bindingInstance, protocolName, targetInstanceName, communicationConfig))
+						{
+							continue;
+						}
+
+						string renamedBindingChannel;
+						if (TryGetRenamedChannelName(binding.CommunicationChannel, channelRenames, out renamedBindingChannel))
+						{
+							binding.CommunicationChannel = renamedBindingChannel;
+							jobContainsChangedTask = true;
+							changed++;
+						}
+					}
+				}
+			}
+
+			string renamedJobChannel;
+			if (jobContainsChangedTask &&
+				TryGetRenamedChannelName(job.ChannelName, channelRenames, out renamedJobChannel))
+			{
+				job.ChannelName = renamedJobChannel;
+				changed++;
+			}
+
+			return changed;
+		}
+
+		private static bool IsTargetCommunication(
+			string actualProtocolName,
+			string actualInstanceName,
+			string targetProtocolName,
+			string targetInstanceName,
+			CommunicationConfig communicationConfig)
+		{
+			string protocolName = NormalizeProtocolName(actualProtocolName);
+			if (string.IsNullOrWhiteSpace(protocolName))
+			{
+				protocolName = targetProtocolName;
+			}
+
+			if (!string.Equals(protocolName, targetProtocolName, StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			string normalizedInstance = CommunicationRuntimeNaming.NormalizeInstanceName(protocolName, actualInstanceName, communicationConfig);
+			return string.Equals(normalizedInstance, targetInstanceName, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static bool TryGetRenamedChannelName(
+			string channelName,
+			Dictionary<string, string> channelRenames,
+			out string renamedChannelName)
+		{
+			renamedChannelName = string.Empty;
+			if (channelRenames == null || channelRenames.Count <= 0)
+			{
+				return false;
+			}
+
+			string normalized = NormalizeChannelName(channelName);
+			return channelRenames.TryGetValue(normalized, out renamedChannelName);
+		}
+
+		private static void MergeDuplicateChannels(ProtocolFlowConfig protocol)
+		{
+			if (protocol == null || protocol.Channels == null)
+			{
+				return;
+			}
+
+			List<ChannelFlowConfig> merged = new List<ChannelFlowConfig>();
+			foreach (ChannelFlowConfig channel in protocol.Channels)
+			{
+				if (channel == null)
+				{
+					continue;
+				}
+
+				string channelName = NormalizeChannelName(channel.ChannelName);
+				ChannelFlowConfig existing = merged.FirstOrDefault(x =>
+					x != null && string.Equals(NormalizeChannelName(x.ChannelName), channelName, StringComparison.OrdinalIgnoreCase));
+				if (existing == null)
+				{
+					channel.ChannelName = channelName;
+					if (channel.Jobs == null) channel.Jobs = new List<JobConfig>();
+					merged.Add(channel);
+					continue;
+				}
+
+				if (string.IsNullOrWhiteSpace(existing.ActiveProgramNo))
+				{
+					existing.ActiveProgramNo = channel.ActiveProgramNo;
+				}
+
+				if (channel.Jobs == null)
+				{
+					continue;
+				}
+
+				foreach (JobConfig job in channel.Jobs)
+				{
+					if (job == null)
+					{
+						continue;
+					}
+
+					job.ChannelName = channelName;
+					existing.Jobs.Add(job);
+				}
+			}
+
+			protocol.Channels = merged;
+		}
+
+		private static void RenameLegacyCommunicationChannelFolders(
+			string protocolName,
+			Dictionary<string, string> channelRenames)
+		{
+			if (channelRenames == null || channelRenames.Count <= 0)
+			{
+				return;
+			}
+
+			foreach (KeyValuePair<string, string> pair in channelRenames)
+			{
+				try
+				{
+					string oldFolder = PathManager.GetChannelFolder(protocolName, pair.Key);
+					string newFolder = PathManager.GetChannelFolder(protocolName, pair.Value);
+					if (!Directory.Exists(oldFolder) ||
+						string.Equals(oldFolder, newFolder, StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+
+					if (!Directory.Exists(newFolder))
+					{
+						Directory.Move(oldFolder, newFolder);
+						continue;
+					}
+
+					MoveDirectoryContent(oldFolder, newFolder);
+					if (Directory.Exists(oldFolder) &&
+						Directory.GetFiles(oldFolder, "*", SearchOption.AllDirectories).Length == 0)
+					{
+						Directory.Delete(oldFolder, true);
+					}
+				}
+				catch
+				{
+				}
 			}
 		}
 
@@ -2401,6 +2773,105 @@ namespace Aron_V3
 				{
 				}
 			}
+		}
+
+		private static void MigrateLegacyProjectJobRoot(ProjectFlowConfig config, bool loadedFromLegacyJobFile)
+		{
+			try
+			{
+				if (loadedFromLegacyJobFile && !File.Exists(FlowConfigFile))
+				{
+					XmlConfigHelper.Save(FlowConfigFile, config);
+				}
+
+				MigrateLegacyProgramHardware(config);
+				ArchiveLegacyProjectJobRoot();
+			}
+			catch
+			{
+			}
+		}
+
+		private static void MigrateLegacyProgramHardware(ProjectFlowConfig config)
+		{
+			string legacyRoot = Path.Combine(ProjectRoot, "Job");
+			if (!Directory.Exists(legacyRoot))
+			{
+				return;
+			}
+
+			List<string> jobNames = new List<string>();
+			if (config != null && config.Jobs != null)
+			{
+				foreach (JobConfig job in config.Jobs)
+				{
+					if (job == null || string.IsNullOrWhiteSpace(job.JobName))
+					{
+						continue;
+					}
+
+					string safeJob = PathManager.MakeSafeName(job.JobName);
+					if (!jobNames.Any(x => string.Equals(x, safeJob, StringComparison.OrdinalIgnoreCase)))
+					{
+						jobNames.Add(safeJob);
+					}
+				}
+			}
+
+			foreach (string legacyJobFolder in Directory.GetDirectories(legacyRoot))
+			{
+				string safeJob = Path.GetFileName(legacyJobFolder);
+				if (string.IsNullOrWhiteSpace(safeJob))
+				{
+					continue;
+				}
+
+				if (jobNames.Count > 0 && !jobNames.Any(x => string.Equals(x, safeJob, StringComparison.OrdinalIgnoreCase)))
+				{
+					continue;
+				}
+
+				string currentProgramFolder = Path.Combine(ProjectRoot, "Config", "Program", safeJob);
+				string legacyHardware = Path.Combine(legacyJobFolder, "Hardware");
+				string legacyCamera = Path.Combine(legacyJobFolder, "Camera");
+
+				if (Directory.Exists(legacyHardware))
+				{
+					MoveDirectoryContent(legacyHardware, Path.Combine(currentProgramFolder, "Hardware"));
+				}
+
+				if (Directory.Exists(legacyCamera))
+				{
+					MoveDirectoryContent(legacyCamera, Path.Combine(currentProgramFolder, "Hardware", "Camera"));
+				}
+			}
+		}
+
+		private static void ArchiveLegacyProjectJobRoot()
+		{
+			string legacyRoot = Path.Combine(ProjectRoot, "Job");
+			if (!Directory.Exists(legacyRoot))
+			{
+				return;
+			}
+
+			if (!File.Exists(FlowConfigFile) && File.Exists(Path.Combine(legacyRoot, "ProjectFlowConfig.xml")))
+			{
+				return;
+			}
+
+			string archiveRoot = Path.Combine(ProjectRoot, "Config", "Legacy");
+			Directory.CreateDirectory(archiveRoot);
+
+			string archiveFolder = Path.Combine(archiveRoot, "Job_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+			int suffix = 1;
+			while (Directory.Exists(archiveFolder))
+			{
+				archiveFolder = Path.Combine(archiveRoot, "Job_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_" + suffix.ToString());
+				suffix++;
+			}
+
+			Directory.Move(legacyRoot, archiveFolder);
 		}
 
 

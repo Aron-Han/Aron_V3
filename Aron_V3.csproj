@@ -156,6 +156,9 @@
       <DependentUpon>SystemManagementControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Task\TaskRunContext.cs" />
+    <Compile Include="Task\ProgramManagementControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="Task\TaskTestDialog.cs" />
     <Compile Include="Communicate\TCPIP\TcpIpCommunicationService.cs" />
     <Compile Include="User_Control\AlgorithmModuleControl.cs">

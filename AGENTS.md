@@ -30,6 +30,12 @@ These rules apply when Codex modifies code in the Aron_V3 project.
 - Any user-facing text introduced in UI, dialogs, buttons, grid headers, placeholder pages, startup status, or log-facing UI must provide both Chinese and English variants or route through an existing localization helper.
 - New reusable pages or dialogs should implement `ILocalizable` or accept/apply `isEnglish`, and parent pages must apply the current language immediately when creating them, not only after the user manually toggles language.
 
+## Configuration Reference Integrity
+
+- When a named signal, communication variable, channel, or task/program reference is renamed, update all dependent runtime and persisted references to the new name.
+- When a referenced signal, communication variable, or global variable is deleted, clear dependent settings instead of leaving stale names in XML or UI.
+- Prefer surfacing missing references clearly in the UI and blocking saves that would preserve invalid references.
+
 ## Conflict Handling
 
 - If a requested change conflicts with these rules, tell the user clearly before changing code.

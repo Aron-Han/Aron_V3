@@ -39,6 +39,12 @@ namespace Aron_V3
 			public List<TaskExecutionCondition> ExecutionConditions;
 		}
 
+		private sealed class TaskConfigEntry
+		{
+			public JobConfig Job;
+			public TaskConfig Task;
+		}
+
 		private Panel panelJobButtons;
 		private Button btnAddJob;
 		private Button btnDeleteJob;
@@ -51,14 +57,15 @@ namespace Aron_V3
 		private ComboLikePopupForm _activeComboPopup;
 
 		private const int COL_TASK_NAME = 0;
-		private const int COL_PROTOCOL = 1;
-		private const int COL_CHANNEL = 2;
-		private const int COL_TRIGGER_NAME = 3;
-		private const int COL_TRIGGER_MODE = 4;
-		private const int COL_TRIGGER_VALUE = 5;
-		private const int COL_IMAGE_SOURCE = 6;
-		private const int COL_EXECUTION_CONDITIONS = 7;
-		private const int COL_REMARK = 8;
+		private const int COL_PROGRAM_SWITCH = 1;
+		private const int COL_PROTOCOL = 2;
+		private const int COL_CHANNEL = 3;
+		private const int COL_TRIGGER_NAME = 4;
+		private const int COL_TRIGGER_MODE = 5;
+		private const int COL_TRIGGER_VALUE = 6;
+		private const int COL_IMAGE_SOURCE = 7;
+		private const int COL_EXECUTION_CONDITIONS = 8;
+		private const int COL_REMARK = 9;
 
 		private bool _loading = false;
 		private bool _isEnglish = false;
@@ -182,13 +189,22 @@ namespace Aron_V3
 			DataGridViewTextBoxColumn colTask = new DataGridViewTextBoxColumn();
 			colTask.Name = "colTaskName";
 			colTask.HeaderText = "task名称";
-			colTask.FillWeight = 110;
+			colTask.FillWeight = 100;
 			dgvTrigger.Columns.Add(colTask);
+
+			DataGridViewCheckBoxColumn colProgramSwitch = new DataGridViewCheckBoxColumn();
+			colProgramSwitch.Name = "colProgramSwitch";
+			colProgramSwitch.HeaderText = "切换程序";
+			colProgramSwitch.FillWeight = 65;
+			colProgramSwitch.ThreeState = false;
+			colProgramSwitch.TrueValue = true;
+			colProgramSwitch.FalseValue = false;
+			dgvTrigger.Columns.Add(colProgramSwitch);
 
 			DataGridViewTextBoxColumn colProtocol = new DataGridViewTextBoxColumn();
 			colProtocol.Name = "colProtocol";
 			colProtocol.HeaderText = "协议";
-			colProtocol.FillWeight = 105;
+			colProtocol.FillWeight = 100;
 			colProtocol.ReadOnly = true;
 			dgvTrigger.Columns.Add(colProtocol);
 
@@ -236,7 +252,7 @@ namespace Aron_V3
 			DataGridViewTextBoxColumn colExecutionConditions = new DataGridViewTextBoxColumn();
 			colExecutionConditions.Name = "colExecutionConditions";
 			colExecutionConditions.HeaderText = "执行条件";
-			colExecutionConditions.FillWeight = 130;
+			colExecutionConditions.FillWeight = 120;
 			colExecutionConditions.ReadOnly = true;
 			colExecutionConditions.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
 			colExecutionConditions.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
@@ -245,7 +261,7 @@ namespace Aron_V3
 			DataGridViewTextBoxColumn colRemark = new DataGridViewTextBoxColumn();
 			colRemark.Name = "colRemark";
 			colRemark.HeaderText = "备注";
-			colRemark.FillWeight = 140;
+			colRemark.FillWeight = 130;
 			dgvTrigger.Columns.Add(colRemark);
 
 			ApplyTriggerGridEditableColumns();
@@ -393,18 +409,26 @@ namespace Aron_V3
 				return roots;
 			}
 
-			string jobFolder = Path.Combine(GetFlowJobRootFolder(), jobName);
+			string safeJob = HardwareConfigStore.NormalizeFileName(jobName, string.Empty);
 
-			// 当前标准目录：Project\Job\Job_001\Hardware\Camera\Cam1\*.vpp
-			string currentJobHardwareCameraRoot = Path.Combine(jobFolder, "Hardware", "Camera");
+			// 当前标准目录：Project\Config\Program\Job_001\Hardware\Camera\Cam1\*.vpp
+			string currentJobHardwareCameraRoot = Path.Combine(HardwareConfigStore.JobRootContainer, safeJob, "Hardware", "Camera");
 
 			if (Directory.Exists(currentJobHardwareCameraRoot) && !roots.Contains(currentJobHardwareCameraRoot))
 			{
 				roots.Add(currentJobHardwareCameraRoot);
 			}
 
-			// 兼容旧目录：Project\Job\Job_001\Camera\Cam1\*.vpp
-			string oldJobCameraRoot = Path.Combine(jobFolder, "Camera");
+			// 兼容旧目录：Project\Job\Job_001\Hardware\Camera\Cam1\*.vpp
+			string legacyJobHardwareCameraRoot = Path.Combine(HardwareConfigStore.LegacyJobRootContainer, safeJob, "Hardware", "Camera");
+
+			if (Directory.Exists(legacyJobHardwareCameraRoot) && !roots.Contains(legacyJobHardwareCameraRoot))
+			{
+				roots.Add(legacyJobHardwareCameraRoot);
+			}
+
+			// 兼容更早目录：Project\Job\Job_001\Camera\Cam1\*.vpp
+			string oldJobCameraRoot = Path.Combine(HardwareConfigStore.LegacyJobRootContainer, safeJob, "Camera");
 
 			if (Directory.Exists(oldJobCameraRoot) && !roots.Contains(oldJobCameraRoot))
 			{
@@ -719,13 +743,49 @@ namespace Aron_V3
 			dgvTrigger.Rows.Clear();
 			RefreshComboColumnOptions();
 
-			foreach (JobConfig job in EnumerateAllJobs(config)
+			List<TaskConfigEntry> entries = EnumerateAllJobs(config)
 				.OrderBy(x => x == null ? string.Empty : x.JobName)
 				.ThenBy(x => x == null ? string.Empty : x.ProtocolName)
-				.ThenBy(x => x == null ? string.Empty : x.ChannelName))
+				.ThenBy(x => x == null ? string.Empty : x.ChannelName)
+				.SelectMany(delegate (JobConfig job)
+				{
+					List<TaskConfigEntry> result = new List<TaskConfigEntry>();
+					if (job == null || job.Tasks == null)
+					{
+						return result;
+					}
+
+					foreach (TaskConfig task in job.Tasks.OrderBy(t => t == null ? 0 : t.RunOrder))
+					{
+						if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
+						{
+							continue;
+						}
+
+						result.Add(new TaskConfigEntry
+						{
+							Job = job,
+							Task = task
+						});
+					}
+
+					return result;
+				})
+				.ToList();
+
+			foreach (IGrouping<string, TaskConfigEntry> group in entries
+				.GroupBy(x => x.Task.TaskName, StringComparer.OrdinalIgnoreCase)
+				.OrderBy(x => x.Min(e => e.Task.RunOrder))
+				.ThenBy(x => x.Key))
 			{
-				if (job == null || job.Tasks == null) continue;
-				foreach (TaskConfig task in job.Tasks.OrderBy(t => t.RunOrder)) AddTaskRowToGrid(job, task);
+				TaskConfigEntry representative = group.FirstOrDefault(e => e.Task != null && e.Task.ProgramSwitchEnabled) ??
+					group.FirstOrDefault();
+				if (representative == null)
+				{
+					continue;
+				}
+
+				AddTaskRowToGrid(representative.Job, representative.Task);
 			}
 		}
 
@@ -787,6 +847,9 @@ namespace Aron_V3
 			if (string.IsNullOrEmpty(triggerValue)) triggerValue = "1";
 			string triggerDisplay = GetTriggerDisplayValue(protocolSelection, channelName, triggerName, triggerValue);
 			TriggerRunMode triggerRunMode = firstBinding == null ? task.TriggerRunMode : firstBinding.TriggerRunMode;
+			string jobName = job == null || string.IsNullOrWhiteSpace(job.JobName)
+				? GetDefaultTaskJobName()
+				: NormalizeJobName(job.JobName);
 
 			List<TaskExecutionCondition> executionConditions = CloneExecutionConditions(
 				firstBinding != null && firstBinding.ExecutionConditions != null && firstBinding.ExecutionConditions.Count > 0
@@ -795,6 +858,7 @@ namespace Aron_V3
 
 			int rowIndex = dgvTrigger.Rows.Add(
 				task.TaskName,
+				task.ProgramSwitchEnabled,
 				protocolSelection,
 				channelName,
 				triggerDisplay,
@@ -805,7 +869,7 @@ namespace Aron_V3
 				task.Remark);
 			dgvTrigger.Rows[rowIndex].Tag = new TaskGridRowTag
 			{
-				JobName = job == null ? GetDefaultTaskJobName() : job.JobName,
+				JobName = jobName,
 				OriginalTaskName = task.TaskName,
 				OriginalProtocol = protocol,
 				OriginalChannel = channelName,
@@ -1117,6 +1181,14 @@ namespace Aron_V3
 			if (IsComboLikeColumn(e.ColumnIndex))
 			{
 				ShowComboLikePopup(e.RowIndex, e.ColumnIndex);
+				return;
+			}
+
+			if (e.ColumnIndex == COL_PROGRAM_SWITCH)
+			{
+				DataGridViewCell cell = dgvTrigger.Rows[e.RowIndex].Cells[e.ColumnIndex];
+				cell.Value = !GetCellBool(dgvTrigger.Rows[e.RowIndex], e.ColumnIndex);
+				dgvTrigger.InvalidateCell(cell);
 				return;
 			}
 
@@ -2781,8 +2853,10 @@ namespace Aron_V3
 				triggerValue = channelConfig.TriggerExpectedValue;
 			}
 			if (string.IsNullOrWhiteSpace(triggerValue)) triggerValue = "1";
+			string defaultJobName = GetDefaultTaskJobName();
 			int rowIndex = dgvTrigger.Rows.Add(
 				"Task_New_" + (dgvTrigger.Rows.Count + 1).ToString("00"),
+				false,
 				protocolSelection,
 				channel,
 				trigger,
@@ -2795,7 +2869,7 @@ namespace Aron_V3
 			UpdateTriggerSourceCellOptions(rowIndex, protocolSelection, channel, trigger);
 			dgvTrigger.Rows[rowIndex].Tag = new TaskGridRowTag
 			{
-				JobName = GetDefaultTaskJobName(),
+				JobName = defaultJobName,
 				OriginalTaskName = string.Empty,
 				OriginalProtocol = protocol,
 				OriginalChannel = channel,
@@ -3067,7 +3141,7 @@ namespace Aron_V3
 
 		private string GetFlowJobRootFolder()
 		{
-			return Path.Combine(ProjectPathStore.ProjectRoot, "Job");
+			return HardwareConfigStore.JobRootContainer;
 		}
 
 
@@ -3143,8 +3217,8 @@ namespace Aron_V3
 			CloseActiveComboPopup();
 			dgvTrigger.EndEdit();
 			ProjectFlowConfig config = FlowConfigStore.LoadOrCreateDefault();
-			Dictionary<string, TaskConfig> oldTaskDict = CollectExistingTaskDictionary(config);
-			ClearAllJobTasks(config);
+			HashSet<TaskConfig> tasksToKeep = new HashSet<TaskConfig>();
+			HashSet<string> switchTaskNamesToSync = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 			int runOrder = 1;
 			foreach (DataGridViewRow row in dgvTrigger.Rows)
@@ -3154,9 +3228,6 @@ namespace Aron_V3
 				if (string.IsNullOrEmpty(taskName)) continue;
 
 				TaskGridRowTag tag = row.Tag as TaskGridRowTag;
-				string jobName = tag == null || string.IsNullOrWhiteSpace(tag.JobName)
-					? GetDefaultTaskJobName(config)
-					: NormalizeJobName(tag.JobName);
 				string originalTaskName = tag == null ? string.Empty : tag.OriginalTaskName;
 				if (string.IsNullOrWhiteSpace(originalTaskName))
 				{
@@ -3174,66 +3245,248 @@ namespace Aron_V3
 					rowChannel = GetDefaultChannelName(primaryProtocol);
 				}
 
-				TaskConfig task = ResolveExistingTaskForRow(oldTaskDict, tag, taskName, jobName, primaryProtocol, rowChannel, runOrder);
-				JobConfig rowJob = FlowConfigStore.GetOrCreateJob(config, primaryProtocol, rowChannel, jobName);
-				RenameTaskFolderIfNeeded(
-					tag == null ? primaryProtocol : tag.OriginalProtocol,
-					tag == null ? rowChannel : tag.OriginalChannel,
-					jobName,
-					originalTaskName,
-					taskName);
-				task.TaskName = taskName;
-				task.RunOrder = runOrder;
-				task.Enabled = true;
-				task.CommunicationProtocol = primaryProtocol;
-				task.CommunicationChannel = rowChannel;
-				if (string.IsNullOrEmpty(task.CommunicationChannel)) task.CommunicationChannel = "Channel01";
-				task.CommunicationInstanceName = primaryInstanceName;
-				string triggerSelection = GetCellString(row, COL_TRIGGER_NAME);
-				task.TriggerName = GetTriggerNameFromSelection(triggerSelection);
-				task.TriggerValue = GetCellString(row, COL_TRIGGER_VALUE);
-				if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = GetTriggerExpectedValue(protocolSelection, rowChannel, triggerSelection);
-				if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
-				task.TriggerRunMode = ParseTriggerRunMode(GetCellString(row, COL_TRIGGER_MODE));
-				task.ImageSourceKey = "Not Use";
-				task.InputAddress = string.Empty;
-				task.PositionName = "Not Use";
-				task.PositionOptionName = "Not Use";
-				task.PositionValue = "1";
-				task.ExecutionConditions = GetRowExecutionConditions(row);
-
-				// 旧字段同步保留，避免旧代码读取 FlagBit / FlagValue 时失效。
-				task.FlagBit = 0;
-				task.FlagValue = task.PositionValue;
-				task.Remark = GetCellString(row, COL_REMARK);
-				if (task.Steps == null) task.Steps = new List<StepConfig>();
-				if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
-				task.CommunicationTriggerBindings = BuildTriggerBindingsForRow(protocols, rowChannel, task);
-
-				// 图像源取消选择后，历史调度行不能继续要求旧图像源。
-				foreach (StepFlowItem flowItem in task.StepFlow)
+				bool switchEnabled = GetCellBool(row, COL_PROGRAM_SWITCH);
+				if (switchEnabled)
 				{
-					if (flowItem != null)
-					{
-						flowItem.InputImageKey = string.Empty;
-					}
+					switchTaskNamesToSync.Add(taskName.Trim());
 				}
 
-				rowJob.Tasks.Add(task);
-				Directory.CreateDirectory(FlowConfigStore.PathManager.GetTaskFolder(primaryProtocol, rowChannel, jobName, taskName));
+				List<TaskConfigEntry> entries = FindTaskEntriesForSave(config, originalTaskName, taskName);
+
+				if (!switchEnabled && entries.Count > 1)
+				{
+					entries = entries.Take(1).ToList();
+				}
+
+				if (entries.Count <= 0)
+				{
+					string jobName = tag == null || string.IsNullOrWhiteSpace(tag.JobName)
+						? GetDefaultTaskJobName(config)
+						: NormalizeJobName(tag.JobName);
+					JobConfig rowJob = FlowConfigStore.GetOrCreateJob(config, primaryProtocol, rowChannel, jobName);
+					TaskConfig newTask = FlowConfigStore.CreateDefaultTask(rowJob.JobName, taskName, runOrder);
+					rowJob.Tasks.Add(newTask);
+					entries.Add(new TaskConfigEntry
+					{
+						Job = rowJob,
+						Task = newTask
+					});
+				}
+
+				foreach (TaskConfigEntry entry in entries)
+				{
+					if (entry == null || entry.Job == null || entry.Task == null)
+					{
+						continue;
+					}
+
+					string entryJobName = NormalizeJobName(entry.Job.JobName);
+					if (string.IsNullOrWhiteSpace(entryJobName))
+					{
+						entryJobName = GetDefaultTaskJobName(config);
+						entry.Job.JobName = entryJobName;
+					}
+
+					string entryProtocol = FlowConfigStore.NormalizeProtocolName(
+						string.IsNullOrWhiteSpace(entry.Job.ProtocolName) ? primaryProtocol : entry.Job.ProtocolName);
+					string entryChannel = FlowConfigStore.NormalizeChannelName(
+						string.IsNullOrWhiteSpace(entry.Job.ChannelName) ? rowChannel : entry.Job.ChannelName);
+
+					RenameTaskFolderIfNeeded(
+						entryProtocol,
+						entryChannel,
+						entryJobName,
+						originalTaskName,
+						taskName);
+
+					ApplyTaskRowToTask(
+						entry.Task,
+						row,
+						taskName,
+						runOrder,
+						switchEnabled,
+						protocolSelection,
+						protocols,
+						primaryProtocol,
+						primaryInstanceName,
+						rowChannel);
+
+					Directory.CreateDirectory(FlowConfigStore.PathManager.GetTaskFolder(entryProtocol, entryChannel, entryJobName, taskName));
+					tasksToKeep.Add(entry.Task);
+				}
+
 				row.Tag = new TaskGridRowTag
 				{
-					JobName = jobName,
+					JobName = entries.Count > 0 && entries[0].Job != null ? NormalizeJobName(entries[0].Job.JobName) : GetDefaultTaskJobName(config),
 					OriginalTaskName = taskName,
 					OriginalProtocol = primaryProtocol,
-					OriginalChannel = rowChannel
+					OriginalChannel = rowChannel,
+					ExecutionConditions = GetRowExecutionConditions(row)
 				};
 				runOrder++;
 			}
+
+			RemoveTasksNotInGrid(config, tasksToKeep);
+			ProgramManagementService.CleanupOrphanTaskFolders(config);
 			FlowConfigStore.Save(config);
+			HandleSwitchTaskSyncAfterSave(switchTaskNamesToSync);
 			RefreshTriggerGridAfterSave();
 
 			MessageBox.Show("Task configuration saved.", "Save", MessageBoxButtons.OK, MessageBoxIcon.Information);
+		}
+
+		private void HandleSwitchTaskSyncAfterSave(HashSet<string> switchTaskNames)
+		{
+			if (switchTaskNames == null || switchTaskNames.Count <= 0)
+			{
+				return;
+			}
+
+			ProgramTaskSyncPlan plan;
+			try
+			{
+				plan = ProgramManagementService.GetSwitchTaskSyncPlan(switchTaskNames);
+			}
+			catch (Exception ex)
+			{
+				ThemedDialog.ShowWarning(
+					this,
+					T("同步切换程序 Task", "Sync Program Switch Tasks"),
+					T("检查切换程序同步项失败：", "Failed to check program switch sync items: ") + ex.Message,
+					_isEnglish);
+				return;
+			}
+
+			if (plan == null || plan.MissingTaskCount <= 0)
+			{
+				return;
+			}
+
+			bool sync = ThemedDialog.Confirm(
+				this,
+				T("同步切换程序 Task", "Sync Program Switch Tasks"),
+				T("发现有启用“切换程序”的 Task 尚未同步到其它程序号，或其它程序号下仍为空。", "Some switch-enabled tasks are missing in other programs or still empty there."),
+				FormatSwitchTaskSyncPlan(plan),
+				T("会复制 Task 配置和 Step 文件，并更新 ProjectFlowConfig.xml。已有内容的同名 Task 不会被覆盖。", "Task configuration and step files will be copied, and ProjectFlowConfig.xml will be updated. Existing non-empty tasks with the same name will not be overwritten."),
+				T("同步", "Sync"),
+				T("暂不同步", "Skip"),
+				ThemedDialogIconKind.Info,
+				false);
+
+			if (!sync)
+			{
+				return;
+			}
+
+			try
+			{
+				ProgramTaskSyncResult result = ProgramManagementService.SyncSwitchTasksToExistingPrograms(switchTaskNames);
+				if (result != null && result.ClonedTaskCount > 0)
+				{
+					ThemedDialog.ShowInformation(
+						this,
+						T("同步切换程序 Task", "Sync Program Switch Tasks"),
+						T("已同步 Task 配置数：", "Synced task configs: ") + result.ClonedTaskCount.ToString(),
+						_isEnglish);
+				}
+			}
+			catch (Exception ex)
+			{
+				ThemedDialog.ShowWarning(
+					this,
+					T("同步切换程序 Task", "Sync Program Switch Tasks"),
+					T("同步切换程序 Task 失败：", "Failed to sync program switch tasks: ") + ex.Message,
+					_isEnglish);
+			}
+		}
+
+		private string FormatSwitchTaskSyncPlan(ProgramTaskSyncPlan plan)
+		{
+			if (plan == null)
+			{
+				return string.Empty;
+			}
+
+			return T("Task：", "Tasks: ") + FormatNameList(plan.TaskNames, 5) + "\r\n" +
+				T("目标程序号：", "Target programs: ") + FormatNameList(plan.TargetProgramNames, 6) + "\r\n" +
+				T("需要同步的 Task 配置数：", "Task configs to sync: ") + plan.MissingTaskCount.ToString();
+		}
+
+		private string FormatNameList(List<string> names, int maxCount)
+		{
+			if (names == null || names.Count <= 0)
+			{
+				return "-";
+			}
+
+			List<string> displayNames = names
+				.Where(x => !string.IsNullOrWhiteSpace(x))
+				.Take(maxCount)
+				.ToList();
+
+			string text = string.Join(", ", displayNames.ToArray());
+			int remaining = names.Count - displayNames.Count;
+			if (remaining > 0)
+			{
+				text += T(" 等 " + names.Count.ToString() + " 项", " and " + remaining.ToString() + " more");
+			}
+
+			return string.IsNullOrWhiteSpace(text) ? "-" : text;
+		}
+
+		private void ApplyTaskRowToTask(
+			TaskConfig task,
+			DataGridViewRow row,
+			string taskName,
+			int runOrder,
+			bool switchEnabled,
+			string protocolSelection,
+			List<string> protocols,
+			string primaryProtocol,
+			string primaryInstanceName,
+			string rowChannel)
+		{
+			if (task == null || row == null)
+			{
+				return;
+			}
+
+			task.TaskName = taskName;
+			task.RunOrder = runOrder;
+			task.Enabled = true;
+			task.ProgramSwitchEnabled = switchEnabled;
+			task.CommunicationProtocol = primaryProtocol;
+			task.CommunicationChannel = string.IsNullOrWhiteSpace(rowChannel) ? "Channel01" : rowChannel;
+			task.CommunicationInstanceName = primaryInstanceName;
+
+			string triggerSelection = GetCellString(row, COL_TRIGGER_NAME);
+			task.TriggerName = GetTriggerNameFromSelection(triggerSelection);
+			task.TriggerValue = GetCellString(row, COL_TRIGGER_VALUE);
+			if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = GetTriggerExpectedValue(protocolSelection, rowChannel, triggerSelection);
+			if (string.IsNullOrEmpty(task.TriggerValue)) task.TriggerValue = "1";
+			task.TriggerRunMode = ParseTriggerRunMode(GetCellString(row, COL_TRIGGER_MODE));
+			task.ImageSourceKey = "Not Use";
+			task.InputAddress = string.Empty;
+			task.PositionName = "Not Use";
+			task.PositionOptionName = "Not Use";
+			task.PositionValue = "1";
+			task.ExecutionConditions = GetRowExecutionConditions(row);
+
+			// 旧字段同步保留，避免旧代码读取 FlagBit / FlagValue 时失效。
+			task.FlagBit = 0;
+			task.FlagValue = task.PositionValue;
+			task.Remark = GetCellString(row, COL_REMARK);
+			if (task.Steps == null) task.Steps = new List<StepConfig>();
+			if (task.StepFlow == null) task.StepFlow = new List<StepFlowItem>();
+			task.CommunicationTriggerBindings = BuildTriggerBindingsForRow(protocols, rowChannel, task);
+
+			foreach (StepFlowItem flowItem in task.StepFlow)
+			{
+				if (flowItem != null)
+				{
+					flowItem.InputImageKey = string.Empty;
+				}
+			}
 		}
 
 		private Dictionary<string, TaskConfig> CollectExistingTaskDictionary(ProjectFlowConfig config)
@@ -3280,6 +3533,102 @@ namespace Aron_V3
 				{
 					job.Tasks.Clear();
 				}
+			}
+		}
+
+		private List<TaskConfigEntry> FindTaskEntriesForSave(ProjectFlowConfig config, string originalTaskName, string taskName)
+		{
+			List<TaskConfigEntry> entries = EnumerateTaskEntries(config).ToList();
+			List<TaskConfigEntry> result = new List<TaskConfigEntry>();
+
+			if (!string.IsNullOrWhiteSpace(originalTaskName))
+			{
+				result = entries
+					.Where(x => x != null && x.Task != null &&
+						string.Equals(x.Task.TaskName, originalTaskName, StringComparison.OrdinalIgnoreCase))
+					.ToList();
+			}
+
+			if (result.Count <= 0 && !string.IsNullOrWhiteSpace(taskName))
+			{
+				result = entries
+					.Where(x => x != null && x.Task != null &&
+						string.Equals(x.Task.TaskName, taskName, StringComparison.OrdinalIgnoreCase))
+					.ToList();
+			}
+
+			return result
+				.OrderBy(x => x.Job == null ? string.Empty : x.Job.JobName)
+				.ThenBy(x => x.Job == null ? string.Empty : x.Job.ProtocolName)
+				.ThenBy(x => x.Job == null ? string.Empty : x.Job.ChannelName)
+				.ToList();
+		}
+
+		private IEnumerable<TaskConfigEntry> EnumerateTaskEntries(ProjectFlowConfig config)
+		{
+			foreach (JobConfig job in EnumerateAllJobs(config))
+			{
+				if (job == null || job.Tasks == null)
+				{
+					continue;
+				}
+
+				foreach (TaskConfig task in job.Tasks)
+				{
+					if (task == null || string.IsNullOrWhiteSpace(task.TaskName))
+					{
+						continue;
+					}
+
+					yield return new TaskConfigEntry
+					{
+						Job = job,
+						Task = task
+					};
+				}
+			}
+		}
+
+		private void RemoveTasksNotInGrid(ProjectFlowConfig config, HashSet<TaskConfig> tasksToKeep)
+		{
+			if (config == null || tasksToKeep == null)
+			{
+				return;
+			}
+
+			foreach (JobConfig job in EnumerateAllJobs(config))
+			{
+				if (job == null || job.Tasks == null)
+				{
+					continue;
+				}
+
+				List<TaskConfig> removedTasks = job.Tasks
+					.Where(task => task == null || !tasksToKeep.Contains(task))
+					.ToList();
+
+				foreach (TaskConfig removedTask in removedTasks)
+				{
+					DeleteTaskLocalFolder(job, removedTask);
+				}
+
+				job.Tasks.RemoveAll(task => task == null || !tasksToKeep.Contains(task));
+			}
+		}
+
+		private void DeleteTaskLocalFolder(JobConfig job, TaskConfig task)
+		{
+			if (job == null || task == null || string.IsNullOrWhiteSpace(job.JobName) || string.IsNullOrWhiteSpace(task.TaskName))
+			{
+				return;
+			}
+
+			try
+			{
+				ProgramManagementService.DeleteTaskFiles(job, task);
+			}
+			catch
+			{
 			}
 		}
 
@@ -3600,6 +3949,35 @@ namespace Aron_V3
 		{
 			if (row.Cells[columnIndex].Value == null) return string.Empty;
 			return row.Cells[columnIndex].Value.ToString().Trim();
+		}
+
+		private bool GetCellBool(DataGridViewRow row, int columnIndex)
+		{
+			if (row == null || columnIndex < 0 || columnIndex >= row.Cells.Count)
+			{
+				return false;
+			}
+
+			object value = row.Cells[columnIndex].Value;
+			if (value == null)
+			{
+				return false;
+			}
+
+			if (value is bool)
+			{
+				return (bool)value;
+			}
+
+			bool parsed;
+			if (bool.TryParse(value.ToString(), out parsed))
+			{
+				return parsed;
+			}
+
+			return string.Equals(value.ToString(), "1", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(value.ToString(), "Y", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(value.ToString(), "Yes", StringComparison.OrdinalIgnoreCase);
 		}
 
 		private void CommunicationConfigChangedHub_ConfigChanged(object sender, EventArgs e)
@@ -4185,6 +4563,7 @@ namespace Aron_V3
 			{
 				if (lblTriggerTitle != null) lblTriggerTitle.Text = "Task Settings";
 				dgvTrigger.Columns[COL_TASK_NAME].HeaderText = "Task Name";
+				dgvTrigger.Columns[COL_PROGRAM_SWITCH].HeaderText = "Program Switch";
 				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "Protocol";
 				dgvTrigger.Columns[COL_CHANNEL].HeaderText = "Channel";
 				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "Trigger Source";
@@ -4201,6 +4580,7 @@ namespace Aron_V3
 			{
 				if (lblTriggerTitle != null) lblTriggerTitle.Text = "任务设置";
 				dgvTrigger.Columns[COL_TASK_NAME].HeaderText = "task名称";
+				dgvTrigger.Columns[COL_PROGRAM_SWITCH].HeaderText = "切换程序";
 				dgvTrigger.Columns[COL_PROTOCOL].HeaderText = "协议";
 				dgvTrigger.Columns[COL_CHANNEL].HeaderText = "通道";
 				dgvTrigger.Columns[COL_TRIGGER_NAME].HeaderText = "触发源";
@@ -4227,6 +4607,11 @@ namespace Aron_V3
 					ParseTriggerRunMode(GetCellString(row, COL_TRIGGER_MODE)));
 				row.Cells[COL_EXECUTION_CONDITIONS].Value = FormatExecutionConditions(GetRowExecutionConditions(row));
 			}
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 	}
 

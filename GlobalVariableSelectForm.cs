@@ -81,10 +81,12 @@ namespace Aron_V3
 			_grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(8, 28, 48);
 			_grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
 			_grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+			_grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			_grid.DefaultCellStyle.BackColor = BackColor;
 			_grid.DefaultCellStyle.ForeColor = Color.White;
 			_grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 120, 200);
 			_grid.DefaultCellStyle.SelectionForeColor = Color.White;
+			_grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Name", HeaderText = T("名称", "Name"), FillWeight = 130 });
 			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "DataType", HeaderText = T("类型", "Type"), FillWeight = 80 });
 			_grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "CurrentValue", HeaderText = T("当前值", "Current Value"), FillWeight = 120 });

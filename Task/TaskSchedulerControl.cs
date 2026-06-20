@@ -528,18 +528,27 @@ namespace Aron_V3
 				return;
 			}
 
+			bool oldLoading = _loading;
 			string oldTask = GetSelectedTaskName();
 			string oldJob = GetSelectedJobName();
 			string oldStep = GetSelectedStepName();
 
-			LoadFlowConfigToUI();
+			_loading = true;
+			try
+			{
+				LoadFlowConfigToUI();
 
-			SelectListItem(listTasks, oldTask);
-			RefreshProgramsByTask(GetSelectedTaskName());
-			SelectListItem(listJobs, oldJob);
-			RefreshStepLibraryByTask(GetSelectedJobName(), GetSelectedTaskName());
-			SelectListItem(listSteps, oldStep);
-			RefreshStepFlowGrid(GetSelectedJobName(), GetSelectedTaskName());
+				SelectListItem(listTasks, oldTask);
+				RefreshProgramsByTask(GetSelectedTaskName());
+				SelectListItem(listJobs, oldJob);
+				RefreshStepLibraryByTask(GetSelectedJobName(), GetSelectedTaskName());
+				SelectListItem(listSteps, oldStep);
+				RefreshStepFlowGrid(GetSelectedJobName(), GetSelectedTaskName());
+			}
+			finally
+			{
+				_loading = oldLoading;
+			}
 		}
 
 		private void CommunicationConfigChangedHub_ConfigChanged(object sender, EventArgs e)
@@ -637,6 +646,7 @@ namespace Aron_V3
 
 		private void LoadFlowConfigToUI()
 		{
+			bool oldLoading = _loading;
 			_loading = true;
 
 			try
@@ -656,7 +666,7 @@ namespace Aron_V3
 			}
 			finally
 			{
-				_loading = false;
+				_loading = oldLoading;
 			}
 		}
 
@@ -1577,7 +1587,13 @@ namespace Aron_V3
 				}
 			}
 
-			string oldRoot = Path.Combine(HardwareConfigStore.JobRootContainer, safeJob, "Camera");
+			string legacyHardwareRoot = Path.Combine(HardwareConfigStore.LegacyJobRootContainer, safeJob, "Hardware", "Camera");
+			if (Directory.Exists(legacyHardwareRoot) && !roots.Any(x => string.Equals(NormalizeFullPath(x), NormalizeFullPath(legacyHardwareRoot), StringComparison.OrdinalIgnoreCase)))
+			{
+				roots.Add(legacyHardwareRoot);
+			}
+
+			string oldRoot = Path.Combine(HardwareConfigStore.LegacyJobRootContainer, safeJob, "Camera");
 			if (Directory.Exists(oldRoot) && !roots.Any(x => string.Equals(NormalizeFullPath(x), NormalizeFullPath(oldRoot), StringComparison.OrdinalIgnoreCase)))
 			{
 				roots.Add(oldRoot);
@@ -3358,6 +3374,7 @@ namespace Aron_V3
 			}
 
 			FlowConfigStore.Save(config);
+			HandleSwitchTaskSyncAfterStepSave(jobName, taskName, task.ProgramSwitchEnabled);
 
 			RefreshStepLibraryByTask(jobName, taskName);
 			RefreshStepFlowGrid(jobName, taskName);
@@ -3381,6 +3398,106 @@ namespace Aron_V3
 				"Save",
 				MessageBoxButtons.OK,
 				scriptCompileWarnings.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+		}
+
+		private void HandleSwitchTaskSyncAfterStepSave(string sourceJobName, string taskName, bool programSwitchEnabled)
+		{
+			if (!programSwitchEnabled || string.IsNullOrWhiteSpace(sourceJobName) || string.IsNullOrWhiteSpace(taskName))
+			{
+				return;
+			}
+
+			List<string> taskNames = new List<string> { taskName };
+			ProgramTaskSyncPlan plan;
+			try
+			{
+				plan = ProgramManagementService.GetSwitchTaskSyncPlan(taskNames, sourceJobName);
+			}
+			catch (Exception ex)
+			{
+				ThemedDialog.ShowWarning(
+					this,
+					T("同步切换程序 Task", "Sync Program Switch Tasks"),
+					T("检查切换程序同步项失败：", "Failed to check program switch sync items: ") + ex.Message,
+					_isEnglish);
+				return;
+			}
+
+			if (plan == null || plan.MissingTaskCount <= 0)
+			{
+				return;
+			}
+
+			bool sync = ThemedDialog.Confirm(
+				this,
+				T("同步切换程序 Task", "Sync Program Switch Tasks"),
+				T("当前 Task 已启用“切换程序”，其它程序号尚未同步或仍为空。", "The current task has program switching enabled, and other programs are missing it or still empty."),
+				FormatSwitchTaskSyncPlan(plan),
+				T("会复制当前程序号的 Task 配置和 Step 文件，并更新 ProjectFlowConfig.xml。已有内容的同名 Task 不会被覆盖。", "The current program's task configuration and step files will be copied, and ProjectFlowConfig.xml will be updated. Existing non-empty tasks with the same name will not be overwritten."),
+				T("同步", "Sync"),
+				T("暂不同步", "Skip"),
+				ThemedDialogIconKind.Info,
+				false);
+
+			if (!sync)
+			{
+				return;
+			}
+
+			try
+			{
+				ProgramTaskSyncResult result = ProgramManagementService.SyncSwitchTasksToExistingPrograms(taskNames, sourceJobName);
+				if (result != null && result.ClonedTaskCount > 0)
+				{
+					ThemedDialog.ShowInformation(
+						this,
+						T("同步切换程序 Task", "Sync Program Switch Tasks"),
+						T("已同步 Task 配置数：", "Synced task configs: ") + result.ClonedTaskCount.ToString(),
+						_isEnglish);
+				}
+			}
+			catch (Exception ex)
+			{
+				ThemedDialog.ShowWarning(
+					this,
+					T("同步切换程序 Task", "Sync Program Switch Tasks"),
+					T("同步切换程序 Task 失败：", "Failed to sync program switch tasks: ") + ex.Message,
+					_isEnglish);
+			}
+		}
+
+		private string FormatSwitchTaskSyncPlan(ProgramTaskSyncPlan plan)
+		{
+			if (plan == null)
+			{
+				return string.Empty;
+			}
+
+			return T("Task：", "Tasks: ") + FormatNameList(plan.TaskNames, 5) + "\r\n" +
+				T("目标程序号：", "Target programs: ") + FormatNameList(plan.TargetProgramNames, 6) + "\r\n" +
+				T("需要同步的 Task 配置数：", "Task configs to sync: ") + plan.MissingTaskCount.ToString();
+		}
+
+		private string FormatNameList(List<string> names, int maxCount)
+		{
+			if (names == null || names.Count <= 0)
+			{
+				return "-";
+			}
+
+			List<string> displayNames = names
+				.Where(x => !string.IsNullOrWhiteSpace(x))
+				.Take(maxCount)
+				.ToList();
+
+			string text = string.Join(", ", displayNames.ToArray());
+			int remaining = names.Count - displayNames.Count;
+			if (remaining > 0)
+			{
+				text += T(" 等 " + names.Count.ToString() + " 项", " and " + remaining.ToString() + " more");
+			}
+
+			return string.IsNullOrWhiteSpace(text) ? "-" : text;
 		}
 
 
@@ -5651,6 +5768,11 @@ namespace Aron_V3
 			btnDeleteStepItem.Text = "-";
 			btnRefreshStepItem.Text = "↻";
 			if (btnOpenStepFolder != null) btnOpenStepFolder.Text = "📁";
+		}
+
+		private string T(string chinese, string english)
+		{
+			return _isEnglish ? english : chinese;
 		}
 
 		// 新增 GetStepDisplayText 方法。
